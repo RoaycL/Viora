@@ -1,0 +1,141 @@
+import 'dart:async';
+
+import 'package:flutter/foundation.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+
+import '../config/config_store.dart';
+import '../index/index_sync.dart';
+import '../index/media_index.dart';
+import '../media/media_models.dart';
+import '../media/server_registry.dart';
+
+/// 一个可播放的版本：哪台服务器、哪个条目（电影 / 单集）、哪个 MediaSource（docs/04-aggregation.md §5）
+@immutable
+class SourceOption {
+  const SourceOption({required this.item, required this.source, required this.serverName, this.latencyMs});
+
+  final MediaItem item;
+  final MediaSourceInfo source;
+  final String serverName;
+  final int? latencyMs;
+
+  String get serverId => item.serverId;
+
+  /// 4K / 1080P / 其他
+  String get group => switch (source.resolutionLabel) {
+    '4K' => '4K',
+    '1080P' => '1080P',
+    _ => '其他',
+  };
+
+  int get _resolutionRank => switch (source.resolutionLabel) {
+    '4K' => 3,
+    '1080P' => 2,
+    '720P' => 1,
+    _ => 0,
+  };
+
+  String playRoute({Duration position = Duration.zero}) =>
+      '/play/${item.serverId}/${item.id}?pos=${position.inMilliseconds}&source=${source.id}';
+}
+
+/// 排序（默认选中第一个）：本剧上次用的服务器 → 分辨率 → 线路延迟 → 码率
+List<SourceOption> rankSources(List<SourceOption> options, {String? preferredServerId}) {
+  final list = [...options];
+  list.sort((a, b) {
+    final pa = a.serverId == preferredServerId ? 1 : 0, pb = b.serverId == preferredServerId ? 1 : 0;
+    if (pa != pb) return pb - pa;
+    if (a._resolutionRank != b._resolutionRank) return b._resolutionRank - a._resolutionRank;
+    final la = a.latencyMs ?? 99999, lb = b.latencyMs ?? 99999;
+    if ((la - lb).abs() > 80) return la - lb;
+    return (b.source.bitrate ?? 0) - (a.source.bitrate ?? 0);
+  });
+  return list;
+}
+
+/// 记住每部作品上次播放用的服务器（同一部剧连续观看时不跳服务器）
+class PreferredServers {
+  static const _prefix = 'viora.prefServer.';
+
+  static Future<String?> get(String titleKey) async {
+    try {
+      return (await SharedPreferences.getInstance()).getString('$_prefix$titleKey');
+    } catch (_) {
+      return null;
+    }
+  }
+
+  static Future<void> set(String titleKey, String serverId) async {
+    try {
+      await (await SharedPreferences.getInstance()).setString('$_prefix$titleKey', serverId);
+    } catch (_) {}
+  }
+}
+
+typedef SourcesKey = ({String serverId, String itemId});
+
+/// 某个电影 / 单集在所有服务器上的可播放版本（已排序）。
+final sourceOptionsProvider = FutureProvider.family<List<SourceOption>, SourcesKey>((ref, key) async {
+  ref.watch(indexRevisionProvider);
+  final config = ref.read(configProvider);
+  final home = ref.read(serverClientProvider(key.serverId));
+  if (home == null) return const [];
+  final target = await home.item(key.itemId);
+  final index = await ref.read(mediaIndexProvider.future);
+
+  // 1. 找到每台服务器上对应的条目
+  final perServer = <MediaItem>[target];
+  MediaItem titleItem = target;
+  if (target.kind == MediaKind.episode && target.seriesId != null) {
+    final series = await home.item(target.seriesId!);
+    titleItem = series;
+    final copies = (index?.matches(series) ?? const <MediaItem>[]).where((c) => c.serverId != target.serverId);
+    final found = await Future.wait(
+      copies.map((c) async {
+        final client = ref.read(serverClientProvider(c.serverId));
+        if (client == null) return null;
+        try {
+          final eps = await client.episodes(c.id).timeout(const Duration(seconds: 8));
+          return eps
+              .where((e) => e.seasonNumber == target.seasonNumber && e.episodeNumber == target.episodeNumber)
+              .firstOrNull;
+        } catch (_) {
+          return null;
+        }
+      }),
+    );
+    perServer.addAll(found.whereType<MediaItem>());
+  } else if (target.kind == MediaKind.movie) {
+    perServer.addAll((index?.matches(target) ?? const <MediaItem>[]).where((c) => c.serverId != target.serverId));
+  }
+
+  // 每台服务器只取一个条目（同一台服务器上重复入库的也保留，作为不同版本）
+  final seen = <String>{};
+  final targets = perServer.where((it) => seen.add('${it.serverId}/${it.id}')).toList();
+
+  // 2. 并发获取播放信息，先回来的先用；单台超时不拖累整体
+  final results = await Future.wait(
+    targets.map((it) async {
+      final client = ref.read(serverClientProvider(it.serverId));
+      final server = config.server(it.serverId);
+      if (client == null || server == null) return const <SourceOption>[];
+      try {
+        final info = await client.playbackInfo(it.id).timeout(const Duration(seconds: 8));
+        final latency = client.line.latencyMs;
+        return [
+          for (final s in info.sources) SourceOption(item: it, source: s, serverName: server.name, latencyMs: latency),
+        ];
+      } catch (e) {
+        debugPrint('playbackInfo ${server.name} failed: $e');
+        return const <SourceOption>[];
+      }
+    }),
+  );
+  final preferred = await PreferredServers.get(titleKeyOf(titleItem));
+  return rankSources([for (final r in results) ...r], preferredServerId: preferred ?? target.serverId);
+});
+
+/// 播放某个版本时记下偏好服务器
+Future<void> rememberSource(MediaItem titleItem, String serverId) =>
+    PreferredServers.set(titleKeyOf(titleItem), serverId);

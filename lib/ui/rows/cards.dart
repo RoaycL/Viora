@@ -212,12 +212,17 @@ class _ResourceBadge extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 3),
       decoration: BoxDecoration(
-        color: has ? const Color(0x385BE38A) : const Color(0x73000000),
+        color: has ? const Color(0xCC0E3A22) : const Color(0xA6000000),
+        border: has ? Border.all(color: const Color(0x665BE38A)) : null,
         borderRadius: BorderRadius.circular(8),
       ),
       child: Text(
         has ? '$count 个资源' : '无资源',
-        style: TextStyle(fontSize: 15, color: has ? const Color(0xFF9AF2B8) : const Color(0xBFFFFFFF)),
+        style: TextStyle(
+          fontSize: 15,
+          fontWeight: FontWeight.w600,
+          color: has ? const Color(0xFFB4F7CB) : const Color(0xBFFFFFFF),
+        ),
       ),
     );
   }

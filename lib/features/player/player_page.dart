@@ -8,6 +8,7 @@ import 'package:go_router/go_router.dart';
 import '../../app/input/intents.dart';
 import '../../app/platform_profile.dart';
 import '../../app/theme.dart';
+import '../../data/aggregate/sources.dart';
 import '../../data/config/app_config.dart';
 import '../../data/config/config_store.dart';
 import '../../data/emby/emby_client.dart';
@@ -47,7 +48,6 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
   EmbyClient? _client;
   MediaItem? _item;
   MediaSourceInfo? _source;
-  List<MediaSourceInfo> _sources = const [];
   String? _playSessionId;
   PlaybackRequest? _request;
   String? _error;
@@ -164,7 +164,6 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
       _request = client.stream(source, playSessionId: info.playSessionId);
       if (!mounted) return;
       setState(() {
-        _sources = info.sources;
         _source = source;
         _playSessionId = info.playSessionId ?? newPlaySessionId();
         _error = null;
@@ -395,30 +394,7 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
             ],
           );
         }),
-        if (_sources.length > 1)
-          MenuAction('切换资源 · ${_sources.length} 个版本', Icons.swap_horiz_rounded, () {
-            showContextMenu(
-              context,
-              title: '切换资源',
-              actions: [
-                for (final x in _sources)
-                  MenuAction(
-                    '${x.resolutionLabel} ${x.rangeLabel}'
-                    '${x.size == null ? '' : ' · ${(x.size! / 1073741824).toStringAsFixed(2)} GB'}'
-                    '${x.id == _source?.id ? '  ✓' : ''}',
-                    Icons.movie_rounded,
-                    () {
-                      final at = _state.position;
-                      _reportStopped();
-                      _stopped = false;
-                      _started = false;
-                      _wasPlaying = false;
-                      _start(sourceId: x.id, at: at);
-                    },
-                  ),
-              ],
-            );
-          }),
+        MenuAction('切换资源（所有服务器）', Icons.swap_horiz_rounded, _openSourcesMenu),
         MenuAction('倍速 · ${s.rate}x', Icons.speed_rounded, () {
           showContextMenu(
             context,
@@ -440,6 +416,50 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
     );
     if (mounted) _focus.requestFocus();
     _showOsd();
+  }
+
+  /// 所有服务器上的版本；选其他服务器的版本时换到那台服务器从当前进度继续
+  Future<void> _openSourcesMenu() async {
+    showToast('正在查找各服务器上的资源…');
+    List<SourceOption> options;
+    try {
+      options = await ref.read(sourceOptionsProvider((serverId: widget.serverId, itemId: widget.itemId)).future);
+    } catch (e) {
+      showToast('查找资源失败：$e');
+      return;
+    }
+    if (!mounted) return;
+    if (options.isEmpty) {
+      showToast('没有其他可用资源');
+      return;
+    }
+    await showContextMenu(
+      context,
+      title: '切换资源 · ${options.length} 个版本',
+      actions: [
+        for (final o in options)
+          MenuAction(
+            '${o.source.resolutionLabel} ${o.source.rangeLabel}'
+            '${o.source.size == null ? '' : ' · ${(o.source.size! / 1073741824).toStringAsFixed(2)} GB'}'
+            ' · ${o.serverName}'
+            '${o.serverId == widget.serverId && o.source.id == _source?.id ? '  ✓' : ''}',
+            Icons.movie_rounded,
+            () {
+              final at = _state.position;
+              if (o.serverId == widget.serverId && o.item.id == widget.itemId) {
+                _reportStopped();
+                _stopped = false;
+                _started = false;
+                _wasPlaying = false;
+                _start(sourceId: o.source.id, at: at);
+              } else {
+                context.pushReplacement(o.playRoute(position: at));
+              }
+            },
+          ),
+      ],
+    );
+    if (mounted) _focus.requestFocus();
   }
 
   // ───────────────────────── 界面 ─────────────────────────

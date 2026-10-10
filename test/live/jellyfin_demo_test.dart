@@ -7,6 +7,7 @@ import 'package:dio/dio.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:viora/data/config/app_config.dart';
 import 'package:viora/data/emby/emby_client.dart';
+import 'package:viora/data/index/media_index.dart';
 import 'package:viora/data/media/media_models.dart';
 
 void main() {
@@ -67,5 +68,41 @@ void main() {
       options: Options(headers: img.headers, responseType: ResponseType.bytes, validateStatus: (_) => true),
     );
     expect(ir.statusCode, 200);
+  }, skip: live ? false : '需要 VIORA_LIVE=1');
+
+  test('Jellyfin 演示服：同步索引（分页 + 增量参数）并搜索', () async {
+    var server = const ServerConfig(
+      id: 'demo',
+      type: ServerType.jellyfin,
+      name: 'Jellyfin Demo',
+      username: 'demo',
+      lines: [ServerLine(id: 'ok', name: '主线路', url: 'https://demo.jellyfin.org/stable')],
+    );
+    final client = EmbyClient(
+      config: const AppConfig(deviceId: 'viora-test'),
+      server: server,
+      appVersion: '0.4.0',
+      onServerChanged: (s) => server = s,
+    );
+    final index = (await MediaIndex.open(path: ':memory:'))!;
+    final gen = index.beginFull('demo');
+    var start = 0;
+    while (true) {
+      final page = await client.items(start: start, limit: 50, sortBy: 'DateCreated,SortName', sortOrder: 'Ascending');
+      index.upsert('demo', page.items, gen: gen);
+      start += page.items.length;
+      if (page.items.isEmpty || start >= page.total) break;
+    }
+    index.finishFull('demo', gen);
+    expect(index.count('demo'), greaterThan(5));
+
+    // 增量：只取最近修改过的（参数被服务器接受即可）
+    final incr = await client.items(limit: 10, minDateLastSaved: DateTime.now().subtract(const Duration(days: 3650)));
+    expect(incr.total, greaterThanOrEqualTo(0));
+
+    final hits = index.search('sahara');
+    expect(hits, isNotEmpty);
+    expect(index.matches(hits.first).first.id, hits.first.id);
+    index.close();
   }, skip: live ? false : '需要 VIORA_LIVE=1');
 }

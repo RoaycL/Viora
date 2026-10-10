@@ -2,13 +2,14 @@ import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 
 import '../features/browse/server_page.dart';
-import '../features/common/placeholder_page.dart';
+import '../features/collections/collections_pages.dart';
 import '../features/detail/detail_page.dart';
 import '../features/detail/item_detail_page.dart';
 import '../features/home/home_page.dart';
 import '../features/library/library_page.dart';
 import '../features/library/server_edit_page.dart';
 import '../features/player/player_page.dart';
+import '../features/search/search_page.dart';
 import '../features/settings/settings_page.dart';
 import 'shell.dart';
 
@@ -52,19 +53,9 @@ GoRouter buildRouter() {
               ),
             ),
           ),
-          _tab(
-            '/search',
-            const PlaceholderPage(
-              title: '搜索',
-              milestone: 'M3',
-              description: '聚合搜索：本地索引 + TMDB + 各服务器实时搜索，拼音首字母键盘与语音输入。',
-            ),
-          ),
-          _tab('/favorites', const PlaceholderPage(title: '收藏', milestone: 'M3', description: '跨服务器的统一收藏，按作品聚合。')),
-          _tab(
-            '/history',
-            const PlaceholderPage(title: '观看记录', milestone: 'M3', description: '本地统一观看记录（按 TMDB ID 聚合），与各服务器进度同步。'),
-          ),
+          _tab('/search', const SearchPage()),
+          _tab('/favorites', const FavoritesPage()),
+          _tab('/history', const HistoryPage()),
           _tab('/settings', const SettingsPage()),
         ],
       ),

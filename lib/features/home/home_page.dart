@@ -18,6 +18,7 @@ import '../../ui/widgets/backdrop.dart';
 import '../../ui/widgets/server_image.dart';
 import '../../ui/widgets/toast.dart';
 import '../browse/media_cards.dart';
+import '../collections/collections_pages.dart';
 import 'home_hero.dart';
 import 'home_mock.dart';
 import '../../ui/focus/input_mode.dart';
@@ -96,7 +97,9 @@ class _HomeBodyState extends ConsumerState<_HomeBody> {
     final servers = ref.watch(configProvider.select((c) => c.servers));
     final hasServers = servers.isNotEmpty;
     final serverNames = {for (final s in servers) s.id: s.name};
-    final realResume = hasServers ? ref.watch(resumeProvider).value ?? const <MediaItem>[] : const <MediaItem>[];
+    final realResume = hasServers
+        ? dedupeWatched(ref.watch(resumeProvider).value ?? const <MediaItem>[])
+        : const <MediaItem>[];
     return BackHandler(
       onBack: _onBack,
       child: Stack(

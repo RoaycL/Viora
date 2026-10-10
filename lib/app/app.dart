@@ -6,6 +6,7 @@ import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
+import '../data/index/index_sync.dart';
 import '../features/update/update_controller.dart';
 import '../features/update/update_dialog.dart';
 
@@ -20,7 +21,7 @@ import 'theme.dart';
 import 'window_frame.dart';
 import '../ui/focus/input_mode.dart';
 
-/// 测试环境中关闭启动时的自动检查更新。
+/// 启动时的后台任务（检查更新、同步聚合索引）；测试环境中关闭。
 bool autoCheckUpdatesOnLaunch = true;
 
 class VioraApp extends ConsumerStatefulWidget {
@@ -49,6 +50,10 @@ class _VioraAppState extends ConsumerState<VioraApp> {
     InputMode.install();
     _router.routerDelegate.addListener(_updateCanGoBack);
     _autoCheckUpdate();
+    if (autoCheckUpdatesOnLaunch) {
+      // 稍后在后台同步聚合索引（docs/04-aggregation.md §2），不影响启动速度
+      Future<void>.delayed(const Duration(seconds: 2), () => ref.read(indexSyncProvider.notifier).syncAll());
+    }
   }
 
   /// 启动后稍等片刻再静默检查更新，有新版本时弹窗。

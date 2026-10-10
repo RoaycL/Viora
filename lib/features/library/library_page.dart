@@ -7,6 +7,7 @@ import 'package:go_router/go_router.dart';
 import '../../app/theme.dart';
 import '../../data/config/app_config.dart';
 import '../../data/config/config_store.dart';
+import '../../data/index/index_sync.dart';
 import '../../data/media/server_registry.dart';
 import '../../ui/focus/focusable.dart';
 import '../../ui/glass/glass.dart';
@@ -221,6 +222,10 @@ class _ServerCard extends ConsumerWidget {
             );
           }),
         MenuAction('编辑', Icons.edit_rounded, () => context.go('/library/edit/${server.id}')),
+        MenuAction('重新同步索引', Icons.sync_rounded, () {
+          showToast('正在重建「${server.name}」的索引…');
+          ref.read(indexSyncProvider.notifier).syncServer(server.id, forceFull: true);
+        }),
         MenuAction('重新登录', Icons.login_rounded, () async {
           try {
             await ref.read(serverClientProvider(server.id))?.login();
@@ -236,6 +241,7 @@ class _ServerCard extends ConsumerWidget {
             actions: [
               MenuAction('确认删除', Icons.delete_forever_rounded, () {
                 store.removeServer(server.id);
+                ref.read(indexSyncProvider.notifier).forget(server.id);
                 showToast('已删除「${server.name}」');
               }),
               MenuAction('取消', Icons.close_rounded, () {}),
@@ -249,6 +255,7 @@ class _ServerCard extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final s = server;
+    final sync = ref.watch(indexSyncProvider.select((m) => m[s.id]));
     final dot = switch (_status) {
       _Status.ok => VColors.ok,
       _Status.fallback => VColors.warn,
@@ -372,6 +379,14 @@ class _ServerCard extends ConsumerWidget {
                   overflow: TextOverflow.ellipsis,
                 ),
                 const Spacer(),
+                if (sync?.running == true)
+                  Padding(
+                    padding: const EdgeInsets.only(bottom: 6),
+                    child: Text(
+                      sync!.total == null ? '正在同步索引…' : '正在同步索引 ${sync.done} / ${sync.total}',
+                      style: const TextStyle(fontSize: 16, color: VColors.accent),
+                    ),
+                  ),
                 Text.rich(
                   TextSpan(
                     style: const TextStyle(fontSize: 18, color: Color(0xBFFFFFFF)),

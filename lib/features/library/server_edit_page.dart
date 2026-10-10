@@ -6,6 +6,7 @@ import '../../app/theme.dart';
 import '../../data/config/app_config.dart';
 import '../../data/config/config_store.dart';
 import '../../data/emby/emby_client.dart';
+import '../../data/index/index_sync.dart';
 import '../../data/media/server_registry.dart';
 import '../../ui/focus/focus_auto_scroll.dart';
 import '../../ui/glass/glass.dart';
@@ -121,6 +122,12 @@ class _ServerEditPageState extends ConsumerState<ServerEditPage> {
         server = server.copyWith(movieCount: c.movies, seriesCount: c.series);
       } catch (_) {}
       await ref.read(configProvider.notifier).upsertServer(server);
+      // 新服务器 / 修改后重建这台服务器的聚合索引（后台进行）
+      final id = server.id;
+      Future<void>.delayed(
+        const Duration(milliseconds: 500),
+        () => ref.read(indexSyncProvider.notifier).syncServer(id, forceFull: true),
+      );
       showToast('已保存「${server.name}」');
       if (mounted) context.go('/library');
     } catch (e) {
