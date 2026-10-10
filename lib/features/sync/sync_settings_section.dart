@@ -20,6 +20,7 @@ import '../../ui/widgets/buttons.dart';
 import '../../ui/widgets/form.dart';
 import '../../ui/widgets/toast.dart';
 import '../segments/segment_service.dart';
+import '../settings/support_actions.dart';
 
 /// 设置 → 同步配置（docs/11-sync.md）
 ///
@@ -54,6 +55,17 @@ class SyncSettingsSection extends ConsumerWidget {
           subtitle: tv ? '显示二维码：手机扫码填写，或 Windows 发送过来' : '从手机或其他电脑导入（Windows 可能会询问防火墙权限）',
           onConfigure: () => showReceiveDialog(context, ref),
         ),
+        if (!tv) ...[
+          const SizedBox(height: 12),
+          SettingsEntry(
+            title: '配置备份',
+            subtitle: '导出全部配置到文件（含密码和 Key，请妥善保存）；导入时与现有配置合并',
+            trailing: [
+              SmallIconButton(icon: Icons.file_upload_outlined, label: '导入', onPressed: () => importBackup(context)),
+            ],
+            onConfigure: () => exportBackup(ref),
+          ),
+        ],
         const SizedBox(height: 20),
         Text(
           '只在局域网内直接传输，不经过任何外部服务器；接收页面关闭或 5 分钟没有操作后自动停止，需要输入电视上的 4 位配对码。'

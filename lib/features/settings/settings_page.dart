@@ -21,6 +21,7 @@ import '../../ui/panels/form_dialog.dart';
 import '../danmaku/danmaku_settings_section.dart';
 import '../segments/segment_settings_section.dart';
 import '../sync/sync_settings_section.dart';
+import 'support_actions.dart';
 import '../update/update_controller.dart';
 import '../update/update_dialog.dart';
 
@@ -443,6 +444,12 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
           ),
           const SizedBox(height: 16),
           PillButton(icon: Icons.save_rounded, label: '保存更新地址', onPressed: _saveManifest),
+          const SizedBox(height: 24),
+          SettingsEntry(
+            title: '导出日志',
+            subtitle: PlatformProfile.isTv ? '出问题时导出最近的运行日志：手机扫码查看 / 保存' : '出问题时导出最近的运行日志，保存成文件发给开发者',
+            onConfigure: () => exportLogs(context, ref),
+          ),
           const SizedBox(height: 40),
           const _TmdbAttribution(),
         ],

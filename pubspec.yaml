@@ -30,6 +30,7 @@ environment:
 dependencies:
   crypto: ^3.0.7
   dio: ^5.11.1
+  file_selector: ^1.1.0
   flutter:
     sdk: flutter
   flutter_localizations:
