@@ -57,8 +57,6 @@ class ExoController(
         player = ExoPlayer.Builder(context, renderers)
             .setTrackSelector(trackSelector)
             .build()
-        player.addListener(listener)
-        player.addAnalyticsListener(analytics)
     }
 
     private val ticker = object : Runnable {
@@ -268,6 +266,12 @@ class ExoController(
             if (format.frameRate > 0) onVideoFrameRate(format.frameRate)
             sendVideo()
         }
+    }
+
+    // 放在 listener / analytics 声明之后：Kotlin 按声明顺序初始化属性
+    init {
+        player.addListener(listener)
+        player.addAnalyticsListener(analytics)
     }
 
     private fun sendVideo() {
