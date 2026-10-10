@@ -3,6 +3,7 @@ import 'package:flutter/rendering.dart' show ScrollCacheExtent;
 
 import '../../app/theme.dart';
 import '../focus/row_focus.dart';
+import '../focus/input_mode.dart';
 
 typedef FocusRowItemBuilder = Widget Function(BuildContext context, int index, FocusNode node);
 
@@ -108,6 +109,8 @@ class _FocusRowState extends State<FocusRow> implements FocusRowHandle {
   void _onItemFocused(int index) {
     _remembered = index;
     widget.onItemFocused?.call(index);
+    // 鼠标悬停 / 点击带来的焦点不滚动，布局保持不动
+    if (!InputMode.shouldAutoScroll) return;
 
     if (_scroll.hasClients) {
       final position = _scroll.position;

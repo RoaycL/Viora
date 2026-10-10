@@ -13,6 +13,7 @@ import '../../ui/glass/glass.dart';
 import '../../ui/panels/context_menu.dart';
 import '../../ui/widgets/buttons.dart';
 import '../../ui/widgets/toast.dart';
+import '../../ui/focus/input_mode.dart';
 
 /// 本次运行中是否已经对所有服务器测过速
 bool _probedThisSession = false;
@@ -260,7 +261,9 @@ class _ServerCard extends ConsumerWidget {
       radius: 24,
       scale: 1.05,
       onFocusChange: (focused) {
-        if (focused) Scrollable.ensureVisible(context, alignment: 0.4, duration: VMotion.scroll);
+        if (focused && InputMode.shouldAutoScroll) {
+          Scrollable.ensureVisible(context, alignment: 0.4, duration: VMotion.scroll);
+        }
       },
       onActivate: () {
         ref.read(configProvider.notifier).updateServer(s.id, (old) => old.copyWith(lastAccessAt: DateTime.now()));

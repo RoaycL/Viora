@@ -1,6 +1,7 @@
 import 'package:flutter/widgets.dart';
 
 import '../../app/theme.dart';
+import 'input_mode.dart';
 
 /// 表单 / 设置这类纵向页面：焦点移动到哪，就把它滚到视口中部（遥控器没有触摸滚动）。
 class FocusAutoScroll extends StatefulWidget {
@@ -33,6 +34,10 @@ class _FocusAutoScrollState extends State<FocusAutoScroll> {
   void _onFocus() {
     final node = FocusManager.instance.primaryFocus;
     if (node == null || identical(node, _last) || !node.ancestors.contains(_marker)) return;
+    if (!InputMode.shouldAutoScroll) {
+      _last = node;
+      return;
+    }
     _last = node;
     final ctx = node.context;
     if (ctx == null || !ctx.mounted) return;

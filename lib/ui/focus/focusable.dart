@@ -6,6 +6,7 @@ import 'package:flutter/services.dart';
 
 import '../../app/input/intents.dart';
 import '../../app/theme.dart';
+import 'input_mode.dart';
 
 /// 可聚焦元素的统一外壳（docs/07-input-control.md §2）。
 ///
@@ -137,10 +138,12 @@ class _VFocusableState extends State<VFocusable> {
           // 只响应真实的鼠标移动（onHover），不用 onEnter：
           // 键盘滚动页面时静止的指针会"进入"新元素，不能因此抢走焦点。
           onHover: (_) {
+            InputMode.markPointer();
             if (!_node.hasFocus) _node.requestFocus();
           },
           child: Listener(
             onPointerDown: (event) {
+              InputMode.markPointer();
               if (event.buttons == kSecondaryMouseButton) {
                 _node.requestFocus();
                 widget.onMenu?.call();

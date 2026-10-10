@@ -20,6 +20,7 @@ import '../../ui/widgets/toast.dart';
 import '../browse/media_cards.dart';
 import 'home_hero.dart';
 import 'home_mock.dart';
+import '../../ui/focus/input_mode.dart';
 
 /// 首页（docs/06-ui-design.md §4）：Hero + 推荐行，背景跟随焦点。
 class HomePage extends StatelessWidget {
@@ -119,7 +120,9 @@ class _HomeBodyState extends ConsumerState<_HomeBody> {
                     },
                     onFocused: () {
                       _setBackdrop(HomeMock.heroes[_heroIndex].art);
-                      _scroll.animateTo(0, duration: VMotion.scroll, curve: Curves.easeOutCubic);
+                      if (InputMode.shouldAutoScroll) {
+                        _scroll.animateTo(0, duration: VMotion.scroll, curve: Curves.easeOutCubic);
+                      }
                     },
                     onPlay: (t) => showToast('播放「${t.title}」将在 M1 接入播放器'),
                     onDetail: _openDetail,

@@ -16,6 +16,7 @@ import 'input/intents.dart';
 import 'router.dart';
 import 'shell.dart';
 import 'theme.dart';
+import '../ui/focus/input_mode.dart';
 
 /// 测试环境中关闭启动时的自动检查更新。
 bool autoCheckUpdatesOnLaunch = true;
@@ -34,6 +35,7 @@ class _VioraAppState extends ConsumerState<VioraApp> {
   @override
   void initState() {
     super.initState();
+    InputMode.install();
     _autoCheckUpdate();
   }
 

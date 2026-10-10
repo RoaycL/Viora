@@ -1,6 +1,7 @@
 import 'package:flutter/widgets.dart';
 
 import 'shell_focus.dart';
+import 'input_mode.dart';
 
 /// 一行可聚焦元素。行可以是横向滚动的卡片行，也可以是一组按钮。
 abstract class FocusRowHandle {
@@ -184,7 +185,9 @@ class _FocusButtonRowState extends State<FocusButtonRow> implements FocusRowHand
       node.addListener(() {
         if (node.hasPrimaryFocus) {
           _remembered = i;
-          Scrollable.ensureVisible(context, alignment: 0.3, duration: const Duration(milliseconds: 250));
+          if (InputMode.shouldAutoScroll) {
+            Scrollable.ensureVisible(context, alignment: 0.3, duration: const Duration(milliseconds: 250));
+          }
         }
       });
       _nodes.add(node);
