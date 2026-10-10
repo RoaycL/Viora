@@ -95,7 +95,7 @@ class ServerConfig {
   final String username;
 
   /// 保存密码以便令牌失效时自动重新登录。
-  /// TODO(M8)：改为 flutter_secure_storage。
+  /// 存储时放进系统密钥库（见 ConfigStore），配置文件里不保存明文。
   final String password;
   final String? userId;
   final String? token;
