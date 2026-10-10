@@ -15,6 +15,11 @@ class SearchIntent extends Intent {
   const SearchIntent();
 }
 
+/// Windows 全屏切换（F11）
+class FullScreenIntent extends Intent {
+  const FullScreenIntent();
+}
+
 /// 全局快捷键表。确认键（OK / Enter / A）不在这里：
 /// 由 VFocusable 自己处理，以便区分短按（执行）和长按（菜单）。
 const Map<ShortcutActivator, Intent> appShortcuts = <ShortcutActivator, Intent>{
@@ -37,6 +42,8 @@ const Map<ShortcutActivator, Intent> appShortcuts = <ShortcutActivator, Intent>{
   SingleActivator(LogicalKeyboardKey.find): SearchIntent(),
   SingleActivator(LogicalKeyboardKey.keyF, control: true): SearchIntent(),
   SingleActivator(LogicalKeyboardKey.gameButtonY): SearchIntent(),
+  // 全屏
+  SingleActivator(LogicalKeyboardKey.f11): FullScreenIntent(),
 };
 
 /// 确认键集合（短按执行，长按 ≥500ms 打开菜单）。

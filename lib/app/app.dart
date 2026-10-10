@@ -15,7 +15,9 @@ import 'input/back_handler.dart';
 import 'input/intents.dart';
 import 'router.dart';
 import 'shell.dart';
+import 'platform_profile.dart';
 import 'theme.dart';
+import 'window_frame.dart';
 import '../ui/focus/input_mode.dart';
 
 /// 测试环境中关闭启动时的自动检查更新。
@@ -32,10 +34,20 @@ class _VioraAppState extends ConsumerState<VioraApp> {
   late final GoRouter _router = buildRouter();
   DateTime? _lastBackOnHome;
 
+  /// Windows 标题栏的返回按钮是否显示：不在顶层页面（首页 / 资源库 / 搜索 / 收藏 / 记录 / 设置）时显示
+  final _canGoBack = ValueNotifier(false);
+
+  static const _tabRoots = {'/', '/library', '/search', '/favorites', '/history', '/settings'};
+
+  void _updateCanGoBack() {
+    _canGoBack.value = !_tabRoots.contains(_router.routerDelegate.currentConfiguration.uri.path);
+  }
+
   @override
   void initState() {
     super.initState();
     InputMode.install();
+    _router.routerDelegate.addListener(_updateCanGoBack);
     _autoCheckUpdate();
   }
 
@@ -57,6 +69,8 @@ class _VioraAppState extends ConsumerState<VioraApp> {
 
   @override
   void dispose() {
+    _router.routerDelegate.removeListener(_updateCanGoBack);
+    _canGoBack.dispose();
     _router.dispose();
     super.dispose();
   }
@@ -84,8 +98,8 @@ class _VioraAppState extends ConsumerState<VioraApp> {
       return;
     }
 
-    // 只有 Android（TV）在首页再按一次退出；Windows 由窗口关闭按钮退出。
-    if (defaultTargetPlatform != TargetPlatform.android) return;
+    // 只有 TV 在首页再按一次退出；Windows 由窗口关闭按钮退出。
+    if (!PlatformProfile.isTv) return;
     final now = DateTime.now();
     if (_lastBackOnHome != null && now.difference(_lastBackOnHome!) < const Duration(seconds: 2)) {
       SystemNavigator.pop();
@@ -115,16 +129,21 @@ class _VioraAppState extends ConsumerState<VioraApp> {
         ...WidgetsApp.defaultActions,
         BackIntent: CallbackAction<BackIntent>(onInvoke: (_) => _handleBack()),
         SearchIntent: CallbackAction<SearchIntent>(onInvoke: (_) => _router.go('/search')),
+        FullScreenIntent: CallbackAction<FullScreenIntent>(onInvoke: (_) => toggleFullScreen()),
       },
       // Material 提供默认文字样式（否则文字会以调试样式渲染）。
       builder: (context, child) => Material(
         type: MaterialType.transparency,
-        child: DesignScale(
-          child: Stack(
-            children: [
-              ?child,
-              const Positioned.fill(child: ToastOverlay()),
-            ],
+        child: _WithTitleBar(
+          canGoBack: _canGoBack,
+          onBack: _handleBack,
+          child: DesignScale(
+            child: Stack(
+              children: [
+                ?child,
+                const Positioned.fill(child: ToastOverlay()),
+              ],
+            ),
           ),
         ),
       ),
@@ -138,4 +157,36 @@ String parentLocation(String path) {
   if (server != null) return server[1]!;
   if (path.startsWith('/library/')) return '/library';
   return '/';
+}
+
+/// Windows：标题栏叠在最上层，不参与 1920 画布缩放
+/// 鼠标侧键（后退键）也触发返回。
+class _WithTitleBar extends StatelessWidget {
+  const _WithTitleBar({required this.child, required this.canGoBack, required this.onBack});
+
+  final Widget child;
+  final ValueListenable<bool> canGoBack;
+  final VoidCallback onBack;
+
+  @override
+  Widget build(BuildContext context) {
+    if (!PlatformProfile.isDesktop) return child;
+    return Listener(
+      onPointerDown: (e) {
+        if (e.buttons & kBackMouseButton != 0) onBack();
+      },
+      child: Stack(
+        children: [
+          Positioned.fill(child: child),
+          if (isDesktopWindow)
+            Positioned(
+              left: 0,
+              right: 0,
+              top: 0,
+              child: WindowTitleBar(canGoBack: canGoBack, onBack: onBack),
+            ),
+        ],
+      ),
+    );
+  }
 }

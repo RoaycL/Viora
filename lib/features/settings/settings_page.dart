@@ -1,8 +1,8 @@
 import 'package:dio/dio.dart';
-import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../app/platform_profile.dart';
 import '../../app/theme.dart';
 import '../../data/config/app_config.dart';
 import '../../data/config/config_store.dart';
@@ -200,7 +200,7 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
                   );
             },
           ),
-          if (defaultTargetPlatform == TargetPlatform.android) ...[
+          if (PlatformProfile.isTv) ...[
             const SizedBox(height: 24),
             VChoice<EnginePreference>(
               label: '播放内核（Android）',

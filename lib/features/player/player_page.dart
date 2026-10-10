@@ -6,6 +6,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../app/input/intents.dart';
+import '../../app/platform_profile.dart';
 import '../../app/theme.dart';
 import '../../data/config/app_config.dart';
 import '../../data/config/config_store.dart';
@@ -522,6 +523,7 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
                               source: _source,
                               pendingSeek: _pendingSeek,
                               onMenu: _openMenu,
+                              onBack: () => context.pop(),
                             ),
                           ),
                         ),
@@ -551,8 +553,10 @@ class _Osd extends StatelessWidget {
     required this.source,
     required this.pendingSeek,
     required this.onMenu,
+    required this.onBack,
   });
 
+  final VoidCallback onBack;
   final EngineState state;
   final String title;
   final String? subtitle;
@@ -585,6 +589,11 @@ class _Osd extends StatelessWidget {
           child: Row(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
+              // Windows 用鼠标时需要可点击的返回按钮；TV 用遥控器返回键
+              if (PlatformProfile.isDesktop) ...[
+                CircleIconButton(icon: Icons.arrow_back_rounded, tooltip: '返回', onPressed: onBack),
+                const SizedBox(width: 24),
+              ],
               Expanded(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
