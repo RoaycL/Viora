@@ -272,7 +272,7 @@ class _ServerCard extends ConsumerWidget {
       _Status.down => VColors.bad,
       _Status.unknown => VColors.textMuted,
     };
-    final icon = _iconGradient(s.displayName);
+    final icon = _typeGradient(s.type);
     return VFocusable(
       autofocus: autofocus,
       radius: VRadius.panel,
@@ -321,24 +321,19 @@ class _ServerCard extends ConsumerWidget {
               children: [
                 Row(
                   children: [
-                    // 用户头像；没有头像时显示服务器名首字母
+                    // 用户头像；取不到时显示服务器类型（Emby / Jellyfin）的图标
                     Container(
                       width: 52,
                       height: 52,
                       clipBehavior: Clip.antiAlias,
                       decoration: BoxDecoration(
                         borderRadius: BorderRadius.circular(VRadius.md),
-                        gradient: icon,
+                        color: const Color(0xFF1C1F27),
                         boxShadow: const [BoxShadow(color: Color(0x59000000), blurRadius: 16, offset: Offset(0, 6))],
                       ),
                       child: _UserAvatar(
                         serverId: s.id,
-                        fallback: Center(
-                          child: Text(
-                            s.displayName.characters.first.toUpperCase(),
-                            style: const TextStyle(fontSize: 24, fontWeight: FontWeight.w800),
-                          ),
-                        ),
+                        fallback: Padding(padding: const EdgeInsets.all(9), child: ServerTypeLogo(s.type)),
                       ),
                     ),
                     const SizedBox(width: 12),
@@ -430,19 +425,31 @@ class _ServerCard extends ConsumerWidget {
 
 const _countStyle = TextStyle(fontWeight: FontWeight.w600, color: Colors.white);
 
-const _iconColors = <(Color, Color)>[
-  (Color(0xFF8FD3FF), Color(0xFF2D7FD3)),
-  (Color(0xFFFFB36B), Color(0xFFE0533C)),
-  (Color(0xFFC86BFF), Color(0xFF5A1E8C)),
-  (Color(0xFF7CFFB2), Color(0xFF2E9C6A)),
-  (Color(0xFFFFB3C7), Color(0xFFE05A86)),
-  (Color(0xFF8FA2FF), Color(0xFF3B4CC0)),
-  (Color(0xFFFFD36B), Color(0xFFF08A24)),
-];
+/// 卡片光晕颜色：跟随服务器类型的品牌色
+LinearGradient _typeGradient(ServerType type) => LinearGradient(
+  begin: Alignment.topLeft,
+  end: Alignment.bottomRight,
+  colors: switch (type) {
+    ServerType.emby => const [Color(0xFF7EE07A), Color(0xFF2E8B2A)],
+    ServerType.jellyfin => const [Color(0xFFAA5CC3), Color(0xFF00A4DC)],
+  },
+);
 
-LinearGradient _iconGradient(String name) {
-  final (a, b) = _iconColors[name.codeUnits.fold<int>(0, (x, y) => x + y) % _iconColors.length];
-  return LinearGradient(begin: Alignment.topLeft, end: Alignment.bottomRight, colors: [a, b]);
+/// Emby / Jellyfin 官方图标
+class ServerTypeLogo extends StatelessWidget {
+  const ServerTypeLogo(this.type, {super.key});
+
+  final ServerType type;
+
+  @override
+  Widget build(BuildContext context) => Image.asset(
+    switch (type) {
+      ServerType.emby => 'assets/images/emby_logo.png',
+      ServerType.jellyfin => 'assets/images/jellyfin_logo.png',
+    },
+    fit: BoxFit.contain,
+    filterQuality: FilterQuality.medium,
+  );
 }
 
 String _ago(DateTime? t) {

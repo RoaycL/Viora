@@ -641,6 +641,11 @@ class _TmdbAttribution extends StatelessWidget {
                   'This product uses the TMDB API but is not endorsed or certified by TMDB.',
                   style: VText.small.copyWith(color: VColors.textTertiary),
                 ),
+                const SizedBox(height: 6),
+                Text(
+                  'Emby、Jellyfin 图标归各自项目所有，仅用于标识服务器类型；Jellyfin 图标按 CC BY-SA 4.0 使用。',
+                  style: VText.small.copyWith(color: VColors.textTertiary),
+                ),
               ],
             ),
           ),
