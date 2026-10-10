@@ -72,6 +72,46 @@ void main() {
       expect(c.finalUrl(api, RequestKind.stream).toString(), startsWith('https://embyproxy.example.com/proxy/https/'));
     });
 
+    test('内网地址即使勾了走反向代理也直连（公网代理连不到家里的网络）', () {
+      const lan = ServerConfig(
+        id: 's2',
+        type: ServerType.emby,
+        name: 'nas',
+        username: 'u',
+        lines: [ServerLine(id: 'l', name: '内网', url: 'http://192.168.1.10:8096', proxied: true)],
+      );
+      final c = RequestComposer(
+        config: const AppConfig(
+          deviceId: 'dev',
+          proxy: ProxyConfig(baseUrl: base),
+        ),
+        server: lan,
+        line: lan.lines.first,
+        appVersion: '0.2.0',
+      );
+      final api = c.resolve('/Users/AuthenticateByName');
+      expect(c.usesProxy(RequestKind.api), isFalse);
+      expect(c.finalUrl(api, RequestKind.api).toString(), 'http://192.168.1.10:8096/emby/Users/AuthenticateByName');
+    });
+
+    test('局域网地址识别', () {
+      for (final h in [
+        '192.168.1.2',
+        '10.0.0.5',
+        '172.16.3.4',
+        '172.31.0.1',
+        'localhost',
+        'nas',
+        'nas.local',
+        'pi.lan',
+      ]) {
+        expect(isLanHost(h), isTrue, reason: h);
+      }
+      for (final h in ['emby.a.com', '8.8.8.8', '172.32.0.1', '1.2.3.4', '']) {
+        expect(isLanHost(h), isFalse, reason: h);
+      }
+    });
+
     test('播放 UA：服务器覆盖 > 全局 > 默认；API 默认不用播放 UA', () {
       const global = AppConfig(
         deviceId: 'dev',

@@ -81,6 +81,8 @@ class RequestComposer {
 
   bool usesProxy(RequestKind kind) {
     if (!line.proxied || !config.proxy.enabled) return false;
+    // 内网地址（192.168.x.x、10.x.x.x、NAS 主机名等）不能走公网上的反向代理：代理服务器连不到你家里的网络
+    if (isLanHost(Uri.tryParse(line.url.trim())?.host ?? '')) return false;
     return config.proxy.scope == ProxyScope.all || kind == RequestKind.stream;
   }
 
@@ -127,4 +129,18 @@ class RequestComposer {
     }
     return h;
   }
+}
+
+/// 局域网地址：私有网段 IPv4、localhost、`.local` / `.lan` 或不带点的主机名（如 `nas`）
+bool isLanHost(String host) {
+  final h = host.trim().toLowerCase();
+  if (h.isEmpty) return false;
+  if (h == 'localhost' || h.endsWith('.local') || h.endsWith('.lan') || h.endsWith('.home')) return true;
+  final ip = RegExp(r'^(\d+)\.(\d+)\.(\d+)\.(\d+)$').firstMatch(h);
+  if (ip != null) {
+    final a = int.parse(ip[1]!), b = int.parse(ip[2]!);
+    return a == 10 || a == 127 || (a == 192 && b == 168) || (a == 172 && b >= 16 && b <= 31) || (a == 169 && b == 254);
+  }
+  if (h.startsWith('[') || h.contains(':')) return h.startsWith('[fe80') || h.startsWith('[fd') || h.startsWith('fd');
+  return !h.contains('.');
 }

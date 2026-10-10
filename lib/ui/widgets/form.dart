@@ -19,7 +19,12 @@ class VTextField extends StatefulWidget {
     this.width,
     this.onSubmitted,
     this.helper,
+    this.credential,
   });
+
+  /// 账号、密码、地址、Key：关闭输入法的自动纠错、联想和大小写（电视输入法常把 admin 改成 Admin、在末尾补空格）。
+  /// 默认：密码框和网址框开启
+  final bool? credential;
 
   final String label;
   final TextEditingController controller;
@@ -39,6 +44,12 @@ class VTextField extends StatefulWidget {
 
 class _VTextFieldState extends State<VTextField> {
   final _node = FocusNode(debugLabel: 'VTextField');
+  final _eyeNode = FocusNode(debugLabel: 'VTextField.eye');
+
+  /// 密码框：显示明文（电视上用遥控器输完可以核对一遍）
+  bool _reveal = false;
+
+  bool get _credential => widget.credential ?? (widget.obscure || widget.keyboardType == TextInputType.url);
 
   @override
   void initState() {
@@ -49,6 +60,7 @@ class _VTextFieldState extends State<VTextField> {
   @override
   void dispose() {
     _node.dispose();
+    _eyeNode.dispose();
     super.dispose();
   }
 
@@ -58,6 +70,14 @@ class _VTextFieldState extends State<VTextField> {
     if (key == LogicalKeyboardKey.arrowDown || key == LogicalKeyboardKey.arrowUp) {
       _node.focusInDirection(key == LogicalKeyboardKey.arrowDown ? TraversalDirection.down : TraversalDirection.up);
       return KeyEventResult.handled;
+    }
+    // 密码框：光标在末尾时按 → 移到「显示密码」按钮
+    if (key == LogicalKeyboardKey.arrowRight && widget.obscure && _node.hasFocus) {
+      final sel = widget.controller.selection;
+      if (!sel.isValid || sel.baseOffset >= widget.controller.text.length) {
+        _eyeNode.requestFocus();
+        return KeyEventResult.handled;
+      }
     }
     if (key == LogicalKeyboardKey.select || key == LogicalKeyboardKey.gameButtonA) {
       SystemChannels.textInput.invokeMethod<void>('TextInput.show');
@@ -76,41 +96,82 @@ class _VTextFieldState extends State<VTextField> {
         children: [
           Text(widget.label, style: VText.caption.copyWith(color: VColors.textTertiary)),
           const SizedBox(height: 10),
-          Focus(
-            canRequestFocus: false,
-            skipTraversal: true,
-            onKeyEvent: _onKey,
-            child: AnimatedContainer(
-              duration: VMotion.focus,
-              padding: const EdgeInsets.symmetric(horizontal: 22),
-              height: 68,
-              decoration: BoxDecoration(
-                color: focused ? const Color(0x24FFFFFF) : const Color(0x12FFFFFF),
-                borderRadius: BorderRadius.circular(VRadius.md),
-                border: Border.all(color: focused ? Colors.white : const Color(0x1FFFFFFF), width: focused ? 3 : 1),
-              ),
-              alignment: Alignment.centerLeft,
-              child: TextField(
-                focusNode: _node,
-                controller: widget.controller,
-                autofocus: widget.autofocus,
-                obscureText: widget.obscure,
-                keyboardType: widget.keyboardType,
-                textInputAction: TextInputAction.next,
-                onSubmitted: (v) {
-                  widget.onSubmitted?.call(v);
-                  _node.focusInDirection(TraversalDirection.down);
-                },
-                cursorColor: VColors.accent,
-                style: VText.label,
-                decoration: InputDecoration(
-                  border: InputBorder.none,
-                  isCollapsed: true,
-                  hintText: widget.hint,
-                  hintStyle: VText.label.copyWith(color: VColors.textMuted),
+          Row(
+            children: [
+              Expanded(
+                child: Focus(
+                  canRequestFocus: false,
+                  skipTraversal: true,
+                  onKeyEvent: _onKey,
+                  child: AnimatedContainer(
+                    duration: VMotion.focus,
+                    padding: const EdgeInsets.symmetric(horizontal: 22),
+                    height: 68,
+                    decoration: BoxDecoration(
+                      color: focused ? const Color(0x24FFFFFF) : const Color(0x12FFFFFF),
+                      borderRadius: BorderRadius.circular(VRadius.md),
+                      border: Border.all(
+                        color: focused ? Colors.white : const Color(0x1FFFFFFF),
+                        width: focused ? 3 : 1,
+                      ),
+                    ),
+                    alignment: Alignment.centerLeft,
+                    child: TextField(
+                      focusNode: _node,
+                      controller: widget.controller,
+                      autofocus: widget.autofocus,
+                      obscureText: widget.obscure && !_reveal,
+                      keyboardType: widget.obscure && _reveal ? TextInputType.visiblePassword : widget.keyboardType,
+                      autocorrect: !_credential,
+                      enableSuggestions: !_credential,
+                      smartDashesType: _credential ? SmartDashesType.disabled : null,
+                      smartQuotesType: _credential ? SmartQuotesType.disabled : null,
+                      textCapitalization: TextCapitalization.none,
+                      textInputAction: TextInputAction.next,
+                      onSubmitted: (v) {
+                        widget.onSubmitted?.call(v);
+                        _node.focusInDirection(TraversalDirection.down);
+                      },
+                      cursorColor: VColors.accent,
+                      style: VText.label,
+                      decoration: InputDecoration(
+                        border: InputBorder.none,
+                        isCollapsed: true,
+                        hintText: widget.hint,
+                        hintStyle: VText.label.copyWith(color: VColors.textMuted),
+                      ),
+                    ),
+                  ),
                 ),
               ),
-            ),
+              if (widget.obscure) ...[
+                const SizedBox(width: 12),
+                VFocusable(
+                  focusNode: _eyeNode,
+                  radius: VRadius.md,
+                  scale: 1.04,
+                  showRing: false,
+                  onActivate: () => setState(() => _reveal = !_reveal),
+                  builder: (context, focused) => Tooltip(
+                    message: _reveal ? '隐藏密码' : '显示密码',
+                    child: AnimatedContainer(
+                      duration: VMotion.focus,
+                      width: 68,
+                      height: 68,
+                      decoration: BoxDecoration(
+                        color: focused ? Colors.white : const Color(0x12FFFFFF),
+                        borderRadius: BorderRadius.circular(VRadius.md),
+                      ),
+                      child: Icon(
+                        _reveal ? Icons.visibility_off_rounded : Icons.visibility_rounded,
+                        size: 28,
+                        color: focused ? const Color(0xFF0B0C10) : Colors.white,
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            ],
           ),
           if (widget.helper != null) ...[
             const SizedBox(height: 8),

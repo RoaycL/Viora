@@ -134,6 +134,22 @@ class EmbyClient {
   // ───────────────────────── 登录 ─────────────────────────
 
   Future<ServerConfig> login() async {
+    try {
+      return await _login(_server.password);
+    } on MediaServerException catch (e) {
+      // 电视屏幕键盘有时会在密码前后带上空格：去掉空格再试一次
+      final trimmed = _server.password.trim();
+      if (e.statusCode == 401 && trimmed != _server.password) {
+        await _login(trimmed);
+        _server = _server.copyWith(password: trimmed);
+        onServerChanged?.call(_server);
+        return _server;
+      }
+      rethrow;
+    }
+  }
+
+  Future<ServerConfig> _login(String password) async {
     final c = composer;
     final url = c.finalUrl(c.resolve('/Users/AuthenticateByName'), RequestKind.api);
     final headers = {...c.headers(RequestKind.api)}
@@ -143,10 +159,17 @@ class EmbyClient {
       );
     final r = await _dio().postUri<dynamic>(
       url,
-      data: {'Username': _server.username, 'Pw': _server.password},
+      data: {'Username': _server.username, 'Pw': password},
       options: Options(headers: headers, contentType: Headers.jsonContentType),
     );
-    if (r.statusCode == 401 || r.statusCode == 403) throw const MediaServerException('用户名或密码错误', statusCode: 401);
+    if (r.statusCode == 401 || r.statusCode == 403) {
+      // 说明是哪个地址、是否经过反向代理拒绝的，方便排查（内网地址、代理、账号大小写等）
+      final via = c.usesProxy(RequestKind.api) ? '，经反向代理' : '';
+      throw MediaServerException(
+        '用户名或密码错误（${c.apiBase.host}${c.apiBase.hasPort ? ':${c.apiBase.port}' : ''}$via 返回 HTTP ${r.statusCode}）',
+        statusCode: 401,
+      );
+    }
     if (r.statusCode != 200 || r.data is! Map) {
       throw MediaServerException('登录失败（HTTP ${r.statusCode}）', statusCode: r.statusCode);
     }
