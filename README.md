@@ -22,6 +22,8 @@ UI 参考 iOS 端 Rex 的信息结构（首页 / 详情 / 资源库），并针�
 
 当前进度：**M0 工程骨架已完成**（假数据），见 [docs/09-roadmap.md](docs/09-roadmap.md)。
 
+片段数据接入：已实现 **IntroDB / TheIntroDB / PublicMetaDB** 的读取 Provider、时间轴校验合并与缓存；在「设置 → 片头片尾与前情提要」配置来源、优先级、API Key 和自动跳过策略，并可按作品 ID 查询片段。PublicMetaDB 需 Key，当前提供片头和片尾；前情提要由另外两个来源提供。TheOtherDB 等待补充具体接口。实际播放内核尚未实现，自动跳过控制层需在真实播放会话中绑定，详见 [docs/05-metadata-and-segments.md](docs/05-metadata-and-segments.md)。
+
 ```bash
 flutter pub get
 flutter run -d windows          # Windows（需要 Visual Studio C++ 桌面开发组件）

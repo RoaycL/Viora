@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:go_router/go_router.dart';
 
 import '../../app/theme.dart';
 import '../../ui/focus/focusable.dart';
@@ -110,8 +111,14 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
             ),
           ),
           const SizedBox(height: 32),
+          PillButton(
+            label: '片头片尾与前情提要',
+            icon: Icons.skip_next_rounded,
+            onPressed: () => context.push('/settings/segments'),
+          ),
+          const SizedBox(height: 32),
           const Text(
-            '服务器与线路、反向代理、播放 UA、片头片尾、字幕、元数据等设置会随 M1 起的版本逐步开放。',
+            '服务器与线路、反向代理、播放 UA、字幕、元数据等设置会随 M1 起的版本逐步开放。',
             style: TextStyle(fontSize: 20, color: VColors.textTertiary),
           ),
         ],

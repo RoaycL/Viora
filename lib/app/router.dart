@@ -6,6 +6,7 @@ import '../features/detail/detail_page.dart';
 import '../features/home/home_page.dart';
 import '../features/library/library_page.dart';
 import '../features/settings/settings_page.dart';
+import '../features/segments/segment_settings_page.dart';
 import 'shell.dart';
 
 final rootNavigatorKey = GlobalKey<NavigatorState>(debugLabel: 'root');
@@ -33,6 +34,7 @@ GoRouter buildRouter() {
             const PlaceholderPage(title: '观看记录', milestone: 'M3', description: '本地统一观看记录（按 TMDB ID 聚合），与各服务器进度同步。'),
           ),
           _tab('/settings', const SettingsPage()),
+          _tab('/settings/segments', const SegmentSettingsPage()),
         ],
       ),
       GoRoute(
