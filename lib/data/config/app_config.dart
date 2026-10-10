@@ -1,5 +1,7 @@
 import 'dart:math';
 
+import '../danmaku/danmaku_models.dart';
+
 /// 本地保存的全部配置（服务器、线路、反向代理、播放 UA 等），整体序列化为一个 JSON。
 /// 设计见 docs/02-architecture.md §2、docs/03-media-servers.md。
 
@@ -370,12 +372,148 @@ class TmdbConfig {
   );
 }
 
+/// 弹幕（docs/10-danmaku.md）：最多 3 个弹幕服务器（danmu_api，地址格式 `https://{域名}/{token}`）并发搜索
+class DanmakuConfig {
+  const DanmakuConfig({
+    this.enabled = true,
+    this.servers = const [],
+    this.maxCount = 3000,
+    this.fontSize = 34,
+    this.opacity = 0.85,
+    this.area = 0.5,
+    this.speed = 9,
+    this.showFixed = true,
+    this.convert = DanmakuConvert.none,
+    this.colorMode = DanmakuColorMode.none,
+    this.blockWords = '',
+    this.searchBlockWords = '',
+  });
+
+  /// 播放时自动加载并显示弹幕
+  final bool enabled;
+
+  /// 弹幕服务器地址（最多 3 个）
+  final List<String> servers;
+
+  /// 每集最多显示多少条；0 = 不限。超出时按全片等比例随机剔除
+  final int maxCount;
+
+  /// 字号（设计像素）
+  final double fontSize;
+
+  /// 不透明度 0~1
+  final double opacity;
+
+  /// 滚动弹幕占屏幕高度的比例
+  final double area;
+
+  /// 一条滚动弹幕从右到左走完屏幕的秒数
+  final double speed;
+
+  /// 显示顶部 / 底部固定弹幕
+  final bool showFixed;
+  final DanmakuConvert convert;
+  final DanmakuColorMode colorMode;
+
+  /// 弹幕内容屏蔽词（逗号分隔）
+  final String blockWords;
+
+  /// 搜索结果屏蔽词（逗号分隔），如「解说,手语」
+  final String searchBlockWords;
+
+  static const maxServers = 3;
+  static const countChoices = [1000, 3000, 5000, 0];
+  static const fontChoices = [28.0, 34.0, 40.0, 48.0];
+  static const opacityChoices = [0.4, 0.6, 0.85, 1.0];
+  static const areaChoices = [0.25, 0.5, 0.75, 1.0];
+  static const speedChoices = [12.0, 9.0, 6.0];
+
+  /// 已填写的服务器（规范化：补协议、去掉末尾斜杠）
+  List<String> get activeServers => [
+    for (final s in servers)
+      if (normalizeServer(s).isNotEmpty) normalizeServer(s),
+  ];
+
+  bool get ready => enabled && activeServers.isNotEmpty;
+
+  static String normalizeServer(String raw) {
+    var s = raw.trim().replaceAll(RegExp(r'/+$'), '');
+    if (s.isEmpty) return '';
+    if (!s.contains('://')) {
+      // 局域网 / IP 地址默认 http，域名默认 https
+      final host = s.split(RegExp('[:/]')).first;
+      final local = RegExp(r'^(\d+\.){3}\d+$').hasMatch(host) || host == 'localhost' || !host.contains('.');
+      s = '${local ? 'http' : 'https'}://$s';
+    }
+    return s;
+  }
+
+  DanmakuConfig copyWith({
+    bool? enabled,
+    List<String>? servers,
+    int? maxCount,
+    double? fontSize,
+    double? opacity,
+    double? area,
+    double? speed,
+    bool? showFixed,
+    DanmakuConvert? convert,
+    DanmakuColorMode? colorMode,
+    String? blockWords,
+    String? searchBlockWords,
+  }) => DanmakuConfig(
+    enabled: enabled ?? this.enabled,
+    servers: servers ?? this.servers,
+    maxCount: maxCount ?? this.maxCount,
+    fontSize: fontSize ?? this.fontSize,
+    opacity: opacity ?? this.opacity,
+    area: area ?? this.area,
+    speed: speed ?? this.speed,
+    showFixed: showFixed ?? this.showFixed,
+    convert: convert ?? this.convert,
+    colorMode: colorMode ?? this.colorMode,
+    blockWords: blockWords ?? this.blockWords,
+    searchBlockWords: searchBlockWords ?? this.searchBlockWords,
+  );
+
+  Map<String, dynamic> toJson() => {
+    'enabled': enabled,
+    'servers': servers,
+    'maxCount': maxCount,
+    'fontSize': fontSize,
+    'opacity': opacity,
+    'area': area,
+    'speed': speed,
+    'showFixed': showFixed,
+    'convert': convert.name,
+    'colorMode': colorMode.name,
+    'blockWords': blockWords,
+    'searchBlockWords': searchBlockWords,
+  };
+
+  factory DanmakuConfig.fromJson(Map<String, dynamic> j) => DanmakuConfig(
+    enabled: j['enabled'] as bool? ?? true,
+    servers: [for (final s in (j['servers'] as List? ?? const [])) s.toString()],
+    maxCount: (j['maxCount'] as num?)?.toInt() ?? 3000,
+    fontSize: (j['fontSize'] as num?)?.toDouble() ?? 34,
+    opacity: (j['opacity'] as num?)?.toDouble() ?? 0.85,
+    area: (j['area'] as num?)?.toDouble() ?? 0.5,
+    speed: (j['speed'] as num?)?.toDouble() ?? 9,
+    showFixed: j['showFixed'] as bool? ?? true,
+    convert: DanmakuConvert.parse(j['convert'] as String?),
+    colorMode: DanmakuColorMode.parse(j['colorMode'] as String?),
+    blockWords: j['blockWords'] as String? ?? '',
+    searchBlockWords: j['searchBlockWords'] as String? ?? '',
+  );
+}
+
 class AppConfig {
   const AppConfig({
     this.servers = const [],
     this.proxy = const ProxyConfig(),
     this.playback = const PlaybackConfig(),
     this.tmdb = const TmdbConfig(),
+    this.danmaku = const DanmakuConfig(),
     this.deviceId = '',
   });
 
@@ -398,6 +536,7 @@ class AppConfig {
   final ProxyConfig proxy;
   final PlaybackConfig playback;
   final TmdbConfig tmdb;
+  final DanmakuConfig danmaku;
 
   /// 每台设备固定的 DeviceId（避免被服务器当成新设备反复占用设备数）
   final String deviceId;
@@ -409,12 +548,14 @@ class AppConfig {
     ProxyConfig? proxy,
     PlaybackConfig? playback,
     TmdbConfig? tmdb,
+    DanmakuConfig? danmaku,
     String? deviceId,
   }) => AppConfig(
     servers: servers ?? this.servers,
     proxy: proxy ?? this.proxy,
     playback: playback ?? this.playback,
     tmdb: tmdb ?? this.tmdb,
+    danmaku: danmaku ?? this.danmaku,
     deviceId: deviceId ?? this.deviceId,
   );
 
@@ -424,6 +565,7 @@ class AppConfig {
     'proxy': proxy.toJson(),
     'playback': playback.toJson(),
     'tmdb': tmdb.toJson(),
+    'danmaku': danmaku.toJson(),
     'deviceId': deviceId,
   };
 
@@ -432,6 +574,7 @@ class AppConfig {
     proxy: ProxyConfig.fromJson(j['proxy'] as Map<String, dynamic>? ?? const {}),
     playback: PlaybackConfig.fromJson(j['playback'] as Map<String, dynamic>? ?? const {}),
     tmdb: TmdbConfig.fromJson(j['tmdb'] as Map<String, dynamic>? ?? const {}),
+    danmaku: DanmakuConfig.fromJson(j['danmaku'] as Map<String, dynamic>? ?? const {}),
     deviceId: j['deviceId'] as String? ?? '',
   );
 }

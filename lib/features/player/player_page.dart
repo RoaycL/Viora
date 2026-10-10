@@ -11,6 +11,8 @@ import '../../app/theme.dart';
 import '../../data/aggregate/sources.dart';
 import '../../data/config/app_config.dart';
 import '../../data/config/config_store.dart';
+import '../../data/danmaku/danmaku_client.dart';
+import '../../data/danmaku/danmaku_models.dart';
 import '../../data/emby/emby_client.dart';
 import '../../data/media/media_models.dart';
 import '../../data/media/server_registry.dart';
@@ -24,6 +26,10 @@ import '../../player/segment_skip_controller.dart';
 import '../../domain/models/segment.dart';
 import '../../data/index/media_index.dart';
 import '../segments/segment_service.dart';
+import '../danmaku/danmaku_layer.dart';
+import '../danmaku/danmaku_service.dart';
+import '../../ui/widgets/form.dart';
+import '../../ui/panels/form_dialog.dart';
 import '../../ui/glass/glass.dart';
 import '../../ui/scale/design_scale.dart';
 import '../../ui/panels/context_menu.dart';
@@ -75,6 +81,14 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
   SegmentPlaybackSession? _segments;
   SegmentSkipAction? _skipPrompt;
   List<Segment> _segmentList = const [];
+
+  /// 弹幕（docs/10-danmaku.md）：起播后后台匹配加载，不阻塞播放
+  DanmakuTrack? _danmaku;
+  DanmakuTarget? _danmakuTarget;
+  DanmakuChoice _danmakuChoice = const DanmakuChoice();
+  bool _danmakuVisible = true;
+  bool _danmakuLoading = false;
+  String? _danmakuError;
 
   /// 剧集看到 85% 时预加载的下一集（播完直接跳过去，起播更快）
   MediaItem? _nextEpisode;
@@ -213,6 +227,7 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
       _item = await itemFuture;
       if (mounted) setState(() {});
       unawaited(_beginSegments());
+      unawaited(_beginDanmaku());
       ref.read(configProvider.notifier).updateServer(widget.serverId, (s) => s.copyWith(lastAccessAt: DateTime.now()));
     } catch (e) {
       if (mounted) setState(() => _error = e.toString());
@@ -309,6 +324,220 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
     } catch (e) {
       debugPrint('segments unavailable: $e');
     }
+  }
+
+  // ───────────────────────── 弹幕 ─────────────────────────
+
+  DanmakuClient? get _danmakuClient {
+    final c = ref.read(configProvider).danmaku;
+    return c.activeServers.isEmpty ? null : DanmakuClient(c);
+  }
+
+  /// 起播后自动匹配：记住的手动选择 → 服务器自动匹配 → 按标题搜索
+  Future<void> _beginDanmaku() async {
+    final item = _item;
+    final config = ref.read(configProvider).danmaku;
+    if (item == null || _danmakuTarget != null) return;
+    if (item.kind != MediaKind.movie && item.kind != MediaKind.episode) return;
+    final target = _danmakuTarget = DanmakuTarget.of(item);
+    _danmakuVisible = config.enabled;
+    final choice = await DanmakuChoiceStore.get(target.key);
+    if (choice != null) _danmakuChoice = choice;
+    if (!config.ready) return;
+    await _loadDanmaku(() async => resolveDanmaku(DanmakuClient(config), target, choice: choice));
+  }
+
+  Future<void> _loadDanmaku(Future<DanmakuTrack?> Function() load, {bool announce = false}) async {
+    if (mounted) setState(() => _danmakuLoading = true);
+    try {
+      var track = await load();
+      if (track != null && track.comments.isEmpty) track = null;
+      if (!mounted) return;
+      setState(() {
+        _danmaku = track;
+        _danmakuError = track == null ? '没有匹配到弹幕' : null;
+      });
+      if (track != null && (announce || _danmakuVisible)) {
+        showToast('弹幕：${track.comments.length} 条 · ${track.source}');
+      } else if (track == null && announce) {
+        showToast('没有找到这一集的弹幕');
+      }
+    } catch (e) {
+      debugPrint('danmaku: $e');
+      if (mounted) setState(() => _danmakuError = '$e');
+      if (announce) showToast('加载弹幕失败：$e');
+    } finally {
+      if (mounted) setState(() => _danmakuLoading = false);
+    }
+  }
+
+  void _toggleDanmaku() {
+    if (_danmaku == null && !_danmakuLoading) {
+      _openDanmakuMenu();
+      return;
+    }
+    setState(() => _danmakuVisible = !_danmakuVisible);
+    showToast(_danmakuVisible ? '弹幕：开' : '弹幕：关');
+  }
+
+  Future<void> _setDanmakuShift(int ms) async {
+    final target = _danmakuTarget;
+    setState(() => _danmakuChoice = _danmakuChoice.copyWith(shiftMs: ms));
+    showToast(ms == 0 ? '弹幕时间：不偏移' : '弹幕时间：${ms > 0 ? '延后' : '提前'} ${(ms.abs() / 1000).toStringAsFixed(1)} 秒');
+    if (target != null) await DanmakuChoiceStore.set(target.key, _danmakuChoice);
+  }
+
+  String get _danmakuStatus {
+    if (_danmakuLoading) return '加载中…';
+    if (_danmaku != null) return '${_danmakuVisible ? '开' : '关'} · ${_danmaku!.comments.length} 条';
+    if (ref.read(configProvider).danmaku.activeServers.isEmpty) return '未配置服务器';
+    return _danmakuError == null ? '未加载' : '未匹配';
+  }
+
+  Future<void> _openDanmakuMenu() async {
+    final client = _danmakuClient;
+    final target = _danmakuTarget ?? (_item == null ? null : DanmakuTarget.of(_item!));
+    if (client == null || target == null) {
+      showToast('还没有配置弹幕服务器：设置 → 弹幕');
+      return;
+    }
+    _danmakuTarget ??= target;
+    final shift = _danmakuChoice.shiftMs;
+    await showContextMenu(
+      context,
+      title: _danmaku == null ? '弹幕' : '弹幕 · ${_danmaku!.source}',
+      actions: [
+        if (_danmaku != null)
+          MenuAction(
+            _danmakuVisible ? '隐藏弹幕' : '显示弹幕',
+            _danmakuVisible ? Icons.speaker_notes_off_outlined : Icons.speaker_notes_outlined,
+            _toggleDanmaku,
+          ),
+        MenuAction('搜索「${target.title}」并选择', Icons.manage_search_rounded, () => _searchDanmaku(target.title)),
+        MenuAction('按关键词搜索…', Icons.keyboard_rounded, () => _searchDanmakuByKeyword(target.title)),
+        MenuAction(
+          '时间偏移 · ${shift == 0 ? '无' : '${shift > 0 ? '+' : ''}${(shift / 1000).toStringAsFixed(1)} 秒'}',
+          Icons.schedule_rounded,
+          () => showContextMenu(
+            context,
+            title: '弹幕时间偏移（当前 ${(shift / 1000).toStringAsFixed(1)} 秒）',
+            actions: [
+              for (final d in const [-5000, -1000, -500, 500, 1000, 5000])
+                MenuAction(
+                  '${d > 0 ? '延后' : '提前'} ${(d.abs() / 1000).toStringAsFixed(1)} 秒',
+                  d > 0 ? Icons.fast_forward_rounded : Icons.fast_rewind_rounded,
+                  () => _setDanmakuShift(_danmakuChoice.shiftMs + d),
+                ),
+              MenuAction('重置', Icons.restart_alt_rounded, () => _setDanmakuShift(0)),
+            ],
+          ),
+        ),
+        MenuAction(
+          '重新自动匹配',
+          Icons.refresh_rounded,
+          () => _loadDanmaku(() => resolveDanmaku(client, target, choice: _danmakuChoice), announce: true),
+        ),
+      ],
+    );
+    if (mounted) _focus.requestFocus();
+  }
+
+  Future<void> _searchDanmakuByKeyword(String initial) async {
+    final controller = TextEditingController(text: initial);
+    String? keyword;
+    await showFormDialog(
+      context,
+      title: '搜索弹幕',
+      description: '输入作品名，比如中文名或别名',
+      saveLabel: '搜索',
+      children: [VTextField(label: '关键词', controller: controller, autofocus: true)],
+      onSave: () async {
+        keyword = controller.text.trim();
+        return keyword!.isNotEmpty;
+      },
+    );
+    controller.dispose();
+    if (keyword != null && keyword!.isNotEmpty && mounted) await _searchDanmaku(keyword!);
+    if (mounted) _focus.requestFocus();
+  }
+
+  /// 手动选择：作品列表 → 集列表；选中后记住（同一季后面几集自动用这个作品和集数偏移）
+  Future<void> _searchDanmaku(String keyword) async {
+    final client = _danmakuClient, target = _danmakuTarget;
+    if (client == null || target == null) return;
+    showToast('正在搜索弹幕「$keyword」…');
+    List<DanmakuAnime> animes;
+    try {
+      animes = await client.search(keyword, season: target.season, movie: target.movie);
+    } catch (e) {
+      showToast('搜索弹幕失败：$e');
+      return;
+    }
+    if (!mounted) return;
+    if (animes.isEmpty) {
+      showToast('没有搜到「$keyword」的弹幕');
+      return;
+    }
+    await showContextMenu(
+      context,
+      title: '选择作品 · ${animes.length} 个结果',
+      actions: [
+        for (final a in animes.take(40))
+          MenuAction(
+            '${a.title}${a.episodeCount == null ? '' : ' · ${a.episodeCount} 集'}',
+            Icons.movie_filter_outlined,
+            () => _pickDanmakuEpisode(client, target, a),
+          ),
+      ],
+    );
+    if (mounted) _focus.requestFocus();
+  }
+
+  Future<void> _pickDanmakuEpisode(DanmakuClient client, DanmakuTarget target, DanmakuAnime anime) async {
+    List<DanmakuEpisode> eps;
+    try {
+      eps = await client.episodes(anime);
+    } catch (e) {
+      showToast('获取集列表失败：$e');
+      return;
+    }
+    if (!mounted || eps.isEmpty) {
+      if (eps.isEmpty) showToast('这个作品没有可用的集');
+      return;
+    }
+    final current = target.episode == null ? null : pickEpisode(eps, target.episode! + _danmakuChoice.offset);
+    Future<void> choose(int i) async {
+      final ep = eps[i];
+      final offset = target.episode == null ? 0 : (ep.number ?? i + 1) - target.episode!;
+      _danmakuChoice = DanmakuChoice(
+        server: anime.server,
+        animeId: anime.animeId,
+        animeTitle: anime.title,
+        offset: offset,
+        shiftMs: _danmakuChoice.shiftMs,
+      );
+      await DanmakuChoiceStore.set(target.key, _danmakuChoice);
+      _danmakuVisible = true;
+      await _loadDanmaku(
+        () => client.load(anime.server, ep.episodeId, source: '${anime.title} · ${ep.title}'),
+        announce: true,
+      );
+    }
+
+    if (eps.length == 1) return choose(0);
+    await showContextMenu(
+      context,
+      title: '选择集 · ${anime.title}',
+      actions: [
+        for (var i = 0; i < eps.length; i++)
+          MenuAction(
+            '${eps[i].title}${identical(eps[i], current) ? '  ✓' : ''}',
+            Icons.play_circle_outline_rounded,
+            () => choose(i),
+          ),
+      ],
+    );
+    if (mounted) _focus.requestFocus();
   }
 
   static bool _samePrompt(SegmentSkipAction? a, SegmentSkipAction? b) =>
@@ -491,6 +720,9 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
       _openMenu();
     } else if (key == LogicalKeyboardKey.keyI || key == LogicalKeyboardKey.info) {
       setState(() => _info = !_info);
+    } else if (key == LogicalKeyboardKey.keyD && PlatformProfile.isDesktop) {
+      // Windows：D 键开关弹幕（电视在菜单里操作）
+      _toggleDanmaku();
     } else if (key == LogicalKeyboardKey.keyA) {
       _cycleAudio();
     } else if (key == LogicalKeyboardKey.keyC) {
@@ -572,6 +804,7 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
             ],
           );
         }),
+        MenuAction('弹幕 · $_danmakuStatus', Icons.chat_outlined, _openDanmakuMenu),
         MenuAction('切换资源（所有服务器）', Icons.swap_horiz_rounded, _openSourcesMenu),
         MenuAction('倍速 · ${s.rate}x', Icons.speed_rounded, () {
           showContextMenu(
@@ -665,10 +898,18 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
             behavior: HitTestBehavior.opaque,
             onTap: _togglePlay,
             onDoubleTap: _openMenu,
+            onSecondaryTap: _openMenu,
             child: Stack(
               fit: StackFit.expand,
               children: [
                 if (engine != null) KeyedSubtree(key: ObjectKey(engine), child: engine.buildView()),
+                if (engine != null && _danmaku != null && _danmakuVisible && _error == null)
+                  DanmakuLayer(
+                    comments: _danmaku!.comments,
+                    state: engine.state,
+                    config: ref.watch(configProvider.select((c) => c.danmaku)),
+                    shift: Duration(milliseconds: _danmakuChoice.shiftMs),
+                  ),
                 if (_error != null)
                   _ErrorPanel(
                     message: _error!,
@@ -722,6 +963,8 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
                               pendingSeek: _pendingSeek,
                               onMenu: _openMenu,
                               onBack: () => context.pop(),
+                              danmakuOn: _danmaku != null && _danmakuVisible,
+                              onDanmaku: _toggleDanmaku,
                             ),
                           ),
                         ),
@@ -752,6 +995,9 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
                               source: _source,
                               request: _request,
                               segments: _segmentList,
+                              danmaku: _danmaku == null
+                                  ? (_danmakuError ?? (_danmakuLoading ? '加载中…' : null))
+                                  : '${_danmaku!.comments.length} 条 · ${_danmaku!.source}',
                             ),
                           ),
                       ],
@@ -775,8 +1021,12 @@ class _Osd extends StatelessWidget {
     required this.pendingSeek,
     required this.onMenu,
     required this.onBack,
+    required this.danmakuOn,
+    required this.onDanmaku,
   });
 
+  final bool danmakuOn;
+  final VoidCallback onDanmaku;
   final VoidCallback onBack;
   final EngineState state;
   final String title;
@@ -874,10 +1124,21 @@ class _Osd extends StatelessWidget {
                     Icon(state.playing ? Icons.pause_rounded : Icons.play_arrow_rounded, size: 40),
                     const SizedBox(width: 20),
                     Text(
-                      'OK 暂停/播放 · ←→ 快退/快进 · ↓ 或菜单键 音轨/字幕/资源 · 返回 退出',
+                      PlatformProfile.isDesktop
+                          ? '空格 暂停/播放 · ←→ 快退/快进 · D 弹幕 · 右键或双击 播放设置 · Esc 退出'
+                          : 'OK 暂停/播放 · ←→ 快退/快进 · ↓ 或菜单键 音轨/字幕/弹幕 · 返回 退出',
                       style: VText.small.copyWith(color: VColors.textTertiary),
                     ),
                     const Spacer(),
+                    // Windows 用鼠标点击开关弹幕；电视在菜单里操作
+                    if (PlatformProfile.isDesktop) ...[
+                      PillButton(
+                        label: danmakuOn ? '弹幕 开' : '弹幕 关',
+                        icon: danmakuOn ? Icons.chat_rounded : Icons.chat_outlined,
+                        onPressed: onDanmaku,
+                      ),
+                      const SizedBox(width: 16),
+                    ],
                     PillButton(label: '音轨 / 字幕', icon: Icons.tune_rounded, onPressed: onMenu),
                   ],
                 ),
@@ -898,9 +1159,11 @@ class _InfoPanel extends StatelessWidget {
     required this.source,
     required this.request,
     this.segments = const [],
+    this.danmaku,
   });
 
   final List<Segment> segments;
+  final String? danmaku;
 
   final EngineState state;
   final EngineKind engine;
@@ -921,6 +1184,7 @@ class _InfoPanel extends StatelessWidget {
       if (source?.bitrate != null) ('码率', '${(source!.bitrate! / 1000000).toStringAsFixed(2)} Mbps'),
       ('缓冲', '${(state.buffered - state.position).inSeconds} 秒'),
       if (request != null) ('播放 UA', request!.userAgent),
+      if (danmaku != null) ('弹幕', danmaku!),
       for (final seg in segments)
         (
           segmentTypeName(seg.type),
