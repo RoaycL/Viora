@@ -77,6 +77,13 @@ class ServerConfig {
     this.seriesCount,
   });
 
+  /// 显示用的名称：没填名称（且服务器也没返回名称）时用地址的主机名
+  String get displayName {
+    if (name.trim().isNotEmpty) return name.trim();
+    final host = lines.isEmpty ? null : Uri.tryParse(lines.first.url.trim())?.host;
+    return host == null || host.isEmpty ? '媒体服务器' : host;
+  }
+
   /// 影响连接与请求结果的字段。测速延迟、片量、访问时间等变化不应重建客户端、重新请求服务器。
   String get connectionKey => [
     type.name,

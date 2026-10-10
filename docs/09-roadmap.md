@@ -12,6 +12,7 @@
 | M5 片头片尾 | SegmentResolver、服务器 Provider（Emby/Jellyfin/Plex）、第三方 Provider、跳过按钮与自动下一集、手动标记 | 🚧 v0.8.0：合并 codex 分支（TheIntroDB / IntroDB / PublicMetaDB、校验合并与缓存、跳过策略）；新增媒体服务器标记（Jellyfin 媒体片段 / Emby 章节标记）与章节名识别；接入播放器（跳过按钮、自动跳过、下一集）；设置页「片头片尾」；第三方可经反代。待做：手动标记、无数据时固定跳过 N 秒、Plex Markers（M6） |
 | M6 Jellyfin / Plex | Jellyfin 子类差异、Plex PIN 登录与 resources 多线路、Plex Markers | 四类服务器中的三类完成 |
 | M7 fnOS | 抓包分析飞牛影视 Web API，实现浏览 + 播放 + 进度 | 四类服务器全部支持 |
+| — 界面打磨 | v0.9.x–v0.10.0 | ✅ v0.10.0：Windows 界面精致化、统一圆角、首页 Hero 加大与轮播 / 拖动切换、继续观看显示观看时间与服务器、设置弹窗、自适应网格、右键菜单跟随鼠标、新应用图标 |
 | M8 打磨 | 设置页完整化、配置导入导出、错误面板、性能（低端 TV 盒子 2GB 内存）、日志导出 | 第一个公开版本 |
 
 ## 2. 待确认事项

@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../ui/widgets/fill_grid.dart';
+
 import '../../app/theme.dart';
 import '../../data/config/config_store.dart';
 import '../../data/index/media_index.dart';
@@ -75,6 +77,7 @@ class FavoritesPage extends ConsumerWidget {
     final async = ref.watch(favoritesProvider);
     return _CollectionScaffold(
       title: '收藏',
+      itemWidth: PosterCard.width,
       subtitle: async.value == null ? '加载中…' : '${async.value!.length} 部作品',
       empty: async.hasValue && async.value!.isEmpty ? '还没有收藏：在详情页按 ♡ 收藏' : null,
       children: [
@@ -92,9 +95,10 @@ class HistoryPage extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final resume = dedupeWatched(ref.watch(resumeProvider).value ?? const []);
     final played = ref.watch(recentlyPlayedProvider).value ?? const <MediaItem>[];
-    final names = {for (final s in ref.watch(configProvider).servers) s.id: s.name};
+    final names = {for (final s in ref.watch(configProvider).servers) s.id: s.displayName};
     return _CollectionScaffold(
       title: '观看记录',
+      itemWidth: LandscapeCard.width,
       subtitle: '继续观看 ${resume.length} · 最近看过 ${played.length}',
       empty: resume.isEmpty && played.isEmpty ? '还没有观看记录' : null,
       children: [
@@ -106,8 +110,16 @@ class HistoryPage extends ConsumerWidget {
 }
 
 class _CollectionScaffold extends StatelessWidget {
-  const _CollectionScaffold({required this.title, required this.subtitle, required this.children, this.empty});
+  const _CollectionScaffold({
+    required this.title,
+    required this.subtitle,
+    required this.children,
+    required this.itemWidth,
+    this.empty,
+  });
 
+  /// 卡片设计宽度（网格按它铺满整行）
+  final double itemWidth;
   final String title;
   final String subtitle;
   final List<Widget> children;
@@ -134,7 +146,7 @@ class _CollectionScaffold extends StatelessWidget {
             if (empty != null)
               Text(empty!, style: VText.label.copyWith(color: VColors.textTertiary))
             else
-              Wrap(spacing: 24, runSpacing: 32, children: children),
+              FillGrid(itemWidth: itemWidth, children: children),
           ],
         ),
       ),
@@ -191,7 +203,7 @@ class _LandscapeTileState extends State<_LandscapeTile> {
       context,
       widget.item,
       _node,
-      tag: widget.server,
+      watchedOn: widget.server ?? '未知服务器',
       onMenu: () => openMediaItem(context, widget.item),
     ),
   );

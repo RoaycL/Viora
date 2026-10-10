@@ -309,6 +309,15 @@ class EmbyClient {
     await _request('GET', '/Users/${await _userId()}/Items/$id', query: {'Fields': _fields}) as Map<String, dynamic>,
   );
 
+  /// 当前用户的头像（没有头像时服务器返回 404，界面显示首字母）
+  ({Uri url, Map<String, String> headers})? userImage({int maxWidth = 160}) {
+    final uid = _server.userId;
+    if (uid == null) return null;
+    final c = composer;
+    final original = c.resolve('/Users/$uid/Images/Primary', {'maxWidth': '$maxWidth', 'quality': '90'});
+    return (url: c.finalUrl(original, RequestKind.image), headers: c.headers(RequestKind.image));
+  }
+
   /// 章节列表（片头片尾：Emby 4.8+ 的章节带 MarkerType：IntroStart / IntroEnd / CreditsStart）
   Future<List<ServerChapter>> chapters(String itemId) async {
     final j = await _request(

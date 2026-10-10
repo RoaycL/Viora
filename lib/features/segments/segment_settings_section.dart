@@ -4,7 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../app/theme.dart';
 import '../../data/segments/segment_http.dart';
 import '../../domain/models/segment_settings.dart';
-import '../../ui/widgets/buttons.dart';
+import '../../ui/panels/form_dialog.dart';
 import '../../ui/widgets/form.dart';
 import '../../ui/widgets/toast.dart';
 import 'segment_service.dart';
@@ -26,27 +26,6 @@ class SegmentSettingsSection extends ConsumerStatefulWidget {
 }
 
 class _SegmentSettingsSectionState extends ConsumerState<SegmentSettingsSection> {
-  final _keys = <String, TextEditingController>{};
-  final _urls = <String, TextEditingController>{};
-  bool _loaded = false;
-
-  @override
-  void dispose() {
-    for (final c in [..._keys.values, ..._urls.values]) {
-      c.dispose();
-    }
-    super.dispose();
-  }
-
-  void _fill(SegmentSettings s) {
-    if (_loaded) return;
-    _loaded = true;
-    for (final p in s.providers) {
-      _keys[p.id] = TextEditingController(text: p.apiKey);
-      _urls[p.id] = TextEditingController(text: p.baseUrl);
-    }
-  }
-
   Future<void> _save(SegmentSettings s, {String? done}) async {
     try {
       await ref.read(segmentSettingsProvider.notifier).save(s);
@@ -56,23 +35,55 @@ class _SegmentSettingsSectionState extends ConsumerState<SegmentSettingsSection>
     }
   }
 
-  Future<void> _saveSources(SegmentSettings s) async {
-    final providers = <SegmentProviderSettings>[];
-    for (final p in s.providers) {
-      final url = _urls[p.id]!.text.trim().isEmpty ? segmentProviderDefaults[p.id]! : _urls[p.id]!.text.trim();
-      try {
-        segmentEndpoint(Uri.parse(url), 'check', const {});
-      } on FormatException {
-        showToast('${_providerInfo[p.id]!.$1} 的 API 地址需要是 https:// 开头、不带账号密码和参数的地址');
-        return;
-      }
-      final key = _keys[p.id]!.text.trim();
-      // PublicMetaDB 没有 Key 时不能启用
-      providers.add(
-        p.copyWith(baseUrl: url, apiKey: key, enabled: p.id == 'publicmetadb' && key.isEmpty ? false : p.enabled),
-      );
-    }
-    await _save(s.copyWith(providers: providers), done: 'API 设置已保存');
+  /// 某个数据源的 API Key 与地址（弹窗设置）
+  Future<void> _configure(SegmentSettings s, int i) async {
+    final p = s.providers[i];
+    final (name, _) = _providerInfo[p.id]!;
+    final key = TextEditingController(text: p.apiKey);
+    final url = TextEditingController(text: p.baseUrl);
+    await showFormDialog(
+      context,
+      title: name,
+      description: p.id == 'publicmetadb'
+          ? '必须填写 API Key：在 PublicMetaDB 网站的「设置 → API」里生成。'
+          : '公开读取不需要 Key；有 Key 时可获得更高的请求额度。',
+      children: [
+        VTextField(
+          label: p.id == 'publicmetadb' ? 'API Key（必填）' : 'API Key（可选）',
+          controller: key,
+          obscure: true,
+          autofocus: true,
+        ),
+        const SizedBox(height: 20),
+        VTextField(
+          label: 'API 地址（可改为自建反代，留空恢复默认）',
+          controller: url,
+          hint: segmentProviderDefaults[p.id],
+          keyboardType: TextInputType.url,
+        ),
+      ],
+      onSave: () async {
+        final u = url.text.trim().isEmpty ? segmentProviderDefaults[p.id]! : url.text.trim();
+        try {
+          segmentEndpoint(Uri.parse(u), 'check', const {});
+        } on FormatException {
+          showToast('API 地址需要是 https:// 开头、不带账号密码和参数的地址');
+          return false;
+        }
+        final k = key.text.trim();
+        final list = [...s.providers]
+          ..[i] = p.copyWith(
+            baseUrl: u,
+            apiKey: k,
+            // PublicMetaDB 没有 Key 时不能启用；刚填上 Key 时自动启用
+            enabled: p.id == 'publicmetadb' ? k.isNotEmpty && (p.enabled || p.apiKey.isEmpty) : p.enabled,
+          );
+        await _save(s.copyWith(providers: list), done: '$name 已保存');
+        return true;
+      },
+    );
+    key.dispose();
+    url.dispose();
   }
 
   void _move(SegmentSettings s, int i, int delta) {
@@ -84,6 +95,35 @@ class _SegmentSettingsSectionState extends ConsumerState<SegmentSettingsSection>
     _save(s.copyWith(providers: list));
   }
 
+  Widget _providerEntry(SegmentSettings s, int i) {
+    final p = s.providers[i];
+    final (name, desc) = _providerInfo[p.id]!;
+    return SettingsEntry(
+      title: '${_circled[i + 1]} $name',
+      subtitle: desc,
+      status: p.apiKey.isNotEmpty ? '已填写 Key' : (p.id == 'publicmetadb' ? '未填写 Key' : null),
+      trailing: [
+        SmallIconButton(icon: Icons.arrow_upward_rounded, onPressed: i > 0 ? () => _move(s, i, -1) : null),
+        SmallIconButton(
+          icon: Icons.arrow_downward_rounded,
+          onPressed: i < s.providers.length - 1 ? () => _move(s, i, 1) : null,
+        ),
+        SmallSwitch(
+          value: p.enabled,
+          onChanged: (v) {
+            if (v && p.id == 'publicmetadb' && p.apiKey.isEmpty) {
+              showToast('PublicMetaDB 需要先在「设置」里填写 API Key');
+              return;
+            }
+            final list = [...s.providers]..[i] = p.copyWith(enabled: v);
+            _save(s.copyWith(providers: list));
+          },
+        ),
+      ],
+      onConfigure: () => _configure(s, i),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final async = ref.watch(segmentSettingsProvider);
@@ -91,7 +131,6 @@ class _SegmentSettingsSectionState extends ConsumerState<SegmentSettingsSection>
     if (s == null) {
       return Text(async.hasError ? '读取设置失败：${async.error}' : '加载中…', style: VText.label);
     }
-    _fill(s);
     const modes = [(SegmentSkipMode.auto, '自动跳过'), (SegmentSkipMode.button, '显示按钮'), (SegmentSkipMode.off, '关闭')];
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -142,27 +181,7 @@ class _SegmentSettingsSectionState extends ConsumerState<SegmentSettingsSection>
           onChanged: (v) => _save(s.copyWith(serverMarkers: v)),
         ),
         const SizedBox(height: 12),
-        for (var i = 0; i < s.providers.length; i++) ...[
-          _ProviderCard(
-            index: i + 2,
-            settings: s.providers[i],
-            keyController: _keys[s.providers[i].id]!,
-            urlController: _urls[s.providers[i].id]!,
-            canUp: i > 0,
-            canDown: i < s.providers.length - 1,
-            onUp: () => _move(s, i, -1),
-            onDown: () => _move(s, i, 1),
-            onToggle: (v) {
-              if (v && s.providers[i].id == 'publicmetadb' && _keys['publicmetadb']!.text.trim().isEmpty) {
-                showToast('PublicMetaDB 需要先填写 API Key 并保存');
-                return;
-              }
-              final list = [...s.providers]..[i] = s.providers[i].copyWith(enabled: v);
-              _save(s.copyWith(providers: list));
-            },
-          ),
-          const SizedBox(height: 12),
-        ],
+        for (var i = 0; i < s.providers.length; i++) ...[_providerEntry(s, i), const SizedBox(height: 12)],
         VToggle(
           label: '${_circled[s.providers.length + 1]} 章节名识别（兜底）',
           subtitle: '以上都没有数据时，把名为 OP / Opening / 片头、ED / Ending / 片尾 的章节当作片头片尾',
@@ -176,91 +195,12 @@ class _SegmentSettingsSectionState extends ConsumerState<SegmentSettingsSection>
           value: s.useProxy,
           onChanged: (v) => _save(s.copyWith(useProxy: v)),
         ),
-        const SizedBox(height: 24),
-        PillButton(icon: Icons.save_rounded, label: '保存 API Key 与地址', onPressed: () => _saveSources(s)),
-        const SizedBox(height: 12),
+        const SizedBox(height: 16),
         Text(
           'API Key 保存在系统安全存储中（Windows 凭据管理器 / Android Keystore），不写入普通配置文件。',
           style: VText.small.copyWith(color: VColors.textTertiary),
         ),
       ],
-    );
-  }
-}
-
-class _ProviderCard extends StatelessWidget {
-  const _ProviderCard({
-    required this.index,
-    required this.settings,
-    required this.keyController,
-    required this.urlController,
-    required this.canUp,
-    required this.canDown,
-    required this.onUp,
-    required this.onDown,
-    required this.onToggle,
-  });
-
-  final int index;
-  final SegmentProviderSettings settings;
-  final TextEditingController keyController;
-  final TextEditingController urlController;
-  final bool canUp;
-  final bool canDown;
-  final VoidCallback onUp;
-  final VoidCallback onDown;
-  final ValueChanged<bool> onToggle;
-
-  @override
-  Widget build(BuildContext context) {
-    final (name, desc) = _providerInfo[settings.id]!;
-    return Container(
-      padding: const EdgeInsets.all(20),
-      decoration: BoxDecoration(color: const Color(0x0AFFFFFF), borderRadius: BorderRadius.circular(20)),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              Expanded(
-                child: VToggle(
-                  label: '${_circled[(index - 1).clamp(0, 5)]} $name',
-                  subtitle: desc,
-                  value: settings.enabled,
-                  onChanged: onToggle,
-                ),
-              ),
-              const SizedBox(width: 16),
-              PillButton(icon: Icons.arrow_upward_rounded, label: '上移', onPressed: canUp ? onUp : null),
-              const SizedBox(width: 12),
-              PillButton(icon: Icons.arrow_downward_rounded, label: '下移', onPressed: canDown ? onDown : null),
-            ],
-          ),
-          if (settings.enabled || settings.id == 'publicmetadb') ...[
-            const SizedBox(height: 16),
-            Row(
-              children: [
-                Expanded(
-                  child: VTextField(
-                    label: settings.id == 'publicmetadb' ? 'API Key（必填）' : 'API Key（可选）',
-                    controller: keyController,
-                    obscure: true,
-                  ),
-                ),
-                const SizedBox(width: 20),
-                Expanded(
-                  child: VTextField(
-                    label: 'API 地址（可改为自建反代）',
-                    controller: urlController,
-                    hint: segmentProviderDefaults[settings.id],
-                    keyboardType: TextInputType.url,
-                  ),
-                ),
-              ],
-            ),
-          ],
-        ],
-      ),
     );
   }
 }

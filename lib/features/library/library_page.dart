@@ -13,6 +13,7 @@ import '../../ui/focus/focusable.dart';
 import '../../ui/glass/glass.dart';
 import '../../ui/panels/context_menu.dart';
 import '../../ui/widgets/buttons.dart';
+import '../../ui/widgets/cached_image.dart';
 import '../../ui/widgets/toast.dart';
 import '../../ui/focus/input_mode.dart';
 
@@ -49,6 +50,15 @@ class _LibraryPageState extends ConsumerState<LibraryPage> {
         final client = ref.read(serverClientProvider(s.id));
         if (client == null) return;
         await client.probeAll();
+        // 早期添加的服务器可能没有名称：补上服务器自己报的名称
+        if (s.name.trim().isEmpty) {
+          try {
+            final n = ((await client.publicInfo())['ServerName'] as String?)?.trim() ?? '';
+            if (n.isNotEmpty) {
+              await ref.read(configProvider.notifier).updateServer(s.id, (old) => old.copyWith(name: n));
+            }
+          } catch (_) {}
+        }
         try {
           final c = await client.counts();
           await ref
@@ -192,7 +202,7 @@ class _ServerCard extends ConsumerWidget {
     final store = ref.read(configProvider.notifier);
     return showContextMenu(
       context,
-      title: server.name,
+      title: server.displayName,
       actions: [
         MenuAction('测速', Icons.speed_rounded, () async {
           showToast('正在测速…');
@@ -223,7 +233,7 @@ class _ServerCard extends ConsumerWidget {
           }),
         MenuAction('编辑', Icons.edit_rounded, () => context.go('/library/edit/${server.id}')),
         MenuAction('重新同步索引', Icons.sync_rounded, () {
-          showToast('正在重建「${server.name}」的索引…');
+          showToast('正在重建「${server.displayName}」的索引…');
           ref.read(indexSyncProvider.notifier).syncServer(server.id, forceFull: true);
         }),
         MenuAction('重新登录', Icons.login_rounded, () async {
@@ -237,12 +247,12 @@ class _ServerCard extends ConsumerWidget {
         MenuAction('删除', Icons.delete_outline_rounded, () {
           showContextMenu(
             context,
-            title: '删除「${server.name}」？',
+            title: '删除「${server.displayName}」？',
             actions: [
               MenuAction('确认删除', Icons.delete_forever_rounded, () {
                 store.removeServer(server.id);
                 ref.read(indexSyncProvider.notifier).forget(server.id);
-                showToast('已删除「${server.name}」');
+                showToast('已删除「${server.displayName}」');
               }),
               MenuAction('取消', Icons.close_rounded, () {}),
             ],
@@ -262,10 +272,10 @@ class _ServerCard extends ConsumerWidget {
       _Status.down => VColors.bad,
       _Status.unknown => VColors.textMuted,
     };
-    final icon = _iconGradient(s.name);
+    final icon = _typeGradient(s.type);
     return VFocusable(
       autofocus: autofocus,
-      radius: 24,
+      radius: VRadius.panel,
       scale: 1.05,
       onFocusChange: (focused) {
         if (focused && InputMode.shouldAutoScroll) {
@@ -284,7 +294,7 @@ class _ServerCard extends ConsumerWidget {
         padding: const EdgeInsets.fromLTRB(26, 24, 26, 24),
         decoration: BoxDecoration(
           color: focused ? const Color(0x26FFFFFF) : const Color(0x0FFFFFFF),
-          borderRadius: BorderRadius.circular(24),
+          borderRadius: BorderRadius.circular(VRadius.panel),
           border: Border.all(color: const Color(0x1AFFFFFF)),
         ),
         child: Stack(
@@ -311,24 +321,28 @@ class _ServerCard extends ConsumerWidget {
               children: [
                 Row(
                   children: [
+                    // 用户头像；取不到时显示服务器类型（Emby / Jellyfin）的图标
                     Container(
                       width: 52,
                       height: 52,
-                      alignment: Alignment.center,
+                      clipBehavior: Clip.antiAlias,
                       decoration: BoxDecoration(
-                        borderRadius: BorderRadius.circular(14),
-                        gradient: icon,
+                        borderRadius: BorderRadius.circular(VRadius.md),
+                        color: const Color(0xFF1C1F27),
                         boxShadow: const [BoxShadow(color: Color(0x59000000), blurRadius: 16, offset: Offset(0, 6))],
                       ),
-                      child: Text(
-                        s.name.isEmpty ? '?' : s.name.characters.first.toUpperCase(),
-                        style: const TextStyle(fontSize: 24, fontWeight: FontWeight.w800),
+                      child: _UserAvatar(
+                        serverId: s.id,
+                        fallback: Padding(padding: const EdgeInsets.all(9), child: ServerTypeLogo(s.type)),
                       ),
                     ),
                     const SizedBox(width: 12),
                     Container(
                       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-                      decoration: BoxDecoration(color: const Color(0x1AFFFFFF), borderRadius: BorderRadius.circular(6)),
+                      decoration: BoxDecoration(
+                        color: const Color(0x1AFFFFFF),
+                        borderRadius: BorderRadius.circular(VRadius.xs),
+                      ),
                       child: Text(
                         s.type.label.toUpperCase(),
                         style: const TextStyle(fontSize: 14, letterSpacing: 1, color: Color(0xB3FFFFFF)),
@@ -353,7 +367,7 @@ class _ServerCard extends ConsumerWidget {
                   children: [
                     Flexible(
                       child: Text(
-                        s.name,
+                        s.displayName,
                         style: const TextStyle(fontSize: 26, fontWeight: FontWeight.w700),
                         overflow: TextOverflow.ellipsis,
                       ),
@@ -364,7 +378,7 @@ class _ServerCard extends ConsumerWidget {
                         padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
                         decoration: BoxDecoration(
                           border: Border.all(color: const Color(0x99FF788C)),
-                          borderRadius: BorderRadius.circular(6),
+                          borderRadius: BorderRadius.circular(VRadius.xs),
                         ),
                         child: const Text('R18', style: TextStyle(fontSize: 14, color: VColors.adult)),
                       ),
@@ -411,19 +425,31 @@ class _ServerCard extends ConsumerWidget {
 
 const _countStyle = TextStyle(fontWeight: FontWeight.w600, color: Colors.white);
 
-const _iconColors = <(Color, Color)>[
-  (Color(0xFF8FD3FF), Color(0xFF2D7FD3)),
-  (Color(0xFFFFB36B), Color(0xFFE0533C)),
-  (Color(0xFFC86BFF), Color(0xFF5A1E8C)),
-  (Color(0xFF7CFFB2), Color(0xFF2E9C6A)),
-  (Color(0xFFFFB3C7), Color(0xFFE05A86)),
-  (Color(0xFF8FA2FF), Color(0xFF3B4CC0)),
-  (Color(0xFFFFD36B), Color(0xFFF08A24)),
-];
+/// 卡片光晕颜色：跟随服务器类型的品牌色
+LinearGradient _typeGradient(ServerType type) => LinearGradient(
+  begin: Alignment.topLeft,
+  end: Alignment.bottomRight,
+  colors: switch (type) {
+    ServerType.emby => const [Color(0xFF7EE07A), Color(0xFF2E8B2A)],
+    ServerType.jellyfin => const [Color(0xFFAA5CC3), Color(0xFF00A4DC)],
+  },
+);
 
-LinearGradient _iconGradient(String name) {
-  final (a, b) = _iconColors[name.codeUnits.fold<int>(0, (x, y) => x + y) % _iconColors.length];
-  return LinearGradient(begin: Alignment.topLeft, end: Alignment.bottomRight, colors: [a, b]);
+/// Emby / Jellyfin 官方图标
+class ServerTypeLogo extends StatelessWidget {
+  const ServerTypeLogo(this.type, {super.key});
+
+  final ServerType type;
+
+  @override
+  Widget build(BuildContext context) => Image.asset(
+    switch (type) {
+      ServerType.emby => 'assets/images/emby_logo.png',
+      ServerType.jellyfin => 'assets/images/jellyfin_logo.png',
+    },
+    fit: BoxFit.contain,
+    filterQuality: FilterQuality.medium,
+  );
 }
 
 String _ago(DateTime? t) {
@@ -474,4 +500,25 @@ String formatCount(int n) {
     buf.write(s[i]);
   }
   return buf.toString();
+}
+
+/// 服务器上当前用户的头像
+class _UserAvatar extends ConsumerWidget {
+  const _UserAvatar({required this.serverId, required this.fallback});
+
+  final String serverId;
+  final Widget fallback;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final req = ref.watch(serverClientProvider(serverId))?.userImage(maxWidth: 160);
+    if (req == null) return fallback;
+    return Image(
+      image: netImage(req.url.toString(), headers: req.headers, cacheWidth: 160),
+      fit: BoxFit.cover,
+      gaplessPlayback: true,
+      frameBuilder: (context, child, frame, sync) => frame == null && !sync ? fallback : child,
+      errorBuilder: (_, _, _) => fallback,
+    );
+  }
 }

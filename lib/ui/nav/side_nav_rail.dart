@@ -116,7 +116,7 @@ class _SideNavRailState extends State<SideNavRail> {
               curve: Curves.easeOutCubic,
               width: width,
               child: Glass(
-                radius: 28,
+                radius: VRadius.panel,
                 fill: _expanded ? const Color(0x2914161E) : VColors.glassFill,
                 padding: const EdgeInsets.symmetric(vertical: 28, horizontal: 16),
                 child: Column(
@@ -176,7 +176,7 @@ class _RailItem extends StatelessWidget {
       label: item.label,
       child: VFocusable(
         focusNode: node,
-        radius: 18,
+        radius: VRadius.sm,
         scale: 1.04,
         alignment: Alignment.centerLeft,
         showRing: false,
@@ -187,7 +187,7 @@ class _RailItem extends StatelessWidget {
           return AnimatedContainer(
             duration: VMotion.focus,
             height: 56,
-            decoration: BoxDecoration(color: bg, borderRadius: BorderRadius.circular(18)),
+            decoration: BoxDecoration(color: bg, borderRadius: BorderRadius.circular(VRadius.sm)),
             child: ClipRect(
               child: OverflowBox(
                 alignment: Alignment.centerLeft,
@@ -225,12 +225,9 @@ class _Logo extends StatelessWidget {
     return SizedBox(
       width: 56,
       child: Center(
-        child: ShaderMask(
-          shaderCallback: (rect) => const LinearGradient(colors: [Colors.white, VColors.accent]).createShader(rect),
-          child: const Text(
-            'V',
-            style: TextStyle(fontSize: 30, fontWeight: FontWeight.w800, color: Colors.white),
-          ),
+        child: ClipRRect(
+          borderRadius: BorderRadius.circular(VRadius.sm),
+          child: Image.asset('assets/images/app_icon.png', width: 44, height: 44, filterQuality: FilterQuality.medium),
         ),
       ),
     );

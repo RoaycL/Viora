@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../../app/platform_profile.dart';
 import '../../app/theme.dart';
 import '../focus/focusable.dart';
 import '../glass/glass.dart';
@@ -126,19 +127,22 @@ class _ButtonSurface extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     if (focused) {
+      // 不能用 Container.alignment：在宽布局里它会把按钮撑满整行
       return Container(
         height: height,
         width: width,
         decoration: ShapeDecoration(
           color: Colors.white,
           shape: shape,
-          shadows: const [
-            BoxShadow(color: Color(0x47FFFFFF), spreadRadius: 4),
-            BoxShadow(color: Color(0x73A0B4FF), blurRadius: 50, offset: Offset(0, 18)),
-          ],
+          // Windows 用柔和阴影；电视用外发光，远处也能看清焦点
+          shadows: PlatformProfile.isDesktop
+              ? const [BoxShadow(color: Color(0x40000000), blurRadius: 20, offset: Offset(0, 8))]
+              : const [
+                  BoxShadow(color: Color(0x47FFFFFF), spreadRadius: 4),
+                  BoxShadow(color: Color(0x73A0B4FF), blurRadius: 50, offset: Offset(0, 18)),
+                ],
         ),
-        alignment: Alignment.center,
-        child: child,
+        child: Center(widthFactor: 1, child: child),
       );
     }
     return Glass(

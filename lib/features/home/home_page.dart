@@ -65,6 +65,34 @@ class _HomeBodyState extends ConsumerState<_HomeBody> {
   /// 焦点 / 鼠标停在推荐行的某部作品上时，Hero 区显示它的信息（与背景一致）
   HeroEntry? _preview;
 
+  /// 鼠标停在多少张作品卡片上（0 = 不在任何作品上）
+  int _hovered = 0;
+  Timer? _hoverReset;
+
+  /// 鼠标移开、没有停在任何作品上时，背景和 Hero 恢复默认轮播
+  Widget _hoverTrack(Widget child) => MouseRegion(
+    onEnter: (_) {
+      _hovered++;
+      _hoverReset?.cancel();
+    },
+    onExit: (_) {
+      _hovered = (_hovered - 1).clamp(0, 1 << 20);
+      if (_hovered > 0) return;
+      _hoverReset?.cancel();
+      _hoverReset = Timer(const Duration(milliseconds: 300), () {
+        if (!mounted || _hovered > 0 || !InputMode.pointer) return;
+        _backdropDebounce?.cancel();
+        if (_preview != null || _backdrop != null) {
+          setState(() {
+            _preview = null;
+            _backdrop = null;
+          });
+        }
+      });
+    },
+    child: child,
+  );
+
   /// 焦点在"继续观看"卡片上停留 0.8 秒后预加载（按 OK 后起播更快）
   Timer? _preloadDebounce;
 
@@ -80,6 +108,7 @@ class _HomeBodyState extends ConsumerState<_HomeBody> {
   void dispose() {
     _backdropDebounce?.cancel();
     _preloadDebounce?.cancel();
+    _hoverReset?.cancel();
     _scroll.dispose();
     super.dispose();
   }
@@ -210,7 +239,7 @@ class _HomeBodyState extends ConsumerState<_HomeBody> {
   Widget build(BuildContext context) {
     final servers = ref.watch(configProvider.select((c) => c.servers));
     final tmdbOn = ref.watch(tmdbClientProvider) != null;
-    final serverNames = {for (final s in servers) s.id: s.name};
+    final serverNames = {for (final s in servers) s.id: s.displayName};
     final resumeAsync = ref.watch(resumeProvider);
     final resume = servers.isEmpty ? const <MediaItem>[] : dedupeWatched(resumeAsync.value ?? const <MediaItem>[]);
     final resumeLoading = servers.isNotEmpty && resumeAsync.isLoading && resume.isEmpty;
@@ -259,7 +288,7 @@ class _HomeBodyState extends ConsumerState<_HomeBody> {
           Positioned.fill(
             child: SingleChildScrollView(
               controller: _scroll,
-              padding: const EdgeInsets.only(bottom: 420),
+              padding: const EdgeInsets.only(bottom: 40),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
@@ -270,6 +299,7 @@ class _HomeBodyState extends ConsumerState<_HomeBody> {
                       items: preview != null ? [preview] : [for (final h in heroes) h.$1],
                       index: preview != null ? 0 : heroIndex,
                       showDots: preview == null,
+                      autoRotate: preview == null,
                       onIndexChanged: (i) {
                         setState(() {
                           _heroIndex = i;
@@ -306,13 +336,15 @@ class _HomeBodyState extends ConsumerState<_HomeBody> {
                         _setBackdrop(_itemBackdrop(resume[i], badge: '继续观看', server: server));
                         _preloadResume(resume[i]);
                       },
-                      itemBuilder: (context, i, node) => mediaLandscapeCard(
-                        context,
-                        resume[i],
-                        node,
-                        tag: serverNames[resume[i].serverId] ?? '未知服务器',
-                        tagIcon: Icons.dns_rounded,
-                        onMenu: () => openMediaItem(context, resume[i]),
+                      itemBuilder: (context, i, node) => _hoverTrack(
+                        mediaLandscapeCard(
+                          context,
+                          resume[i],
+                          node,
+                          // 和 Rex 一致：图上"看到 26:16"，下面"5 小时前 · 服务器名"
+                          watchedOn: serverNames[resume[i].serverId] ?? '未知服务器',
+                          onMenu: () => openMediaItem(context, resume[i]),
+                        ),
                       ),
                     ),
                   if (recent.isNotEmpty)
@@ -330,8 +362,9 @@ class _HomeBodyState extends ConsumerState<_HomeBody> {
                           server: serverNames[recent[i].primary.serverId],
                         ),
                       ),
-                      itemBuilder: (context, i, node) =>
-                          mediaPosterCard(context, recent[i].primary, node, resources: recent[i].copies.length),
+                      itemBuilder: (context, i, node) => _hoverTrack(
+                        mediaPosterCard(context, recent[i].primary, node, resources: recent[i].copies.length),
+                      ),
                     ),
                   tmdbRow(3, '正在热映', TmdbRow.nowPlaying),
                   tmdbRow(4, '正在播出', TmdbRow.onTheAir),
@@ -377,6 +410,7 @@ class _HomeBodyState extends ConsumerState<_HomeBody> {
                       },
                     ),
                   tmdbRow(9, '高分剧集', TmdbRow.topRatedTv),
+                  const _EndOfPage(),
                 ],
               ),
             ),
@@ -395,7 +429,7 @@ class _HomeBodyState extends ConsumerState<_HomeBody> {
       itemExtent: PosterCard.width,
       height: PosterCard.height,
       onItemFocused: (i) => _setBackdrop(_tmdbBackdrop(items[i], badge: title)),
-      itemBuilder: (context, i, node) => TmdbPosterCard(title: items[i], node: node),
+      itemBuilder: (context, i, node) => _hoverTrack(TmdbPosterCard(title: items[i], node: node)),
     );
   }
 }
@@ -443,20 +477,23 @@ class _Welcome extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return SizedBox(
-      height: HomeHero.height,
+      height: HomeHero.heightOf(context),
       child: Stack(
         children: [
           const Positioned(right: VSpace.safeH, top: VSpace.safeV, child: StatusBar()),
           Positioned(
             left: VSpace.contentLeft,
-            top: 150,
+            bottom: HomeHero.buttonsBottom,
             width: 980,
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Container(
                   padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
-                  decoration: BoxDecoration(color: const Color(0x24FFFFFF), borderRadius: BorderRadius.circular(8)),
+                  decoration: BoxDecoration(
+                    color: const Color(0x24FFFFFF),
+                    borderRadius: BorderRadius.circular(VRadius.xs),
+                  ),
                   child: const Text('开始使用', style: TextStyle(fontSize: 20, letterSpacing: 1)),
                 ),
                 const SizedBox(height: 22),
@@ -511,13 +548,13 @@ class _HeroSkeleton extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return SizedBox(
-      height: HomeHero.height,
+      height: HomeHero.heightOf(context),
       child: Stack(
         children: [
           const Positioned(right: VSpace.safeH, top: VSpace.safeV, child: StatusBar()),
           Positioned(
             left: VSpace.contentLeft,
-            top: 118,
+            bottom: HomeHero.buttonsBottom,
             width: 900,
             child: _Shimmer(
               child: Column(
@@ -642,4 +679,26 @@ class _ShimmerState extends State<_Shimmer> with SingleTickerProviderStateMixin 
     opacity: Tween(begin: 0.45, end: 1.0).animate(CurvedAnimation(parent: _c, curve: Curves.easeInOut)),
     child: widget.child,
   );
+}
+
+/// 首页结尾：滚到底时提示已经到底，而不是一大片空白
+class _EndOfPage extends StatelessWidget {
+  const _EndOfPage();
+
+  @override
+  Widget build(BuildContext context) {
+    const line = Expanded(child: Divider(color: Color(0x1FFFFFFF), height: 1));
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(VSpace.contentLeft, 48, VSpace.safeH, 24),
+      child: Row(
+        children: [
+          line,
+          const SizedBox(width: 20),
+          Text('已经到底了', style: VText.caption.copyWith(color: VColors.textTertiary)),
+          const SizedBox(width: 20),
+          line,
+        ],
+      ),
+    );
+  }
 }

@@ -125,7 +125,8 @@ final sourceOptionsProvider = FutureProvider.family<List<SourceOption>, SourcesK
         final info = await PlaybackPreloader.info(client, it.serverId, it.id).timeout(const Duration(seconds: 8));
         final latency = client.line.latencyMs;
         return [
-          for (final s in info.sources) SourceOption(item: it, source: s, serverName: server.name, latencyMs: latency),
+          for (final s in info.sources)
+            SourceOption(item: it, source: s, serverName: server.displayName, latencyMs: latency),
         ];
       } catch (e) {
         debugPrint('playbackInfo ${server.name} failed: $e');

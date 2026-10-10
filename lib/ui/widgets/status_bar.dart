@@ -70,11 +70,17 @@ class _StatusBarState extends ConsumerState<StatusBar> {
               ],
             ),
           ),
-          const SizedBox(width: 16),
+          const SizedBox(width: 12),
         ],
-        Text(
-          time,
-          style: const TextStyle(fontSize: 26, fontWeight: FontWeight.w600, color: Color(0xEBFFFFFF)),
+        // 时间也放在磨砂底上，亮背景图上依然清楚
+        Glass(
+          radius: 999,
+          blur: 20,
+          padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 8),
+          child: Text(
+            time,
+            style: const TextStyle(fontSize: 22, fontWeight: FontWeight.w600, color: Color(0xEBFFFFFF)),
+          ),
         ),
       ],
     );

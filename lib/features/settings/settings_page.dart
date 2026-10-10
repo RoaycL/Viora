@@ -17,6 +17,7 @@ import '../../ui/widgets/buttons.dart';
 import '../../ui/widgets/form.dart';
 import '../../ui/widgets/toast.dart';
 import '../../player/playback_cache.dart';
+import '../../ui/panels/form_dialog.dart';
 import '../segments/segment_settings_section.dart';
 import '../update/update_controller.dart';
 import '../update/update_dialog.dart';
@@ -37,7 +38,6 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
   late final _manifest = TextEditingController();
   late final _tmdbKey = TextEditingController();
   late final _tmdbBase = TextEditingController();
-  bool _tmdbTesting = false;
   _Category _category = _Category.playback;
   String _version = '';
   String _source = '';
@@ -129,6 +129,34 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
       ? '${(b / (1 << 20)).toStringAsFixed(0)} MB'
       : '${(b / 1024).toStringAsFixed(0)} KB';
 
+  Future<void> _configureTmdb() async {
+    final c = ref.read(configProvider).tmdb;
+    _tmdbKey.text = c.apiKey;
+    _tmdbBase.text = c.baseUrl;
+    await showFormDialog(
+      context,
+      title: 'TMDB API',
+      description: TmdbConfig.builtinToken.isEmpty
+          ? '填写 TMDB 的 API Key 或读取令牌（themoviedb.org → 设置 → API）。'
+          : '已内置读取令牌，可留空直接使用；填写自己的令牌后优先使用你的。',
+      saveLabel: '保存并测试',
+      children: [
+        VTextField(label: 'API Key 或读取令牌', controller: _tmdbKey, obscure: true, autofocus: true),
+        const SizedBox(height: 20),
+        VTextField(
+          label: '自定义 API 地址（可留空，也可以填自建的 TMDB 反代）',
+          controller: _tmdbBase,
+          hint: 'https://api.themoviedb.org/3',
+          keyboardType: TextInputType.url,
+        ),
+      ],
+      onSave: () async {
+        await _saveTmdb();
+        return true;
+      },
+    );
+  }
+
   Future<void> _saveTmdb() async {
     final store = ref.read(configProvider.notifier);
     await store.update(
@@ -141,7 +169,6 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
       showToast('已清除 TMDB 设置');
       return;
     }
-    setState(() => _tmdbTesting = true);
     try {
       final j = await TmdbClient(config.tmdb, config.proxy).get('/movie/550');
       showToast('TMDB 连接成功：${j['title'] ?? ''}');
@@ -150,8 +177,6 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
       ref.invalidate(tmdbPeopleProvider);
     } catch (e) {
       showToast('TMDB 连接失败：${e is DioException ? (e.response?.statusCode ?? e.message) : e}');
-    } finally {
-      if (mounted) setState(() => _tmdbTesting = false);
     }
   }
 
@@ -316,13 +341,13 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
             style: VText.caption.copyWith(color: VColors.textSecondary),
           ),
           const SizedBox(height: 20),
-          VTextField(label: 'TMDB API Key 或读取令牌（themoviedb.org → 设置 → API）', controller: _tmdbKey),
-          const SizedBox(height: 20),
-          VTextField(
-            label: '自定义 API 地址（可留空）',
-            controller: _tmdbBase,
-            hint: 'https://api.themoviedb.org/3',
-            keyboardType: TextInputType.url,
+          SettingsEntry(
+            title: 'TMDB API',
+            subtitle: config.tmdb.baseUrl.trim().isEmpty ? 'api.themoviedb.org' : config.tmdb.baseUrl.trim(),
+            status: config.tmdb.apiKey.trim().isNotEmpty
+                ? '使用自己的令牌'
+                : (TmdbConfig.builtinToken.isNotEmpty ? '使用内置令牌' : '未配置'),
+            onConfigure: _configureTmdb,
           ),
           const SizedBox(height: 20),
           VToggle(
@@ -331,12 +356,6 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
             value: config.tmdb.useProxy,
             onChanged: (v) =>
                 ref.read(configProvider.notifier).update((c) => c.copyWith(tmdb: c.tmdb.copyWith(useProxy: v))),
-          ),
-          const SizedBox(height: 24),
-          PillButton(
-            icon: Icons.save_rounded,
-            label: _tmdbTesting ? '测试中…' : '保存并测试',
-            onPressed: _tmdbTesting ? null : _saveTmdb,
           ),
         ],
       ),
@@ -511,7 +530,7 @@ class _CategoryItem extends StatelessWidget {
   Widget build(BuildContext context) {
     return VFocusable(
       autofocus: autofocus,
-      radius: 18,
+      radius: VRadius.sm,
       scale: PlatformProfile.isTv ? 1.03 : 1,
       alignment: Alignment.centerLeft,
       showRing: false,
@@ -532,7 +551,7 @@ class _CategoryItem extends StatelessWidget {
           duration: VMotion.focus,
           height: tv ? 68 : 56,
           padding: const EdgeInsets.symmetric(horizontal: 22),
-          decoration: BoxDecoration(color: bg, borderRadius: BorderRadius.circular(tv ? 18 : 14)),
+          decoration: BoxDecoration(color: bg, borderRadius: BorderRadius.circular(VRadius.sm)),
           child: Row(
             children: [
               if (!tv) ...[
@@ -607,7 +626,7 @@ class _TmdbAttribution extends StatelessWidget {
   Widget build(BuildContext context) {
     return Container(
       padding: const EdgeInsets.all(24),
-      decoration: BoxDecoration(color: const Color(0x0AFFFFFF), borderRadius: BorderRadius.circular(20)),
+      decoration: BoxDecoration(color: const Color(0x0AFFFFFF), borderRadius: BorderRadius.circular(VRadius.md)),
       child: Row(
         children: [
           Image.asset('assets/images/tmdb_logo.png', height: 28, filterQuality: FilterQuality.medium),
@@ -620,6 +639,11 @@ class _TmdbAttribution extends StatelessWidget {
                 const SizedBox(height: 6),
                 Text(
                   'This product uses the TMDB API but is not endorsed or certified by TMDB.',
+                  style: VText.small.copyWith(color: VColors.textTertiary),
+                ),
+                const SizedBox(height: 6),
+                Text(
+                  'Emby、Jellyfin 图标归各自项目所有，仅用于标识服务器类型；Jellyfin 图标按 CC BY-SA 4.0 使用。',
                   style: VText.small.copyWith(color: VColors.textTertiary),
                 ),
               ],

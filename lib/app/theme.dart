@@ -42,8 +42,21 @@ abstract final class VSpace {
   static const sectionGap = 48.0;
 }
 
+/// 圆角规格（统一用这几档）：内层元素圆角 ≈ 外层圆角 − 内边距，看起来同心
 abstract final class VRadius {
+  /// 卡片上的角标、小标签
+  static const xs = 6.0;
+
+  /// 导航项、菜单项、小按钮
+  static const sm = 10.0;
+
+  /// 设置行、输入框、开关行
+  static const md = 14.0;
+
+  /// 海报 / 横版卡片
   static const card = 16.0;
+
+  /// 面板、导航栏、弹窗
   static const panel = 24.0;
   static const pill = 999.0;
 }
