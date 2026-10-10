@@ -12,3 +12,6 @@ GeneratedPluginRegistrant.java
 key.properties
 **/*.keystore
 **/*.jks
+
+# 测试证书需要提交，保证每个测试包签名一致（正式证书不要提交）
+!keystore/viora-test.jks
