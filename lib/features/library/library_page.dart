@@ -1,23 +1,69 @@
 import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:go_router/go_router.dart';
 
 import '../../app/theme.dart';
+import '../../data/config/app_config.dart';
+import '../../data/config/config_store.dart';
+import '../../data/media/server_registry.dart';
 import '../../ui/focus/focusable.dart';
+import '../../ui/glass/glass.dart';
 import '../../ui/panels/context_menu.dart';
 import '../../ui/widgets/buttons.dart';
 import '../../ui/widgets/toast.dart';
-import 'library_mock.dart';
+
+/// 本次运行中是否已经对所有服务器测过速
+bool _probedThisSession = false;
 
 /// 资源库（docs/06-ui-design.md §6）：媒体服务器卡片网格。
-class LibraryPage extends StatelessWidget {
+class LibraryPage extends ConsumerStatefulWidget {
   const LibraryPage({super.key});
 
   @override
+  ConsumerState<LibraryPage> createState() => _LibraryPageState();
+}
+
+class _LibraryPageState extends ConsumerState<LibraryPage> {
+  bool _probing = false;
+
+  @override
+  void initState() {
+    super.initState();
+    if (!_probedThisSession) {
+      _probedThisSession = true;
+      WidgetsBinding.instance.addPostFrameCallback((_) => _probeAll(silent: true));
+    }
+  }
+
+  Future<void> _probeAll({bool silent = false}) async {
+    final servers = ref.read(configProvider).servers;
+    if (servers.isEmpty) return;
+    if (mounted) setState(() => _probing = true);
+    if (!silent) showToast('正在测速 ${servers.length} 台服务器…');
+    await Future.wait(
+      servers.map((s) async {
+        final client = ref.read(serverClientProvider(s.id));
+        if (client == null) return;
+        await client.probeAll();
+        try {
+          final c = await client.counts();
+          await ref
+              .read(configProvider.notifier)
+              .updateServer(s.id, (old) => old.copyWith(movieCount: c.movies, seriesCount: c.series));
+        } catch (_) {}
+      }),
+    );
+    if (mounted) setState(() => _probing = false);
+    if (!silent) showToast('测速完成');
+  }
+
+  @override
   Widget build(BuildContext context) {
-    final servers = LibraryMock.servers;
-    final movies = servers.fold<int>(0, (a, s) => a + (s.movies ?? 0));
-    final series = servers.fold<int>(0, (a, s) => a + (s.series ?? 0));
+    final servers = ref.watch(configProvider.select((c) => c.servers));
+    final movies = servers.fold<int>(0, (a, s) => a + (s.movieCount ?? 0));
+    final series = servers.fold<int>(0, (a, s) => a + (s.seriesCount ?? 0));
     return Stack(
       children: [
         const Positioned.fill(child: _Ambient()),
@@ -31,42 +77,53 @@ class LibraryPage extends StatelessWidget {
                   children: [
                     const Text('资源库', style: VText.h1),
                     const SizedBox(width: 24),
-                    Text(
-                      '${servers.length} 台服务器 · 电影 ${formatCount(movies)} · 剧集 ${formatCount(series)}',
-                      style: const TextStyle(fontSize: 20, color: VColors.textTertiary),
-                    ),
+                    if (servers.isNotEmpty)
+                      Text(
+                        '${servers.length} 台服务器 · 电影 ${formatCount(movies)} · 剧集 ${formatCount(series)}',
+                        style: const TextStyle(fontSize: 20, color: VColors.textTertiary),
+                      ),
                     const Spacer(),
-                    PillButton(icon: Icons.add_rounded, label: '添加服务器', onPressed: () => showToast('添加服务器将在 M1 实现')),
-                    const SizedBox(width: 16),
-                    PillButton(label: '测速全部', onPressed: () => showToast('正在测速 12 台服务器…')),
-                    const SizedBox(width: 16),
-                    PillButton(label: '编辑', onPressed: () => showToast('编辑模式将在 M1 实现')),
+                    PillButton(
+                      autofocus: servers.isEmpty,
+                      icon: Icons.add_rounded,
+                      label: '添加服务器',
+                      onPressed: () => context.go('/library/add'),
+                    ),
+                    if (servers.isNotEmpty) ...[
+                      const SizedBox(width: 16),
+                      PillButton(label: _probing ? '测速中…' : '测速全部', onPressed: _probing ? null : _probeAll),
+                    ],
                   ],
                 ),
                 const SizedBox(height: 40),
-                LayoutBuilder(
-                  builder: (context, constraints) {
-                    const columns = 4;
-                    const gap = 28.0;
-                    final width = (constraints.maxWidth - gap * (columns - 1)) / columns;
-                    return Wrap(
-                      spacing: gap,
-                      runSpacing: gap,
-                      children: [
-                        for (var i = 0; i < servers.length; i++)
-                          SizedBox(
-                            width: width,
-                            child: _ServerCard(server: servers[i], autofocus: i == 0),
-                          ),
-                      ],
-                    );
-                  },
-                ),
-                const SizedBox(height: 28),
-                const Text(
-                  'OK 进入 · 菜单键 / 长按 OK 切换线路、测速、绑定代理、播放 UA、重新同步、删除',
-                  style: TextStyle(fontSize: 18, color: VColors.textMuted),
-                ),
+                if (servers.isEmpty)
+                  const _EmptyState()
+                else
+                  LayoutBuilder(
+                    builder: (context, constraints) {
+                      const columns = 4;
+                      const gap = 28.0;
+                      final width = (constraints.maxWidth - gap * (columns - 1)) / columns;
+                      return Wrap(
+                        spacing: gap,
+                        runSpacing: gap,
+                        children: [
+                          for (var i = 0; i < servers.length; i++)
+                            SizedBox(
+                              width: width,
+                              child: _ServerCard(server: servers[i], autofocus: i == 0),
+                            ),
+                        ],
+                      );
+                    },
+                  ),
+                if (servers.isNotEmpty) ...[
+                  const SizedBox(height: 28),
+                  const Text(
+                    'OK 进入 · 菜单键 / 长按 OK：测速、切换线路、编辑、重新登录、删除',
+                    style: TextStyle(fontSize: 18, color: VColors.textMuted),
+                  ),
+                ],
               ],
             ),
           ),
@@ -76,20 +133,128 @@ class LibraryPage extends StatelessWidget {
   }
 }
 
-class _ServerCard extends StatelessWidget {
-  const _ServerCard({required this.server, this.autofocus = false});
-
-  final MockServer server;
-  final bool autofocus;
+class _EmptyState extends StatelessWidget {
+  const _EmptyState();
 
   @override
   Widget build(BuildContext context) {
+    return Glass(
+      width: 1000,
+      padding: const EdgeInsets.all(44),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text('还没有媒体服务器', style: VText.h2.copyWith(fontSize: 32)),
+          const SizedBox(height: 16),
+          Text(
+            '添加 Emby 或 Jellyfin 服务器后，就能在这里浏览媒体库并播放。'
+            '一台服务器可以填写多条线路，Viora 会自动测速选择最快的一条。',
+            style: VText.body.copyWith(color: VColors.textSecondary),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+enum _Status { ok, fallback, down, unknown }
+
+class _ServerCard extends ConsumerWidget {
+  const _ServerCard({required this.server, this.autofocus = false});
+
+  final ServerConfig server;
+  final bool autofocus;
+
+  _Status get _status {
+    final lines = server.lines;
+    if (lines.every((l) => l.latencyMs == null)) return lines.isEmpty ? _Status.down : _Status.unknown;
+    final active = lines.where((l) => l.id == server.activeLineId).firstOrNull ?? lines.first;
+    return active.latencyMs != null ? _Status.ok : _Status.fallback;
+  }
+
+  String get _note {
+    final reachable = server.lines.where((l) => l.latencyMs != null).toList()
+      ..sort((a, b) => a.latencyMs!.compareTo(b.latencyMs!));
+    final line = server.lines.where((l) => l.id == server.activeLineId).firstOrNull ?? reachable.firstOrNull;
+    if (line == null) return server.lines.length > 1 ? '${server.lines.length} 条线路 · 未连通' : '未连通';
+    final parts = [
+      line.name,
+      line.proxied ? '代理' : '直连',
+      if (line.latencyMs != null) '${line.latencyMs}ms',
+      if (server.activeLineId == null && server.lines.length > 1) '自动',
+    ];
+    return parts.join(' · ');
+  }
+
+  Future<void> _menu(BuildContext context, WidgetRef ref) {
+    final store = ref.read(configProvider.notifier);
+    return showContextMenu(
+      context,
+      title: server.name,
+      actions: [
+        MenuAction('测速', Icons.speed_rounded, () async {
+          showToast('正在测速…');
+          final s = await ref.read(serverClientProvider(server.id))?.probeAll();
+          final ok = s?.lines.where((l) => l.latencyMs != null).length ?? 0;
+          showToast('测速完成：$ok / ${server.lines.length} 条线路可用');
+        }),
+        if (server.lines.length > 1)
+          MenuAction('切换线路', Icons.alt_route_rounded, () {
+            showContextMenu(
+              context,
+              title: '选择线路',
+              actions: [
+                MenuAction(
+                  '自动（测速最快）${server.activeLineId == null ? '  ✓' : ''}',
+                  Icons.auto_awesome_rounded,
+                  () => store.updateServer(server.id, (s) => s.copyWith(clearActiveLine: true)),
+                ),
+                for (final l in server.lines)
+                  MenuAction(
+                    '${l.name} · ${l.latencyMs == null ? '不可用' : '${l.latencyMs}ms'}'
+                    '${server.activeLineId == l.id ? '  ✓' : ''}',
+                    Icons.route_rounded,
+                    () => store.updateServer(server.id, (s) => s.copyWith(activeLineId: l.id)),
+                  ),
+              ],
+            );
+          }),
+        MenuAction('编辑', Icons.edit_rounded, () => context.go('/library/edit/${server.id}')),
+        MenuAction('重新登录', Icons.login_rounded, () async {
+          try {
+            await ref.read(serverClientProvider(server.id))?.login();
+            showToast('登录成功');
+          } catch (e) {
+            showToast('登录失败：$e');
+          }
+        }),
+        MenuAction('删除', Icons.delete_outline_rounded, () {
+          showContextMenu(
+            context,
+            title: '删除「${server.name}」？',
+            actions: [
+              MenuAction('确认删除', Icons.delete_forever_rounded, () {
+                store.removeServer(server.id);
+                showToast('已删除「${server.name}」');
+              }),
+              MenuAction('取消', Icons.close_rounded, () {}),
+            ],
+          );
+        }),
+      ],
+    );
+  }
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
     final s = server;
-    final dot = switch (s.status) {
-      ServerStatus.ok => VColors.ok,
-      ServerStatus.fallback => VColors.warn,
-      ServerStatus.down => VColors.bad,
+    final dot = switch (_status) {
+      _Status.ok => VColors.ok,
+      _Status.fallback => VColors.warn,
+      _Status.down => VColors.bad,
+      _Status.unknown => VColors.textMuted,
     };
+    final icon = _iconGradient(s.name);
     return VFocusable(
       autofocus: autofocus,
       radius: 24,
@@ -97,19 +262,11 @@ class _ServerCard extends StatelessWidget {
       onFocusChange: (focused) {
         if (focused) Scrollable.ensureVisible(context, alignment: 0.4, duration: VMotion.scroll);
       },
-      onActivate: () => showToast('进入「${s.name}」将在 M1 接入 ${s.type} 后可用'),
-      onMenu: () => showContextMenu(
-        context,
-        title: s.name,
-        actions: [
-          MenuAction('切换线路', Icons.alt_route_rounded, () => showToast('线路切换将在 M1 实现')),
-          MenuAction('测速', Icons.speed_rounded, () => showToast('测速中…')),
-          MenuAction('绑定代理', Icons.shield_outlined, () => showToast('绑定代理将在 M1 实现')),
-          MenuAction('播放 UA', Icons.badge_outlined, () => showToast('自定义 UA 将在 M1 实现')),
-          MenuAction('重新同步索引', Icons.sync_rounded, () => showToast('聚合索引将在 M3 实现')),
-          MenuAction('删除', Icons.delete_outline_rounded, () => showToast('已删除（演示）')),
-        ],
-      ),
+      onActivate: () {
+        ref.read(configProvider.notifier).updateServer(s.id, (old) => old.copyWith(lastAccessAt: DateTime.now()));
+        context.go('/library/server/${s.id}');
+      },
+      onMenu: () => _menu(context, ref),
       builder: (context, focused) => AnimatedContainer(
         duration: VMotion.focus,
         height: 236,
@@ -134,7 +291,7 @@ class _ServerCard extends StatelessWidget {
                   child: Container(
                     width: 180,
                     height: 180,
-                    decoration: BoxDecoration(shape: BoxShape.circle, gradient: s.icon),
+                    decoration: BoxDecoration(shape: BoxShape.circle, gradient: icon),
                   ),
                 ),
               ),
@@ -147,10 +304,15 @@ class _ServerCard extends StatelessWidget {
                     Container(
                       width: 52,
                       height: 52,
+                      alignment: Alignment.center,
                       decoration: BoxDecoration(
                         borderRadius: BorderRadius.circular(14),
-                        gradient: s.icon,
+                        gradient: icon,
                         boxShadow: const [BoxShadow(color: Color(0x59000000), blurRadius: 16, offset: Offset(0, 6))],
+                      ),
+                      child: Text(
+                        s.name.isEmpty ? '?' : s.name.characters.first.toUpperCase(),
+                        style: const TextStyle(fontSize: 24, fontWeight: FontWeight.w800),
                       ),
                     ),
                     const SizedBox(width: 12),
@@ -158,12 +320,12 @@ class _ServerCard extends StatelessWidget {
                       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
                       decoration: BoxDecoration(color: const Color(0x1AFFFFFF), borderRadius: BorderRadius.circular(6)),
                       child: Text(
-                        s.type,
+                        s.type.label.toUpperCase(),
                         style: const TextStyle(fontSize: 14, letterSpacing: 1, color: Color(0xB3FFFFFF)),
                       ),
                     ),
                     const Spacer(),
-                    Text(s.lastAccess, style: const TextStyle(fontSize: 17, color: VColors.textTertiary)),
+                    Text(_ago(s.lastAccessAt), style: const TextStyle(fontSize: 17, color: VColors.textTertiary)),
                     const SizedBox(width: 10),
                     Container(
                       width: 10,
@@ -200,16 +362,21 @@ class _ServerCard extends StatelessWidget {
                   ],
                 ),
                 const SizedBox(height: 8),
-                Text(s.note, style: const TextStyle(fontSize: 18, color: VColors.textTertiary)),
+                Text(
+                  _note,
+                  style: const TextStyle(fontSize: 18, color: VColors.textTertiary),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
                 const Spacer(),
                 Text.rich(
                   TextSpan(
                     style: const TextStyle(fontSize: 18, color: Color(0xBFFFFFFF)),
                     children: [
                       const TextSpan(text: '电影 '),
-                      TextSpan(text: s.movies == null ? '—' : formatCount(s.movies!), style: _countStyle),
+                      TextSpan(text: s.movieCount == null ? '—' : formatCount(s.movieCount!), style: _countStyle),
                       const TextSpan(text: '    剧集 '),
-                      TextSpan(text: s.series == null ? '—' : formatCount(s.series!), style: _countStyle),
+                      TextSpan(text: s.seriesCount == null ? '—' : formatCount(s.seriesCount!), style: _countStyle),
                     ],
                   ),
                   maxLines: 1,
@@ -225,6 +392,30 @@ class _ServerCard extends StatelessWidget {
 }
 
 const _countStyle = TextStyle(fontWeight: FontWeight.w600, color: Colors.white);
+
+const _iconColors = <(Color, Color)>[
+  (Color(0xFF8FD3FF), Color(0xFF2D7FD3)),
+  (Color(0xFFFFB36B), Color(0xFFE0533C)),
+  (Color(0xFFC86BFF), Color(0xFF5A1E8C)),
+  (Color(0xFF7CFFB2), Color(0xFF2E9C6A)),
+  (Color(0xFFFFB3C7), Color(0xFFE05A86)),
+  (Color(0xFF8FA2FF), Color(0xFF3B4CC0)),
+  (Color(0xFFFFD36B), Color(0xFFF08A24)),
+];
+
+LinearGradient _iconGradient(String name) {
+  final (a, b) = _iconColors[name.codeUnits.fold<int>(0, (x, y) => x + y) % _iconColors.length];
+  return LinearGradient(begin: Alignment.topLeft, end: Alignment.bottomRight, colors: [a, b]);
+}
+
+String _ago(DateTime? t) {
+  if (t == null) return '';
+  final d = DateTime.now().difference(t);
+  if (d.inMinutes < 1) return '刚刚';
+  if (d.inHours < 1) return '${d.inMinutes} 分钟前';
+  if (d.inDays < 1) return '${d.inHours} 小时前';
+  return '${d.inDays} 天前';
+}
 
 class _Ambient extends StatelessWidget {
   const _Ambient();

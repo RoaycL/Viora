@@ -1,13 +1,17 @@
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:flutter/foundation.dart' show kIsWeb;
+
 import 'app_version.dart';
 
 enum UpdatePlatform {
   android,
   windows;
 
-  static UpdatePlatform? get current => Platform.isAndroid
+  static UpdatePlatform? get current => kIsWeb
+      ? null
+      : Platform.isAndroid
       ? android
       : Platform.isWindows
       ? windows

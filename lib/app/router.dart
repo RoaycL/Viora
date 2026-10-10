@@ -1,10 +1,14 @@
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 
+import '../features/browse/server_page.dart';
 import '../features/common/placeholder_page.dart';
 import '../features/detail/detail_page.dart';
+import '../features/detail/item_detail_page.dart';
 import '../features/home/home_page.dart';
 import '../features/library/library_page.dart';
+import '../features/library/server_edit_page.dart';
+import '../features/player/player_page.dart';
 import '../features/settings/settings_page.dart';
 import 'shell.dart';
 
@@ -19,6 +23,35 @@ GoRouter buildRouter() {
         routes: [
           _tab('/', const HomePage()),
           _tab('/library', const LibraryPage()),
+          GoRoute(
+            path: '/library/add',
+            pageBuilder: (context, state) => NoTransitionPage<void>(key: state.pageKey, child: const ServerEditPage()),
+          ),
+          GoRoute(
+            path: '/library/edit/:sid',
+            pageBuilder: (context, state) => NoTransitionPage<void>(
+              key: state.pageKey,
+              child: ServerEditPage(serverId: state.pathParameters['sid']),
+            ),
+          ),
+          GoRoute(
+            path: '/library/server/:sid',
+            pageBuilder: (context, state) => NoTransitionPage<void>(
+              key: state.pageKey,
+              child: ServerPage(serverId: state.pathParameters['sid']!),
+            ),
+          ),
+          GoRoute(
+            path: '/library/server/:sid/lib/:lid',
+            pageBuilder: (context, state) => NoTransitionPage<void>(
+              key: state.pageKey,
+              child: LibraryGridPage(
+                serverId: state.pathParameters['sid']!,
+                libraryId: state.pathParameters['lid']!,
+                title: state.uri.queryParameters['name'] ?? '媒体库',
+              ),
+            ),
+          ),
           _tab(
             '/search',
             const PlaceholderPage(
@@ -34,6 +67,27 @@ GoRouter buildRouter() {
           ),
           _tab('/settings', const SettingsPage()),
         ],
+      ),
+      GoRoute(
+        path: '/item/:sid/:id',
+        pageBuilder: (context, state) => CustomTransitionPage<void>(
+          key: state.pageKey,
+          child: ItemDetailPage(serverId: state.pathParameters['sid']!, itemId: state.pathParameters['id']!),
+          transitionsBuilder: (context, animation, _, child) => FadeTransition(opacity: animation, child: child),
+        ),
+      ),
+      GoRoute(
+        path: '/play/:sid/:id',
+        pageBuilder: (context, state) => CustomTransitionPage<void>(
+          key: state.pageKey,
+          child: PlayerPage(
+            serverId: state.pathParameters['sid']!,
+            itemId: state.pathParameters['id']!,
+            startMs: int.tryParse(state.uri.queryParameters['pos'] ?? '') ?? 0,
+            sourceId: state.uri.queryParameters['source'],
+          ),
+          transitionsBuilder: (context, animation, _, child) => FadeTransition(opacity: animation, child: child),
+        ),
       ),
       GoRoute(
         path: '/detail/:id',

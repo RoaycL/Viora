@@ -43,6 +43,14 @@ class RowFocusController {
     return true;
   }
 
+  /// 聚焦最上面一个有内容的行
+  bool focusFirst() {
+    for (final r in _sortedRows) {
+      if (focusRow(r)) return true;
+    }
+    return false;
+  }
+
   /// 返回 true 表示已处理。
   bool move(FocusNode? current, TraversalDirection direction) {
     final pos = locate(current);
@@ -118,4 +126,99 @@ class _RowFocusInherited extends InheritedWidget {
 
   @override
   bool updateShouldNotify(_RowFocusInherited oldWidget) => false;
+}
+
+/// 放在 [RowFocusScope] 内：首次构建后，如果页面里还没有焦点，就聚焦最上面的一行。
+/// 用于数据异步加载、第一行不固定的页面。
+class RowAutoFocus extends StatefulWidget {
+  const RowAutoFocus({super.key});
+
+  @override
+  State<RowAutoFocus> createState() => _RowAutoFocusState();
+}
+
+class _RowAutoFocusState extends State<RowAutoFocus> {
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      final controller = RowFocusScope.of(context);
+      final current = FocusManager.instance.primaryFocus;
+      if (current == null || controller.locate(current) == null) controller.focusFirst();
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) => const SizedBox.shrink();
+}
+
+/// 一行按钮（详情页操作按钮等），参与行导航。
+class FocusButtonRow extends StatefulWidget {
+  const FocusButtonRow({super.key, required this.rowIndex, required this.children, this.spacing = 18});
+
+  final int rowIndex;
+  final List<Widget Function(FocusNode node)> children;
+  final double spacing;
+
+  @override
+  State<FocusButtonRow> createState() => _FocusButtonRowState();
+}
+
+class _FocusButtonRowState extends State<FocusButtonRow> implements FocusRowHandle {
+  final _nodes = <FocusNode>[];
+  RowFocusController? _controller;
+  int _remembered = 0;
+
+  @override
+  int get length => widget.children.length;
+
+  @override
+  int get rememberedIndex => _remembered;
+
+  @override
+  FocusNode nodeAt(int index) {
+    while (_nodes.length <= index) {
+      final i = _nodes.length;
+      final node = FocusNode(debugLabel: 'buttons${widget.rowIndex}#$i');
+      node.addListener(() {
+        if (node.hasPrimaryFocus) {
+          _remembered = i;
+          Scrollable.ensureVisible(context, alignment: 0.3, duration: const Duration(milliseconds: 250));
+        }
+      });
+      _nodes.add(node);
+    }
+    return _nodes[index];
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final controller = RowFocusScope.of(context);
+    if (!identical(controller, _controller)) {
+      _controller?.unregister(widget.rowIndex, this);
+      _controller = controller..register(widget.rowIndex, this);
+    }
+  }
+
+  @override
+  void dispose() {
+    _controller?.unregister(widget.rowIndex, this);
+    for (final n in _nodes) {
+      n.dispose();
+    }
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (_remembered >= length) _remembered = 0;
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        for (var i = 0; i < length; i++) ...[if (i > 0) SizedBox(width: widget.spacing), widget.children[i](nodeAt(i))],
+      ],
+    );
+  }
 }

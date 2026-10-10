@@ -75,8 +75,9 @@ class _VioraAppState extends ConsumerState<VioraApp> {
       return;
     }
 
-    if (_router.routerDelegate.currentConfiguration.uri.path != '/') {
-      _router.go('/');
+    final path = _router.routerDelegate.currentConfiguration.uri.path;
+    if (path != '/') {
+      _router.go(parentLocation(path));
       return;
     }
 
@@ -122,4 +123,12 @@ class _VioraAppState extends ConsumerState<VioraApp> {
       ),
     );
   }
+}
+
+/// 应用壳内页面的上一级：媒体库网格 → 服务器 → 资源库；其他顶层页面 → 首页。
+String parentLocation(String path) {
+  final server = RegExp(r'^(/library/server/[^/]+)/lib/').firstMatch(path);
+  if (server != null) return server[1]!;
+  if (path.startsWith('/library/')) return '/library';
+  return '/';
 }

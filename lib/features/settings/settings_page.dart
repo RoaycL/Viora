@@ -2,13 +2,19 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../app/theme.dart';
-import '../../ui/focus/focusable.dart';
+import '../../data/config/app_config.dart';
+import '../../data/config/config_store.dart';
+import '../../data/media/server_registry.dart';
+import '../../data/net/request_composer.dart';
+import '../../ui/focus/focus_auto_scroll.dart';
 import '../../ui/glass/glass.dart';
 import '../../ui/widgets/buttons.dart';
+import '../../ui/widgets/form.dart';
+import '../../ui/widgets/toast.dart';
 import '../update/update_controller.dart';
 import '../update/update_dialog.dart';
 
-/// 设置（M0：关于与更新；其余分类随里程碑开放，见 docs/06-ui-design.md §9）。
+/// 设置（docs/06-ui-design.md §9）：播放、反向代理（绑定线路）、关于与更新。
 class SettingsPage extends ConsumerStatefulWidget {
   const SettingsPage({super.key});
 
@@ -17,24 +23,83 @@ class SettingsPage extends ConsumerStatefulWidget {
 }
 
 class _SettingsPageState extends ConsumerState<SettingsPage> {
+  late final _ua = TextEditingController();
+  late final _client = TextEditingController();
+  late final _device = TextEditingController();
+  late final _proxy = TextEditingController();
+  late final _manifest = TextEditingController();
   String _version = '';
   String _source = '';
 
   @override
   void initState() {
     super.initState();
+    final c = ref.read(configProvider);
+    _ua.text = c.playback.userAgent;
+    _client.text = c.playback.clientName;
+    _device.text = c.playback.deviceName;
+    _proxy.text = c.proxy.baseUrl;
     _load();
+  }
+
+  @override
+  void dispose() {
+    for (final c in [_ua, _client, _device, _proxy, _manifest]) {
+      c.dispose();
+    }
+    super.dispose();
   }
 
   Future<void> _load() async {
     final c = ref.read(updateControllerProvider.notifier);
+    await c.loadSettings();
     final p = await c.packageInfo;
     final source = await c.sourceDescription();
     if (!mounted) return;
     setState(() {
       _version = 'v${p.version}（build ${p.buildNumber}）';
       _source = source;
+      _manifest.text = c.settings.manifestUrl ?? '';
     });
+  }
+
+  Future<void> _savePlayback() async {
+    await ref
+        .read(configProvider.notifier)
+        .update(
+          (c) => c.copyWith(
+            playback: c.playback.copyWith(
+              userAgent: _ua.text.trim(),
+              clientName: _client.text.trim().isEmpty ? 'Viora' : _client.text.trim(),
+              deviceName: _device.text.trim(),
+            ),
+          ),
+        );
+    showToast('播放设置已保存');
+  }
+
+  Future<void> _saveProxy() async {
+    var url = _proxy.text.trim();
+    if (url.isNotEmpty && !url.contains('://')) url = 'https://$url';
+    if (url.isNotEmpty && !url.endsWith('/')) url = '$url/';
+    _proxy.text = url;
+    await ref
+        .read(configProvider.notifier)
+        .update(
+          (c) => c.copyWith(
+            proxy: ProxyConfig(baseUrl: url, scope: c.proxy.scope),
+          ),
+        );
+    showToast(url.isEmpty ? '已关闭反向代理' : '反向代理地址已保存');
+  }
+
+  Future<void> _saveManifest() async {
+    final c = ref.read(updateControllerProvider.notifier);
+    final url = _manifest.text.trim();
+    await c.saveSettings(UpdateSettings(autoCheck: c.settings.autoCheck, manifestUrl: url.isEmpty ? null : url));
+    final source = await c.sourceDescription();
+    setState(() => _source = source);
+    showToast('更新来源已保存');
   }
 
   Future<void> _check() async {
@@ -44,9 +109,9 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
 
   @override
   Widget build(BuildContext context) {
+    final config = ref.watch(configProvider);
     final state = ref.watch(updateControllerProvider);
-    final controller = ref.read(updateControllerProvider.notifier);
-    final autoCheck = controller.settings.autoCheck;
+    final updater = ref.read(updateControllerProvider.notifier);
 
     final String status = switch (state) {
       UpdateChecking() => '正在检查…',
@@ -58,28 +123,134 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
       UpdateIdle() => '',
     };
 
-    return SingleChildScrollView(
-      padding: const EdgeInsets.fromLTRB(VSpace.contentLeft, VSpace.safeV, VSpace.safeH, 120),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          const Text('设置', style: VText.h1),
-          const SizedBox(height: 40),
-          Glass(
-            width: 1000,
-            padding: const EdgeInsets.all(40),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
+    return FocusAutoScroll(
+      child: SingleChildScrollView(
+        padding: const EdgeInsets.fromLTRB(VSpace.contentLeft, VSpace.safeV, VSpace.safeH, 240),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text('设置', style: VText.h1),
+            const SizedBox(height: 40),
+
+            // ───────── 播放 ─────────
+            _Section(
+              title: '播放',
               children: [
-                const Text('关于与更新', style: VText.rowTitle),
+                VTextField(
+                  label: '播放 UA（自定义后以此 UA 播放；服务器里单独设置的优先）',
+                  controller: _ua,
+                  hint: defaultUserAgent(appVersion),
+                  width: 1000,
+                ),
+                const SizedBox(height: 20),
+                Row(
+                  children: [
+                    VTextField(label: '客户端名称（上报给 Emby / Jellyfin）', controller: _client, width: 488),
+                    const SizedBox(width: 24),
+                    VTextField(label: '设备名称', controller: _device, hint: defaultDeviceName(), width: 488),
+                  ],
+                ),
+                const SizedBox(height: 20),
+                VToggle(
+                  label: 'API 与图片请求也使用播放 UA',
+                  subtitle: '默认只有视频流使用播放 UA',
+                  value: config.playback.uaForApi,
+                  width: 1000,
+                  onChanged: (v) => ref
+                      .read(configProvider.notifier)
+                      .update((c) => c.copyWith(playback: c.playback.copyWith(uaForApi: v))),
+                ),
+                const SizedBox(height: 12),
+                VToggle(
+                  label: '快进 / 快退步长：${config.playback.seekStepSeconds} 秒',
+                  subtitle: '按 OK 在 5 / 10 / 15 / 30 秒之间切换',
+                  value: true,
+                  width: 1000,
+                  onChanged: (_) {
+                    const steps = [5, 10, 15, 30];
+                    final i = steps.indexOf(config.playback.seekStepSeconds);
+                    ref
+                        .read(configProvider.notifier)
+                        .update(
+                          (c) =>
+                              c.copyWith(playback: c.playback.copyWith(seekStepSeconds: steps[(i + 1) % steps.length])),
+                        );
+                  },
+                ),
                 const SizedBox(height: 24),
+                PillButton(icon: Icons.save_rounded, label: '保存播放设置', onPressed: _savePlayback),
+              ],
+            ),
+
+            // ───────── 反向代理 ─────────
+            _Section(
+              title: '反向代理 · 绑定线路',
+              children: [
+                VTextField(
+                  label: '完整地址（emby-reverse-proxy-go）',
+                  controller: _proxy,
+                  hint: 'https://embyproxy.example.com/proxy/',
+                  keyboardType: TextInputType.url,
+                  width: 1000,
+                  helper: '更换地址后，已绑定的线路会继续使用这个代理。示例：https://emby.a.com → …/proxy/https/emby.a.com/443',
+                ),
+                const SizedBox(height: 20),
+                Row(
+                  children: [
+                    PillButton(icon: Icons.save_rounded, label: '保存地址', onPressed: _saveProxy),
+                    const SizedBox(width: 24),
+                    PillButton(
+                      label: config.proxy.scope == ProxyScope.all ? '代理范围：API + 视频流' : '代理范围：仅视频流',
+                      onPressed: () => ref
+                          .read(configProvider.notifier)
+                          .update(
+                            (c) => c.copyWith(
+                              proxy: ProxyConfig(
+                                baseUrl: c.proxy.baseUrl,
+                                scope: c.proxy.scope == ProxyScope.all ? ProxyScope.streamOnly : ProxyScope.all,
+                              ),
+                            ),
+                          ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 28),
+                Text('媒体服务器线路', style: VText.caption.copyWith(color: VColors.textTertiary)),
+                const SizedBox(height: 12),
+                if (config.servers.isEmpty)
+                  Text('还没有添加服务器', style: VText.label.copyWith(color: VColors.textMuted))
+                else
+                  for (final s in config.servers)
+                    for (final l in s.lines) ...[
+                      VToggle(
+                        label: '${s.name} · ${l.name}',
+                        subtitle: l.url,
+                        value: l.proxied,
+                        width: 1000,
+                        onChanged: (v) => ref
+                            .read(configProvider.notifier)
+                            .updateServer(
+                              s.id,
+                              (old) => old.copyWith(
+                                lines: [for (final x in old.lines) x.id == l.id ? x.copyWith(proxied: v) : x],
+                              ),
+                            ),
+                      ),
+                      const SizedBox(height: 10),
+                    ],
+              ],
+            ),
+
+            // ───────── 关于与更新 ─────────
+            _Section(
+              title: '关于与更新',
+              children: [
                 _InfoLine(label: '当前版本', value: _version),
                 _InfoLine(label: '更新来源', value: _source),
-                const SizedBox(height: 28),
+                const SizedBox(height: 20),
                 Row(
                   children: [
                     PillButton(
-                      autofocus: true,
                       icon: Icons.refresh_rounded,
                       label: state is UpdateChecking ? '检查中…' : '检查更新',
                       onPressed: state is UpdateChecking ? null : _check,
@@ -95,26 +266,49 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
                     ),
                   ],
                 ),
-                const SizedBox(height: 24),
-                _Toggle(
+                const SizedBox(height: 20),
+                VToggle(
                   label: '启动时自动检查更新',
-                  value: autoCheck,
+                  value: updater.settings.autoCheck,
+                  width: 1000,
                   onChanged: (v) async {
-                    await controller.saveSettings(
-                      UpdateSettings(autoCheck: v, manifestUrl: controller.settings.manifestUrl),
-                    );
+                    await updater.saveSettings(UpdateSettings(autoCheck: v, manifestUrl: updater.settings.manifestUrl));
                     setState(() {});
                   },
                 ),
+                const SizedBox(height: 20),
+                VTextField(
+                  label: '自定义更新地址（latest.json，留空使用 GitHub Releases）',
+                  controller: _manifest,
+                  hint: 'https://example.com/viora/latest.json',
+                  keyboardType: TextInputType.url,
+                  width: 1000,
+                ),
+                const SizedBox(height: 16),
+                PillButton(icon: Icons.save_rounded, label: '保存更新地址', onPressed: _saveManifest),
               ],
             ),
-          ),
-          const SizedBox(height: 32),
-          const Text(
-            '服务器与线路、反向代理、播放 UA、片头片尾、字幕、元数据等设置会随 M1 起的版本逐步开放。',
-            style: TextStyle(fontSize: 20, color: VColors.textTertiary),
-          ),
-        ],
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _Section extends StatelessWidget {
+  const _Section({required this.title, required this.children});
+
+  final String title;
+  final List<Widget> children;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 32),
+      child: Glass(
+        width: 1100,
+        padding: const EdgeInsets.all(44),
+        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [SectionTitle(title), ...children]),
       ),
     );
   }
@@ -138,55 +332,6 @@ class _InfoLine extends StatelessWidget {
           ),
           Expanded(child: Text(value, style: VText.label)),
         ],
-      ),
-    );
-  }
-}
-
-class _Toggle extends StatelessWidget {
-  const _Toggle({required this.label, required this.value, required this.onChanged});
-
-  final String label;
-  final bool value;
-  final ValueChanged<bool> onChanged;
-
-  @override
-  Widget build(BuildContext context) {
-    return VFocusable(
-      radius: 18,
-      scale: 1.02,
-      alignment: Alignment.centerLeft,
-      onActivate: () => onChanged(!value),
-      builder: (context, focused) => AnimatedContainer(
-        duration: VMotion.focus,
-        width: 600,
-        height: 72,
-        padding: const EdgeInsets.symmetric(horizontal: 24),
-        decoration: BoxDecoration(
-          color: focused ? const Color(0x29FFFFFF) : const Color(0x0DFFFFFF),
-          borderRadius: BorderRadius.circular(18),
-        ),
-        child: Row(
-          children: [
-            Expanded(child: Text(label, style: VText.label)),
-            AnimatedContainer(
-              duration: VMotion.focus,
-              width: 64,
-              height: 36,
-              padding: const EdgeInsets.all(4),
-              alignment: value ? Alignment.centerRight : Alignment.centerLeft,
-              decoration: BoxDecoration(
-                color: value ? const Color(0xFF5B8CFF) : const Color(0x33FFFFFF),
-                borderRadius: BorderRadius.circular(18),
-              ),
-              child: Container(
-                width: 28,
-                height: 28,
-                decoration: const BoxDecoration(color: Colors.white, shape: BoxShape.circle),
-              ),
-            ),
-          ],
-        ),
       ),
     );
   }

@@ -1,17 +1,23 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../app/input/back_handler.dart';
 import '../../app/theme.dart';
+import '../../data/config/config_store.dart';
+import '../../data/media/media_models.dart';
+import '../../data/media/server_registry.dart';
 import '../../ui/focus/row_focus.dart';
 import '../../ui/panels/context_menu.dart';
 import '../../ui/rows/cards.dart';
 import '../../ui/rows/focus_row.dart';
 import '../../ui/widgets/art.dart';
 import '../../ui/widgets/backdrop.dart';
+import '../../ui/widgets/server_image.dart';
 import '../../ui/widgets/toast.dart';
+import '../browse/media_cards.dart';
 import 'home_hero.dart';
 import 'home_mock.dart';
 
@@ -23,14 +29,14 @@ class HomePage extends StatelessWidget {
   Widget build(BuildContext context) => const RowFocusScope(child: _HomeBody());
 }
 
-class _HomeBody extends StatefulWidget {
+class _HomeBody extends ConsumerStatefulWidget {
   const _HomeBody();
 
   @override
-  State<_HomeBody> createState() => _HomeBodyState();
+  ConsumerState<_HomeBody> createState() => _HomeBodyState();
 }
 
-class _HomeBodyState extends State<_HomeBody> {
+class _HomeBodyState extends ConsumerState<_HomeBody> {
   final _scroll = ScrollController();
   final _heroKey = GlobalKey<HomeHeroState>();
   int _heroIndex = 0;
@@ -86,6 +92,10 @@ class _HomeBodyState extends State<_HomeBody> {
 
   @override
   Widget build(BuildContext context) {
+    final servers = ref.watch(configProvider.select((c) => c.servers));
+    final hasServers = servers.isNotEmpty;
+    final serverNames = {for (final s in servers) s.id: s.name};
+    final realResume = hasServers ? ref.watch(resumeProvider).value ?? const <MediaItem>[] : const <MediaItem>[];
     return BackHandler(
       onBack: _onBack,
       child: Stack(
@@ -114,28 +124,48 @@ class _HomeBodyState extends State<_HomeBody> {
                     onPlay: (t) => showToast('播放「${t.title}」将在 M1 接入播放器'),
                     onDetail: _openDetail,
                   ),
-                  FocusRow(
-                    rowIndex: 1,
-                    title: '继续观看',
-                    itemCount: HomeMock.resume.length,
-                    itemExtent: LandscapeCard.width,
-                    height: LandscapeCard.height,
-                    onItemFocused: (i) => _setBackdrop(HomeMock.resume[i].art),
-                    itemBuilder: (context, i, node) {
-                      final t = HomeMock.resume[i];
-                      return LandscapeCard(
-                        node: node,
-                        art: t.art,
-                        title: t.title,
-                        subtitle: t.subtitle,
-                        tag: t.server,
-                        caption: t.remaining,
-                        progress: t.progress,
-                        onActivate: () => showToast('继续播放「${t.title}」将在 M1 接入播放器'),
-                        onMenu: () => _openMenu(t, resume: true),
-                      );
-                    },
-                  ),
+                  if (hasServers)
+                    if (realResume.isNotEmpty)
+                      FocusRow(
+                        rowIndex: 1,
+                        title: '继续观看',
+                        itemCount: realResume.length,
+                        itemExtent: LandscapeCard.width,
+                        height: LandscapeCard.height,
+                        onItemFocused: (i) => _setBackdrop(placeholderArt(realResume[i].id)),
+                        itemBuilder: (context, i, node) => mediaLandscapeCard(
+                          context,
+                          realResume[i],
+                          node,
+                          tag: serverNames[realResume[i].serverId],
+                          onMenu: () => openMediaItem(context, realResume[i]),
+                        ),
+                      )
+                    else
+                      const SizedBox.shrink()
+                  else
+                    FocusRow(
+                      rowIndex: 1,
+                      title: '继续观看',
+                      itemCount: HomeMock.resume.length,
+                      itemExtent: LandscapeCard.width,
+                      height: LandscapeCard.height,
+                      onItemFocused: (i) => _setBackdrop(HomeMock.resume[i].art),
+                      itemBuilder: (context, i, node) {
+                        final t = HomeMock.resume[i];
+                        return LandscapeCard(
+                          node: node,
+                          art: t.art,
+                          title: t.title,
+                          subtitle: t.subtitle,
+                          tag: t.server,
+                          caption: t.remaining,
+                          progress: t.progress,
+                          onActivate: () => showToast('继续播放「${t.title}」将在 M1 接入播放器'),
+                          onMenu: () => _openMenu(t, resume: true),
+                        );
+                      },
+                    ),
                   _posterRow(2, '正在热映', _nowShowing),
                   _posterRow(3, '正在播出', _onAir),
                   _posterRow(4, '本周趋势', _trending),

@@ -103,7 +103,7 @@ void main() {
     await unmount(tester);
   });
 
-  testWidgets('在导航栏选择资源库后进入资源库并聚焦第一张卡片', (tester) async {
+  testWidgets('资源库：没有服务器时聚焦"添加服务器"，进入表单后返回键逐级返回', (tester) async {
     await pumpApp(tester);
     await press(tester, LogicalKeyboardKey.arrowLeft);
     expect(focused, 'nav:/');
@@ -112,14 +112,30 @@ void main() {
     expect(focused, 'nav:/library');
 
     await press(tester, LogicalKeyboardKey.select);
-    expect(find.text('资源库'), findsWidgets);
-    expect(find.text('私服'), findsOneWidget);
+    expect(find.text('还没有媒体服务器'), findsOneWidget);
     expect(focused, 'VFocusable');
 
-    // 返回键（键盘 Esc）回到首页
+    await press(tester, LogicalKeyboardKey.select);
+    expect(find.text('连接并登录'), findsOneWidget);
+    expect(focused, 'VTextField');
+
+    // 输入框里按 ↓ 离开输入框
+    await press(tester, LogicalKeyboardKey.arrowDown);
+    expect(focused, 'VTextField');
+
+    // 返回键（键盘 Esc）：表单 → 资源库 → 首页
+    await press(tester, LogicalKeyboardKey.escape);
+    expect(find.text('还没有媒体服务器'), findsOneWidget);
     await press(tester, LogicalKeyboardKey.escape);
     expect(find.text('继续观看'), findsOneWidget);
     await unmount(tester);
+  });
+
+  test('应用壳内页面的上一级', () {
+    expect(parentLocation('/library/server/a/lib/b'), '/library/server/a');
+    expect(parentLocation('/library/server/a'), '/library');
+    expect(parentLocation('/library/add'), '/library');
+    expect(parentLocation('/settings'), '/');
   });
 
   testWidgets('从卡片打开详情页，返回键回到首页', (tester) async {

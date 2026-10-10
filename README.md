@@ -20,13 +20,14 @@ UI 参考 iOS 端 Rex 的信息结构（首页 / 详情 / 资源库），并针�
 
 ## 开发
 
-当前进度：**M0 工程骨架已完成**（假数据），见 [docs/09-roadmap.md](docs/09-roadmap.md)。
+当前进度：**M1 已完成**（Emby / Jellyfin 浏览与播放），首页推荐仍为假数据（M4 接入 TMDB），见 [docs/09-roadmap.md](docs/09-roadmap.md)。
 
 ```bash
 flutter pub get
 flutter run -d windows          # Windows（需要 Visual Studio C++ 桌面开发组件）
 flutter run -d <android-tv-id>  # Android TV / 模拟器（adb connect <电视IP>:5555 后可见）
-flutter test                    # 焦点导航测试
+flutter test                    # 单元 + 遥控器操作测试
+VIORA_LIVE=1 flutter test test/live  # 连 Jellyfin 官方演示服的联调测试
 flutter analyze
 ```
 

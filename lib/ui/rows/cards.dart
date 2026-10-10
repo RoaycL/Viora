@@ -15,6 +15,7 @@ class LandscapeCard extends StatelessWidget {
     required this.node,
     required this.art,
     required this.title,
+    this.image,
     this.subtitle,
     this.tag,
     this.caption,
@@ -29,6 +30,9 @@ class LandscapeCard extends StatelessWidget {
 
   final FocusNode node;
   final ArtSpec art;
+
+  /// 真实图片；为空时显示 [art] 渐变
+  final Widget? image;
   final String title;
   final String? subtitle;
   final String? tag;
@@ -54,7 +58,7 @@ class LandscapeCard extends StatelessWidget {
               child: Stack(
                 fit: StackFit.expand,
                 children: [
-                  ArtView(art),
+                  image ?? ArtView(art),
                   const DecoratedBox(
                     decoration: BoxDecoration(
                       gradient: LinearGradient(
@@ -108,6 +112,7 @@ class PosterCard extends StatelessWidget {
     required this.node,
     required this.art,
     required this.title,
+    this.image,
     this.subtitle,
     this.resources,
     this.onActivate,
@@ -121,6 +126,9 @@ class PosterCard extends StatelessWidget {
 
   final FocusNode node;
   final ArtSpec art;
+
+  /// 真实图片；为空时显示 [art] 渐变
+  final Widget? image;
   final String title;
   final String? subtitle;
 
@@ -153,22 +161,23 @@ class PosterCard extends StatelessWidget {
                 child: Stack(
                   fit: StackFit.expand,
                   children: [
-                    ArtView(art),
-                    Positioned(
-                      left: 14,
-                      right: 14,
-                      bottom: 14,
-                      child: Text(
-                        title,
-                        maxLines: 2,
-                        style: const TextStyle(
-                          fontSize: 24,
-                          fontWeight: FontWeight.w900,
-                          letterSpacing: 1,
-                          shadows: [Shadow(color: Color(0x99000000), blurRadius: 12)],
+                    image ?? ArtView(art),
+                    if (image == null)
+                      Positioned(
+                        left: 14,
+                        right: 14,
+                        bottom: 14,
+                        child: Text(
+                          title,
+                          maxLines: 2,
+                          style: const TextStyle(
+                            fontSize: 24,
+                            fontWeight: FontWeight.w900,
+                            letterSpacing: 1,
+                            shadows: [Shadow(color: Color(0x99000000), blurRadius: 12)],
+                          ),
                         ),
                       ),
-                    ),
                     if (resources != null) Positioned(left: 12, top: 12, child: _ResourceBadge(resources!)),
                   ],
                 ),
