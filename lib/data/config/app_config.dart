@@ -210,7 +210,11 @@ class PlaybackConfig {
     this.engine = EnginePreference.auto,
     this.autoFrameRate = true,
     this.tunneling = false,
+    this.preload = true,
   });
+
+  /// 播放预加载：提前取播放信息并预热视频流（会多用少量流量）
+  final bool preload;
 
   /// Android 播放内核（Windows 固定 mpv）
   final EnginePreference engine;
@@ -244,6 +248,7 @@ class PlaybackConfig {
     EnginePreference? engine,
     bool? autoFrameRate,
     bool? tunneling,
+    bool? preload,
   }) => PlaybackConfig(
     userAgent: userAgent ?? this.userAgent,
     uaForApi: uaForApi ?? this.uaForApi,
@@ -253,6 +258,7 @@ class PlaybackConfig {
     engine: engine ?? this.engine,
     autoFrameRate: autoFrameRate ?? this.autoFrameRate,
     tunneling: tunneling ?? this.tunneling,
+    preload: preload ?? this.preload,
   );
 
   Map<String, dynamic> toJson() => {
@@ -264,6 +270,7 @@ class PlaybackConfig {
     'engine': engine.name,
     'autoFrameRate': autoFrameRate,
     'tunneling': tunneling,
+    'preload': preload,
   };
 
   factory PlaybackConfig.fromJson(Map<String, dynamic> j) => PlaybackConfig(
@@ -275,6 +282,7 @@ class PlaybackConfig {
     engine: EnginePreference.parse(j['engine'] as String?),
     autoFrameRate: j['autoFrameRate'] as bool? ?? true,
     tunneling: j['tunneling'] as bool? ?? false,
+    preload: j['preload'] as bool? ?? true,
   );
 }
 

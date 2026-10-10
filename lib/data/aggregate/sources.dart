@@ -9,6 +9,7 @@ import '../index/index_sync.dart';
 import '../index/media_index.dart';
 import '../media/media_models.dart';
 import '../media/server_registry.dart';
+import '../../player/preload.dart';
 
 /// 一个可播放的版本：哪台服务器、哪个条目（电影 / 单集）、哪个 MediaSource（docs/04-aggregation.md §5）
 @immutable
@@ -121,7 +122,7 @@ final sourceOptionsProvider = FutureProvider.family<List<SourceOption>, SourcesK
       final server = config.server(it.serverId);
       if (client == null || server == null) return const <SourceOption>[];
       try {
-        final info = await client.playbackInfo(it.id).timeout(const Duration(seconds: 8));
+        final info = await PlaybackPreloader.info(client, it.serverId, it.id).timeout(const Duration(seconds: 8));
         final latency = client.line.latencyMs;
         return [
           for (final s in info.sources) SourceOption(item: it, source: s, serverName: server.name, latencyMs: latency),

@@ -26,6 +26,7 @@ import '../browse/media_cards.dart';
 import '../collections/collections_pages.dart';
 import '../tmdb/tmdb_cards.dart';
 import 'home_hero.dart';
+import '../../player/preload.dart';
 
 /// 首页（docs/05-metadata-and-segments.md §2.1、docs/06-ui-design.md §4）：
 /// Hero（TMDB 今日趋势）+ 继续观看（各服务器）+ 最近入库 + TMDB 推荐行，背景跟随焦点。
@@ -60,9 +61,21 @@ class _HomeBodyState extends ConsumerState<_HomeBody> {
   _Backdrop? _backdrop;
   Timer? _backdropDebounce;
 
+  /// 焦点在"继续观看"卡片上停留 0.8 秒后预加载（按 OK 后起播更快）
+  Timer? _preloadDebounce;
+
+  void _preloadResume(MediaItem it) {
+    _preloadDebounce?.cancel();
+    _preloadDebounce = Timer(const Duration(milliseconds: 800), () {
+      final client = ref.read(serverClientProvider(it.serverId));
+      if (client != null) PlaybackPreloader.preload(client, it);
+    });
+  }
+
   @override
   void dispose() {
     _backdropDebounce?.cancel();
+    _preloadDebounce?.cancel();
     _scroll.dispose();
     super.dispose();
   }
@@ -250,7 +263,10 @@ class _HomeBodyState extends ConsumerState<_HomeBody> {
                       itemCount: resume.length,
                       itemExtent: LandscapeCard.width,
                       height: LandscapeCard.height,
-                      onItemFocused: (i) => _setBackdrop(_itemBackdrop(resume[i])),
+                      onItemFocused: (i) {
+                        _setBackdrop(_itemBackdrop(resume[i]));
+                        _preloadResume(resume[i]);
+                      },
                       itemBuilder: (context, i, node) => mediaLandscapeCard(
                         context,
                         resume[i],

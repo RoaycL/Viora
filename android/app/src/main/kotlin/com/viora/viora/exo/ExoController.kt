@@ -21,6 +21,7 @@ import androidx.media3.common.util.UnstableApi
 import androidx.media3.datasource.DefaultDataSource
 import androidx.media3.datasource.DefaultHttpDataSource
 import androidx.media3.exoplayer.DecoderReuseEvaluation
+import androidx.media3.exoplayer.DefaultLoadControl
 import androidx.media3.exoplayer.DefaultRenderersFactory
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.analytics.AnalyticsListener
@@ -54,8 +55,14 @@ class ExoController(
             .setPreferredTextLanguages("zh", "chi", "zho", "chs", "cht")
             .setSelectUndeterminedTextLanguage(true)
             .build()
+        // 起播只需缓冲 1 秒（默认 2.5 秒），卡顿后重新缓冲 2.5 秒（默认 5 秒），加快起播与拖动后的恢复
+        val loadControl = DefaultLoadControl.Builder()
+            .setBufferDurationsMs(15_000, 50_000, 1_000, 2_500)
+            .setPrioritizeTimeOverSizeThresholds(true)
+            .build()
         player = ExoPlayer.Builder(context, renderers)
             .setTrackSelector(trackSelector)
+            .setLoadControl(loadControl)
             .build()
     }
 

@@ -17,6 +17,7 @@ import '../../data/media/server_registry.dart';
 import '../../player/engine.dart';
 import '../../player/exo_engine.dart';
 import '../../player/mpv_engine.dart';
+import '../../player/preload.dart';
 import '../../ui/glass/glass.dart';
 import '../../ui/panels/context_menu.dart';
 import '../../ui/rows/cards.dart';
@@ -62,6 +63,10 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
   bool _started = false;
   bool _stopped = false;
   bool _wasPlaying = false;
+
+  /// 剧集看到 85% 时预加载的下一集（播完直接跳过去，起播更快）
+  MediaItem? _nextEpisode;
+  bool _nextPreloading = false;
 
   /// 累加快进 / 快退（连续按键 0.8 秒后才真正 seek）
   Duration? _pendingSeek;
@@ -111,6 +116,11 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
 
   void _onEngineState() {
     final s = _state;
+    if (!_nextPreloading &&
+        s.duration > Duration.zero &&
+        s.position.inMilliseconds > s.duration.inMilliseconds * 0.85) {
+      _preloadNext();
+    }
     if (s.playing != _wasPlaying) {
       _wasPlaying = s.playing;
       if (!_started && s.playing) {
@@ -156,8 +166,11 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
       final client = ref.read(serverClientProvider(widget.serverId));
       if (client == null) throw const MediaServerException('服务器不存在');
       _client = client;
-      _item ??= await client.item(widget.itemId);
-      final info = await client.playbackInfo(widget.itemId);
+      // 并行：创建播放内核、取条目信息、取播放信息（详情页 / 首页已预加载时直接命中缓存）
+      final engineReady = _engine == null ? _attachEngine(_createEngine()) : Future<void>.value();
+      final itemFuture = _item == null ? client.item(widget.itemId) : Future.value(_item!);
+      itemFuture.ignore();
+      final info = await PlaybackPreloader.info(client, widget.serverId, widget.itemId);
       if (info.sources.isEmpty) throw const MediaServerException('没有可播放的资源');
       final wanted = sourceId ?? widget.sourceId;
       final source = info.sources.where((s) => s.id == wanted).firstOrNull ?? info.sources.first;
@@ -168,8 +181,10 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
         _playSessionId = info.playSessionId ?? newPlaySessionId();
         _error = null;
       });
-      if (_engine == null) await _attachEngine(_createEngine());
+      await engineReady;
       await _openCurrent(at ?? Duration(milliseconds: widget.startMs));
+      _item = await itemFuture;
+      if (mounted) setState(() {});
       ref.read(configProvider.notifier).updateServer(widget.serverId, (s) => s.copyWith(lastAccessAt: DateTime.now()));
     } catch (e) {
       if (mounted) setState(() => _error = e.toString());
@@ -200,11 +215,28 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
     }
   }
 
+  Future<void> _preloadNext() async {
+    _nextPreloading = true;
+    final item = _item, client = _client;
+    if (item == null || client == null || item.kind != MediaKind.episode || item.seriesId == null) return;
+    try {
+      final eps = await client.episodes(item.seriesId!, seasonId: item.seasonId);
+      final i = eps.indexWhere((e) => e.id == item.id);
+      if (i < 0 || i + 1 >= eps.length) return;
+      _nextEpisode = eps[i + 1];
+      await PlaybackPreloader.preload(client, eps[i + 1], position: Duration.zero);
+    } catch (_) {}
+  }
+
   Future<void> _onCompleted() async {
     _reportStopped();
     final item = _item, client = _client;
     if (item == null || client == null || !mounted) return;
     // 剧集自动播放下一集
+    if (_nextEpisode != null) {
+      context.pushReplacement('/play/${widget.serverId}/${_nextEpisode!.id}?pos=0');
+      return;
+    }
     if (item.kind == MediaKind.episode && item.seriesId != null) {
       try {
         final eps = await client.episodes(item.seriesId!, seasonId: item.seasonId);

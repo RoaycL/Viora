@@ -9,6 +9,7 @@ import 'package:viora/data/config/app_config.dart';
 import 'package:viora/data/emby/emby_client.dart';
 import 'package:viora/data/index/media_index.dart';
 import 'package:viora/data/media/media_models.dart';
+import 'package:viora/player/preload.dart';
 
 void main() {
   final live = Platform.environment['VIORA_LIVE'] == '1';
@@ -150,4 +151,56 @@ void main() {
     );
     expect(ir.statusCode, 200);
   }, skip: live ? false : '需要 VIORA_LIVE=1');
+
+  test(
+    '播放预加载：播放信息缓存 + 视频预热（经反向代理）',
+    () async {
+      final proxyBase = Platform.environment['VIORA_PROXY'] ?? 'https://embyproxy.roayc.com/proxy/';
+      var server = const ServerConfig(
+        id: 'demo-preload',
+        type: ServerType.jellyfin,
+        name: 'Jellyfin Demo（反代）',
+        username: 'demo',
+        lines: [ServerLine(id: 'p', name: '反代线路', url: 'https://demo.jellyfin.org/stable', proxied: true)],
+      );
+      final client = EmbyClient(
+        config: AppConfig(
+          deviceId: 'viora-test',
+          proxy: ProxyConfig(baseUrl: proxyBase),
+        ),
+        server: server,
+        appVersion: '0.6.0',
+        onServerChanged: (s) => server = s,
+      );
+      final libs = await client.libraries();
+      final movies = libs.firstWhere((l) => l.collectionType == 'movies', orElse: () => libs.first);
+      final page = await client.items(parentId: movies.id, limit: 5);
+      final movie = page.items.firstWhere((i) => i.kind == MediaKind.movie, orElse: () => page.items.first);
+      PlaybackPreloader.reset();
+
+      final sw = Stopwatch()..start();
+      await PlaybackPreloader.preload(client, movie);
+      final preloadMs = sw.elapsedMilliseconds;
+      expect(PlaybackPreloader.cached(server.id, movie.id), isNotNull);
+
+      sw.reset();
+      final info = await PlaybackPreloader.info(client, server.id, movie.id);
+      final cachedMs = sw.elapsedMilliseconds;
+      expect(info.sources, isNotEmpty);
+      expect(cachedMs, lessThan(50));
+
+      // 预热后再读片头（模拟播放器打开）
+      final req = client.stream(info.sources.first, playSessionId: info.playSessionId);
+      sw.reset();
+      final r = await Dio().getUri<dynamic>(
+        req.url,
+        options: Options(headers: {...req.headers, 'Range': 'bytes=0-65535'}, responseType: ResponseType.bytes),
+      );
+      expect(r.statusCode, anyOf(200, 206));
+      // ignore: avoid_print
+      print('预加载（播放信息 + 预热）${preloadMs}ms；之后取播放信息 ${cachedMs}ms，读片头 ${sw.elapsedMilliseconds}ms');
+    },
+    skip: live ? false : '需要 VIORA_LIVE=1',
+    timeout: const Timeout(Duration(minutes: 2)),
+  );
 }

@@ -7,6 +7,7 @@ import '../../data/aggregate/sources.dart';
 import '../../data/media/media_models.dart';
 import '../../data/media/server_registry.dart';
 import '../../data/tmdb/tmdb_client.dart';
+import '../../player/preload.dart';
 import '../../ui/focus/focusable.dart';
 import '../../ui/focus/row_focus.dart';
 import '../../ui/rows/cards.dart';
@@ -52,6 +53,26 @@ class _ItemDetailPageState extends ConsumerState<ItemDetailPage> {
   String? _group;
   bool? _favorite;
   bool? _played;
+
+  /// 已预热的默认版本（同一版本只预热一次）
+  String? _warmedKey;
+
+  /// 播放资源出来后预热默认版本：按下播放时服务器 / 反代 / 网盘直链都已就绪
+  void _warmDefault(SourceOption o) {
+    final key = '${o.serverId}/${o.item.id}/${o.source.id}';
+    if (_warmedKey == key) return;
+    _warmedKey = key;
+    final client = ref.read(serverClientProvider(o.serverId));
+    if (client == null) return;
+    WidgetsBinding.instance.addPostFrameCallback(
+      (_) => PlaybackPreloader.warm(
+        client,
+        o.source,
+        playSessionId: PlaybackPreloader.cached(o.serverId, o.item.id)?.playSessionId,
+        position: o.item.position,
+      ),
+    );
+  }
 
   _Key get _key => (serverId: widget.serverId, itemId: widget.itemId);
 
@@ -107,6 +128,7 @@ class _ItemDetailPageState extends ConsumerState<ItemDetailPage> {
         ? null
         : ref.watch(sourceOptionsProvider((serverId: playTarget.serverId, itemId: playTarget.id)));
     final options = optionsAsync?.value ?? const <SourceOption>[];
+    if (options.isNotEmpty) _warmDefault(options.first);
     final groups = [
       for (final g in const ['4K', '1080P', '其他'])
         if (options.any((o) => o.group == g)) g,

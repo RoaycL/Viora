@@ -188,6 +188,14 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
           ),
           const SizedBox(height: 12),
           VToggle(
+            label: '播放预加载',
+            subtitle: '在详情页、继续观看上停留时提前准备播放信息并预热视频；剧集看到 85% 时预加载下一集。会多用少量流量',
+            value: config.playback.preload,
+            onChanged: (v) =>
+                ref.read(configProvider.notifier).update((c) => c.copyWith(playback: c.playback.copyWith(preload: v))),
+          ),
+          const SizedBox(height: 12),
+          VToggle(
             label: '快进 / 快退步长：${config.playback.seekStepSeconds} 秒',
             subtitle: '按 OK 在 5 / 10 / 15 / 30 秒之间切换',
             value: true,
