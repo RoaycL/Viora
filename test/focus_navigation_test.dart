@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:viora/features/tmdb/tmdb_detail_page.dart';
 import 'package:viora/app/app.dart';
 import 'package:viora/app/input/intents.dart';
 import 'package:viora/data/config/app_config.dart';
@@ -164,11 +165,16 @@ void main() {
     await press(tester, LogicalKeyboardKey.arrowDown);
     await press(tester, LogicalKeyboardKey.arrowDown);
     await press(tester, LogicalKeyboardKey.select);
-    expect(find.text('用关键词搜索'), findsOneWidget);
-    expect(find.textContaining(RegExp('媒体库暂无资源|还没有添加服务器')), findsOneWidget);
+    // 没有资源时只显示"暂未找到资源"，不再有关键词搜索按钮；页面底部是「已经到底了」
+    expect(find.textContaining(RegExp('暂未找到资源|还没有添加服务器')), findsOneWidget);
+    expect(find.text('用关键词搜索'), findsNothing);
+    expect(
+      find.descendant(of: find.byType(TmdbDetailPage), matching: find.text('已经到底了', skipOffstage: false)),
+      findsOneWidget,
+    );
 
     await press(tester, LogicalKeyboardKey.escape);
-    expect(find.text('用关键词搜索'), findsNothing);
+    expect(find.textContaining(RegExp('暂未找到资源|还没有添加服务器')), findsNothing);
     expect(focused, 'row4#0');
     await unmount(tester);
   });

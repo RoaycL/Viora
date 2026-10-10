@@ -15,6 +15,7 @@ import '../../data/config/config_store.dart';
 import '../../data/danmaku/danmaku_client.dart';
 import '../../data/danmaku/danmaku_models.dart';
 import '../../data/emby/emby_client.dart';
+import '../../data/history/play_history.dart';
 import '../../data/media/media_models.dart';
 import '../../data/media/server_registry.dart';
 import '../../player/engine.dart';
@@ -250,6 +251,8 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
     final client = _client, source = _source;
     if (client == null || source == null || _stopped) return;
     final pos = _state.position;
+    // 本机也记一份上次播放时间（部分服务器的继续观看不带 LastPlayedDate）
+    PlayHistory.record(widget.serverId, widget.itemId);
     if (start) {
       client.reportStart(source, pos, _playSessionId);
     } else {

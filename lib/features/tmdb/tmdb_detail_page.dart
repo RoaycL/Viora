@@ -1,3 +1,5 @@
+import '../../ui/widgets/end_of_page.dart';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
@@ -124,7 +126,7 @@ class _TmdbDetail extends ConsumerWidget {
         Positioned.fill(
           child: RowFocusScope(
             child: SingleChildScrollView(
-              padding: const EdgeInsets.only(top: 130, bottom: 360),
+              padding: const EdgeInsets.only(top: 130, bottom: 24),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
@@ -176,7 +178,7 @@ class _TmdbDetail extends ConsumerWidget {
                                 searching
                                     ? '正在各服务器搜索资源…'
                                     : copies.isEmpty
-                                    ? (servers.isEmpty ? '还没有添加服务器' : '媒体库暂无资源')
+                                    ? (servers.isEmpty ? '还没有添加服务器' : '暂未找到资源')
                                     : '找到 ${copies.length} 个资源 · ${copies.map((c) => serverName(c.serverId)).toSet().join('、')}',
                                 style: TextStyle(
                                   fontSize: 20,
@@ -236,19 +238,13 @@ class _TmdbDetail extends ConsumerWidget {
                                     ],
                                   ),
                           ),
-                        ] else if (!searching)
-                          (node) => PillButton(
-                            focusNode: node,
-                            large: true,
-                            icon: Icons.search_rounded,
-                            label: '用关键词搜索',
-                            onPressed: () => context.go('/search?q=${Uri.encodeComponent(t.title)}'),
-                          ),
+                        ],
                       ],
                     ),
                   ),
                   const SizedBox(height: 48),
                   ...tmdbExtraRows(t, firstRow: 1),
+                  const EndOfPage(leading: VSpace.safeH),
                 ],
               ),
             ),

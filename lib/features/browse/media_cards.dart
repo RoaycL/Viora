@@ -1,3 +1,5 @@
+import '../../data/history/play_history.dart';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
@@ -68,7 +70,12 @@ Widget mediaLandscapeCard(
       ? '第 ${item.seasonNumber} 季 · ${item.episodeNumber} 集'
       : item.episodeLabel;
   final subtitle = watch
-      ? [?timeAgo(item.lastPlayed), watchedOn].join(' · ')
+      ? [
+          // 上次播放时间（服务器没给时用本机记录的），都没有时显示剩余时长
+          timeAgo(PlayHistory.lastPlayed(item)) ??
+              (remaining != null && remaining > Duration.zero ? '剩 ${formatDuration(remaining)}' : null),
+          watchedOn,
+        ].whereType<String>().join(' · ')
       : (isEpisode ? item.name : mediaSubtitle(item));
   return LandscapeCard(
     node: node,

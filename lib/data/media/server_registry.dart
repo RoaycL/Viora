@@ -1,3 +1,5 @@
+import '../history/play_history.dart';
+
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../config/app_config.dart';
@@ -47,7 +49,9 @@ final resumeProvider = FutureProvider<List<MediaItem>>((ref) async {
   );
   // 各服务器按上次播放时间合并
   final all = [for (final list in results) ...list];
-  all.sort((a, b) => (b.lastPlayed ?? DateTime(1970)).compareTo(a.lastPlayed ?? DateTime(1970)));
+  // 服务器没给上次播放时间时用本机记录的
+  final epoch = DateTime(1970);
+  all.sort((a, b) => (PlayHistory.lastPlayed(b) ?? epoch).compareTo(PlayHistory.lastPlayed(a) ?? epoch));
   return all;
 });
 

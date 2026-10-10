@@ -1,3 +1,5 @@
+import '../../ui/widgets/end_of_page.dart';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
@@ -199,7 +201,7 @@ class _ItemDetailPageState extends ConsumerState<ItemDetailPage> {
         Positioned.fill(
           child: RowFocusScope(
             child: SingleChildScrollView(
-              padding: const EdgeInsets.only(top: 130, bottom: 360),
+              padding: const EdgeInsets.only(top: 130, bottom: 24),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
@@ -371,6 +373,7 @@ class _ItemDetailPageState extends ConsumerState<ItemDetailPage> {
                     ),
                   ],
                   if (tmdb != null) ...[const SizedBox(height: 24), ...tmdbExtraRows(tmdb, firstRow: 5)],
+                  const EndOfPage(leading: VSpace.safeH),
                 ],
               ),
             ),
