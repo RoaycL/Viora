@@ -12,7 +12,11 @@ enum PlatformProfile {
   /// Windows：键盘 + 鼠标，界面上有返回按钮、窗口按钮，支持悬停、滚轮、拖动、物理键盘输入
   desktop;
 
-  static final PlatformProfile current = !kIsWeb && Platform.isAndroid ? tv : desktop;
+  static PlatformProfile current = !kIsWeb && Platform.isAndroid ? tv : desktop;
+
+  /// 测试用：模拟电视 / 电脑的操作逻辑
+  @visibleForTesting
+  static set debugOverride(PlatformProfile p) => current = p;
 
   static bool get isTv => current == tv;
   static bool get isDesktop => current == desktop;

@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
+import '../../data/net/request_composer.dart';
 import '../../app/theme.dart';
 import '../../data/config/app_config.dart';
 import '../../data/config/config_store.dart';
@@ -44,6 +45,11 @@ class _ServerEditPageState extends ConsumerState<ServerEditPage> {
   @override
   void initState() {
     super.initState();
+    // 地址里有没有内网地址会影响「走反向代理」的说明
+    var lan = false;
+    _lines.addListener(() {
+      if (_hasLanLine != lan && mounted) setState(() => lan = _hasLanLine);
+    });
     final id = widget.serverId;
     _existing = id == null ? null : ref.read(configProvider).server(id);
     final s = _existing;
@@ -85,6 +91,13 @@ class _ServerEditPageState extends ConsumerState<ServerEditPage> {
     if (result.isEmpty) throw const FormatException('请至少填写一个服务器地址');
     return result;
   }
+
+  /// 填写的地址里有内网地址
+  bool get _hasLanLine => _lines.text.split(RegExp(r'[\n;；]')).any((raw) {
+    final url = raw.contains('|') ? raw.split('|').last.trim() : raw.trim();
+    if (url.isEmpty) return false;
+    return isLanHost(Uri.tryParse(url.contains('://') ? url : 'http://$url')?.host ?? '');
+  });
 
   Future<void> _save() async {
     setState(() {
@@ -176,7 +189,7 @@ class _ServerEditPageState extends ConsumerState<ServerEditPage> {
                   Row(
                     children: [
                       Expanded(
-                        child: VTextField(label: '用户名', controller: _user),
+                        child: VTextField(label: '用户名', controller: _user, credential: true),
                       ),
                       const SizedBox(width: 24),
                       Expanded(
@@ -199,7 +212,9 @@ class _ServerEditPageState extends ConsumerState<ServerEditPage> {
                   const SizedBox(height: 28),
                   VToggle(
                     label: '线路走反向代理',
-                    subtitle: '需要先在「设置 → 反向代理」填写完整地址',
+                    subtitle: _hasLanLine
+                        ? '内网地址（如 192.168.x.x）会自动直连，不经过反向代理；需要先在「设置 → 反向代理」填写完整地址'
+                        : '需要先在「设置 → 反向代理」填写完整地址',
                     value: _proxied,
                     onChanged: (v) => setState(() => _proxied = v),
                   ),

@@ -15,7 +15,7 @@ import '../config/app_config.dart';
 /// 不传登录令牌：令牌和设备绑定，电视收到后用账号密码重新登录。
 enum SyncSection {
   servers('媒体服务器', '地址、线路、账号密码'),
-  network('反向代理与播放 UA', '反代地址、代理范围、播放 UA、客户端名称'),
+  network('反向代理与播放 UA', '反代地址、播放 UA、客户端名称'),
   tmdb('TMDB', 'API Key、自定义地址'),
   danmaku('弹幕', '弹幕服务器、显示设置、屏蔽词'),
   segments('片头片尾', '数据源开关与 API Key');

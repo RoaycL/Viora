@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/foundation.dart';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
@@ -23,6 +25,7 @@ import 'router.dart';
 import 'shell.dart';
 import 'platform_profile.dart';
 import 'theme.dart';
+import '../ui/panels/exit_dialog.dart';
 import 'window_frame.dart';
 import '../ui/focus/input_mode.dart';
 
@@ -36,9 +39,46 @@ class VioraApp extends ConsumerStatefulWidget {
   ConsumerState<VioraApp> createState() => _VioraAppState();
 }
 
-class _VioraAppState extends ConsumerState<VioraApp> {
+class _VioraAppState extends ConsumerState<VioraApp> with WidgetsBindingObserver {
   late final GoRouter _router = buildRouter(observers: [_BackObserver(_updateCanGoBackAfterFrame)]);
-  DateTime? _lastBackOnHome;
+  DateTime? _lastExitHint;
+
+  /// 电视：长按返回键 3 秒弹出「退出 Viora？」，确认后才退出（不再"首页连按两次返回退出"，容易误退）
+  static const exitHoldDuration = Duration(seconds: 3);
+  Timer? _exitHold;
+  bool _exitDialogOpen = false;
+
+  static bool _isBackKey(LogicalKeyboardKey k) =>
+      k == LogicalKeyboardKey.goBack || k == LogicalKeyboardKey.escape || k == LogicalKeyboardKey.gameButtonB;
+
+  bool _onHardwareKey(KeyEvent e) {
+    if (!_isBackKey(e.logicalKey)) return false;
+    if (e is KeyDownEvent) {
+      _exitHold?.cancel();
+      _exitHold = Timer(exitHoldDuration, _confirmExit);
+    } else if (e is KeyUpEvent) {
+      _exitHold?.cancel();
+    }
+    // 按住不放时的重复事件不触发连续返回：返回快捷键设置了 includeRepeats: false
+    return false;
+  }
+
+  Future<void> _confirmExit() async {
+    final context = rootNavigatorKey.currentContext;
+    if (_exitDialogOpen || context == null || !context.mounted) return;
+    _exitDialogOpen = true;
+    final exit = await showExitDialog(context);
+    _exitDialogOpen = false;
+    if (exit) await SystemNavigator.pop();
+  }
+
+  /// Android 系统的返回（没被按键处理的返回键、返回手势）：电视上一律按应用内返回处理，永远不直接关闭应用
+  @override
+  Future<bool> didPopRoute() async {
+    if (!PlatformProfile.isTv) return false;
+    _handleBack();
+    return true;
+  }
 
   /// Windows 标题栏的返回按钮是否显示：不在顶层页面（首页 / 资源库 / 搜索 / 收藏 / 记录 / 设置）时显示
   final _canGoBack = ValueNotifier(false);
@@ -66,6 +106,11 @@ class _VioraAppState extends ConsumerState<VioraApp> {
   void initState() {
     super.initState();
     InputMode.install();
+    if (PlatformProfile.isTv) {
+      // 先于路由注册：系统返回先到这里
+      WidgetsBinding.instance.addObserver(this);
+      HardwareKeyboard.instance.addHandler(_onHardwareKey);
+    }
     _router.routerDelegate.addListener(_scheduleCanGoBack);
     _autoCheckUpdate();
     // 上次异常退出时残留的播放缓存
@@ -106,6 +151,9 @@ class _VioraAppState extends ConsumerState<VioraApp> {
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    HardwareKeyboard.instance.removeHandler(_onHardwareKey);
+    _exitHold?.cancel();
     _router.routerDelegate.removeListener(_scheduleCanGoBack);
     _canGoBack.dispose();
     _router.dispose();
@@ -113,7 +161,7 @@ class _VioraAppState extends ConsumerState<VioraApp> {
   }
 
   /// 返回键（docs/07-input-control.md §2.1）：
-  /// 页面自己的处理 → 导航栏回到内容 → 关闭弹层 / 出栈 → 回到首页 → 再按一次退出。
+  /// 页面自己的处理 → 导航栏回到内容 → 关闭弹层 / 出栈 → 回到首页。退出应用：电视长按返回键 3 秒确认。
   void _handleBack() {
     if (backDispatcher.dispatch()) return;
 
@@ -135,14 +183,12 @@ class _VioraAppState extends ConsumerState<VioraApp> {
       return;
     }
 
-    // 只有 TV 在首页再按一次退出；Windows 由窗口关闭按钮退出。
+    // 首页再按返回不退出：电视提示长按退出（10 秒内只提示一次）；Windows 由窗口关闭按钮退出。
     if (!PlatformProfile.isTv) return;
     final now = DateTime.now();
-    if (_lastBackOnHome != null && now.difference(_lastBackOnHome!) < const Duration(seconds: 2)) {
-      SystemNavigator.pop();
-    } else {
-      _lastBackOnHome = now;
-      showToast('再按一次返回键退出');
+    if (_lastExitHint == null || now.difference(_lastExitHint!) > const Duration(seconds: 10)) {
+      _lastExitHint = now;
+      showToast('长按返回键 3 秒可以退出 Viora');
     }
   }
 
@@ -164,7 +210,12 @@ class _VioraAppState extends ConsumerState<VioraApp> {
         scrollbars: false,
         dragDevices: PointerDeviceKind.values.toSet(),
       ),
-      shortcuts: <ShortcutActivator, Intent>{...WidgetsApp.defaultShortcuts, ...appShortcuts},
+      // 默认快捷键里的 Esc → 关闭弹层换成应用自己的返回（不响应按住不放的重复事件），两者同时存在时默认的会先匹配
+      shortcuts: <ShortcutActivator, Intent>{
+        for (final e in WidgetsApp.defaultShortcuts.entries)
+          if (!(e.key is SingleActivator && _isBackKey((e.key as SingleActivator).trigger))) e.key: e.value,
+        ...appShortcuts,
+      },
       actions: <Type, Action<Intent>>{
         ...WidgetsApp.defaultActions,
         BackIntent: CallbackAction<BackIntent>(onInvoke: (_) => _handleBack()),

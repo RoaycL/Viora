@@ -28,11 +28,11 @@ const Map<ShortcutActivator, Intent> appShortcuts = <ShortcutActivator, Intent>{
   SingleActivator(LogicalKeyboardKey.arrowDown): DirectionalFocusIntent(TraversalDirection.down),
   SingleActivator(LogicalKeyboardKey.arrowLeft): DirectionalFocusIntent(TraversalDirection.left),
   SingleActivator(LogicalKeyboardKey.arrowRight): DirectionalFocusIntent(TraversalDirection.right),
-  // 返回：遥控器返回键 / Esc / 手柄 B / Alt+←
-  SingleActivator(LogicalKeyboardKey.goBack): BackIntent(),
-  SingleActivator(LogicalKeyboardKey.escape): BackIntent(),
-  SingleActivator(LogicalKeyboardKey.gameButtonB): BackIntent(),
-  SingleActivator(LogicalKeyboardKey.browserBack): BackIntent(),
+  // 返回：遥控器返回键 / Esc / 手柄 B / Alt+←。按住不放不连续返回（长按 3 秒是退出确认，见 app.dart）
+  SingleActivator(LogicalKeyboardKey.goBack, includeRepeats: false): BackIntent(),
+  SingleActivator(LogicalKeyboardKey.escape, includeRepeats: false): BackIntent(),
+  SingleActivator(LogicalKeyboardKey.gameButtonB, includeRepeats: false): BackIntent(),
+  SingleActivator(LogicalKeyboardKey.browserBack, includeRepeats: false): BackIntent(),
   SingleActivator(LogicalKeyboardKey.arrowLeft, alt: true): BackIntent(),
   // 菜单：遥控器菜单键 / 键盘菜单键 / Shift+F10 / 手柄 X
   SingleActivator(LogicalKeyboardKey.contextMenu): MenuIntent(),

@@ -66,7 +66,6 @@ class ServerLine {
   String name;               // "主线路"、"CF 线路"
   Uri baseUrl;               // https://emby.example.com:8920
   String? proxyId;           // 绑定的反向代理，null = 直连
-  ProxyScope proxyScope;     // apiAndStream / streamOnly / apiOnly
   int? lastLatencyMs;        // 最近一次测速
 }
 
@@ -224,7 +223,7 @@ class SegmentQuery {
 请求从业务层出来时只带"逻辑地址"（`server://{serverId}/Items/xxx`），依次经过：
 
 1. **RouteSelector**：把 `server://` 解析为当前线路的 `baseUrl`（手动指定或自动测速选最快）；请求失败时按延迟顺序切换下一条线路，并记录。
-2. **ProxyRewriter**：线路绑定了代理且 `proxyScope` 覆盖本次请求类型 → 按模板改写 URL、附加代理 Header。
+2. **ProxyRewriter**：线路绑定了代理（且不是内网地址）→ API、图片、视频流都按模板改写 URL、附加代理 Header。
 3. **UserAgent**：API 请求用"客户端 UA"，播放/图片按设置决定是否使用"播放 UA"（见 03 §6）。
 4. **Auth**：按服务器类型注入 `X-Emby-Token` / `Authorization: MediaBrowser ...` / `X-Plex-Token` / fnOS Token。
 5. **Retry**：幂等请求在超时 / 5xx 时指数退避重试 2 次。

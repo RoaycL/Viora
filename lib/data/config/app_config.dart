@@ -15,16 +15,6 @@ enum ServerType {
   static ServerType parse(String? s) => values.firstWhere((t) => t.name == s, orElse: () => emby);
 }
 
-enum ProxyScope {
-  /// API、图片、视频流都走代理
-  all,
-
-  /// 只有视频流走代理
-  streamOnly;
-
-  static ProxyScope parse(String? s) => values.firstWhere((t) => t.name == s, orElse: () => all);
-}
-
 class ServerLine {
   const ServerLine({required this.id, required this.name, required this.url, this.proxied = false, this.latencyMs});
 
@@ -196,19 +186,19 @@ class ServerConfig {
 }
 
 /// 反向代理（默认按 emby-reverse-proxy-go 的地址格式改写，见 docs/03-media-servers.md §5.2）。
+/// 线路勾选「走反向代理」后，API、图片、视频流全部经过代理（不再区分代理范围）。
 class ProxyConfig {
-  const ProxyConfig({this.baseUrl = '', this.scope = ProxyScope.all});
+  const ProxyConfig({this.baseUrl = ''});
 
   /// "完整地址"，如 `https://embyproxy.example.com/proxy/`；空 = 未配置
   final String baseUrl;
-  final ProxyScope scope;
 
   bool get enabled => baseUrl.trim().isNotEmpty;
 
-  Map<String, dynamic> toJson() => {'baseUrl': baseUrl, 'scope': scope.name};
+  Map<String, dynamic> toJson() => {'baseUrl': baseUrl};
 
-  factory ProxyConfig.fromJson(Map<String, dynamic> j) =>
-      ProxyConfig(baseUrl: j['baseUrl'] as String? ?? '', scope: ProxyScope.parse(j['scope'] as String?));
+  /// 旧版本保存的 scope（代理范围）字段直接忽略
+  factory ProxyConfig.fromJson(Map<String, dynamic> j) => ProxyConfig(baseUrl: j['baseUrl'] as String? ?? '');
 }
 
 /// Android 播放内核偏好
@@ -423,10 +413,15 @@ class DanmakuConfig {
 
   static const maxServers = 3;
   static const countChoices = [1000, 3000, 5000, 0];
-  static const fontChoices = [28.0, 34.0, 40.0, 48.0];
-  static const opacityChoices = [0.4, 0.6, 0.85, 1.0];
-  static const areaChoices = [0.25, 0.5, 0.75, 1.0];
-  static const speedChoices = [12.0, 9.0, 6.0];
+
+  /// 选项与显示文字（设置页和播放页菜单共用）
+  static const fontOptions = [(28.0, '小'), (34.0, '中'), (40.0, '大'), (48.0, '特大')];
+  static const opacityOptions = [(0.4, '40%'), (0.6, '60%'), (0.85, '85%'), (1.0, '100%')];
+  static const areaOptions = [(0.25, '1/4 屏'), (0.5, '半屏'), (0.75, '3/4 屏'), (1.0, '全屏')];
+  static const speedOptions = [(12.0, '慢'), (9.0, '正常'), (6.0, '快')];
+
+  static String labelOf(List<(double, String)> options, double v) =>
+      options.where((o) => o.$1 == v).firstOrNull?.$2 ?? '$v';
 
   /// 已填写的服务器（规范化：补协议、去掉末尾斜杠）
   List<String> get activeServers => [
@@ -524,7 +519,6 @@ class AppConfig {
   String clientKey(String serverId) => [
     server(serverId)?.connectionKey,
     proxy.baseUrl,
-    proxy.scope.name,
     playback.userAgent,
     playback.uaForApi,
     playback.clientName,

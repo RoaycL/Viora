@@ -416,6 +416,7 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
     }
     _danmakuTarget ??= target;
     final shift = _danmakuChoice.shiftMs;
+    final style = ref.read(configProvider).danmaku;
     await showContextMenu(
       context,
       title: _danmaku == null ? '弹幕' : '弹幕 · ${_danmaku!.source}',
@@ -426,6 +427,28 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
             _danmakuVisible ? Icons.speaker_notes_off_outlined : Icons.speaker_notes_outlined,
             _toggleDanmaku,
           ),
+        // 显示样式：改完立即作用在屏幕上的弹幕，并保存到「设置 → 弹幕」
+        MenuAction(
+          '显示区域 · ${DanmakuConfig.labelOf(DanmakuConfig.areaOptions, style.area)}',
+          Icons.height_rounded,
+          () => _pickDanmakuStyle('显示区域', DanmakuConfig.areaOptions, style.area, (c, v) => c.copyWith(area: v)),
+        ),
+        MenuAction(
+          '字号 · ${DanmakuConfig.labelOf(DanmakuConfig.fontOptions, style.fontSize)}',
+          Icons.format_size_rounded,
+          () => _pickDanmakuStyle('字号', DanmakuConfig.fontOptions, style.fontSize, (c, v) => c.copyWith(fontSize: v)),
+        ),
+        MenuAction(
+          '不透明度 · ${DanmakuConfig.labelOf(DanmakuConfig.opacityOptions, style.opacity)}',
+          Icons.opacity_rounded,
+          () =>
+              _pickDanmakuStyle('不透明度', DanmakuConfig.opacityOptions, style.opacity, (c, v) => c.copyWith(opacity: v)),
+        ),
+        MenuAction(
+          '速度 · ${DanmakuConfig.labelOf(DanmakuConfig.speedOptions, style.speed)}',
+          Icons.speed_rounded,
+          () => _pickDanmakuStyle('滚动速度', DanmakuConfig.speedOptions, style.speed, (c, v) => c.copyWith(speed: v)),
+        ),
         MenuAction('搜索「${target.title}」并选择', Icons.manage_search_rounded, () => _searchDanmaku(target.title)),
         MenuAction('按关键词搜索…', Icons.keyboard_rounded, () => _searchDanmakuByKeyword(target.title)),
         MenuAction(
@@ -453,6 +476,29 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
       ],
     );
     if (mounted) _focus.requestFocus();
+  }
+
+  /// 选一个弹幕样式（显示区域 / 字号 / 不透明度 / 速度）；选完回到上一级弹幕菜单，方便接着调
+  Future<void> _pickDanmakuStyle(
+    String title,
+    List<(double, String)> options,
+    double current,
+    DanmakuConfig Function(DanmakuConfig, double) apply,
+  ) async {
+    var picked = false;
+    await showContextMenu(
+      context,
+      title: '弹幕$title',
+      actions: [
+        for (final (v, label) in options)
+          MenuAction('$label${v == current ? '  ✓' : ''}', Icons.chat_outlined, () {
+            picked = true;
+            if (!_danmakuVisible) setState(() => _danmakuVisible = true);
+            ref.read(configProvider.notifier).update((c) => c.copyWith(danmaku: apply(c.danmaku, v)));
+          }),
+      ],
+    );
+    if (picked && mounted) await _openDanmakuMenu();
   }
 
   Future<void> _searchDanmakuByKeyword(String initial) async {
