@@ -95,4 +95,49 @@ void main() {
     }
     expect(hidden.debugRects, isEmpty);
   });
+
+  testWidgets('播放中调整字号 / 显示区域 / 速度：屏幕上的弹幕就地更新，不清屏', (tester) async {
+    tester.view.physicalSize = const Size(1920, 1080);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+    final state = ValueNotifier(const EngineState(playing: true, buffering: false, duration: Duration(minutes: 40)));
+    final comments = [for (var i = 0; i < 40; i++) DanmakuComment(time: 0.1 + i * 0.01, text: '弹幕内容 $i')];
+    Widget build(DanmakuConfig c) => Directionality(
+      textDirection: TextDirection.ltr,
+      child: DanmakuLayer(comments: comments, state: state, config: c),
+    );
+    await tester.pumpWidget(build(const DanmakuConfig(area: 1.0)));
+    for (var i = 0; i < 20; i++) {
+      await tester.pump(const Duration(milliseconds: 50));
+    }
+    final layer = tester.state<DanmakuLayerState>(find.byType(DanmakuLayer));
+    final before = layer.debugRects;
+    expect(before.length, greaterThan(12), reason: '全屏能放下的行数比半屏多');
+
+    // 字号变大：同样的弹幕还在，宽度变大
+    await tester.pumpWidget(build(const DanmakuConfig(area: 1.0, fontSize: 48)));
+    final bigger = {for (final r in layer.debugRects) r.$1: r.$2.width};
+    // 字号变大后能放下的行变少（1080 / (48×1.32) = 17 行），多出来的行去掉，其余就地变大
+    expect(bigger.length, 17);
+    for (final r in before) {
+      if (bigger.containsKey(r.$1)) expect(bigger[r.$1]!, greaterThan(r.$2.width));
+    }
+
+    // 改速度：位置不跳（走过的比例保持）
+    final x0 = {for (final r in layer.debugRects) r.$1: r.$2.left};
+    await tester.pumpWidget(build(const DanmakuConfig(area: 1.0, fontSize: 48, speed: 6)));
+    for (final r in layer.debugRects) {
+      expect(r.$2.left, closeTo(x0[r.$1]!, 1));
+    }
+
+    // 显示区域缩小到 1/4：超出范围的行去掉，留下的都在上面 1/4
+    await tester.pumpWidget(build(const DanmakuConfig(area: 0.25, fontSize: 48, speed: 6)));
+    await tester.pump(const Duration(milliseconds: 16));
+    final rects = layer.debugRects;
+    expect(rects, isNotEmpty);
+    expect(rects.length, lessThan(before.length));
+    for (final r in rects) {
+      expect(r.$2.bottom, lessThanOrEqualTo(1080 * 0.25 + 16 + 1));
+    }
+  });
 }

@@ -413,10 +413,15 @@ class DanmakuConfig {
 
   static const maxServers = 3;
   static const countChoices = [1000, 3000, 5000, 0];
-  static const fontChoices = [28.0, 34.0, 40.0, 48.0];
-  static const opacityChoices = [0.4, 0.6, 0.85, 1.0];
-  static const areaChoices = [0.25, 0.5, 0.75, 1.0];
-  static const speedChoices = [12.0, 9.0, 6.0];
+
+  /// 选项与显示文字（设置页和播放页菜单共用）
+  static const fontOptions = [(28.0, '小'), (34.0, '中'), (40.0, '大'), (48.0, '特大')];
+  static const opacityOptions = [(0.4, '40%'), (0.6, '60%'), (0.85, '85%'), (1.0, '100%')];
+  static const areaOptions = [(0.25, '1/4 屏'), (0.5, '半屏'), (0.75, '3/4 屏'), (1.0, '全屏')];
+  static const speedOptions = [(12.0, '慢'), (9.0, '正常'), (6.0, '快')];
+
+  static String labelOf(List<(double, String)> options, double v) =>
+      options.where((o) => o.$1 == v).firstOrNull?.$2 ?? '$v';
 
   /// 已填写的服务器（规范化：补协议、去掉末尾斜杠）
   List<String> get activeServers => [

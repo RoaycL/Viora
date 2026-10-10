@@ -39,12 +39,14 @@ class _Live {
 
   final DanmakuComment comment;
 
-  /// 出现的视频时间（秒）
-  final double start;
+  /// 出现的视频时间（秒）；改速度时按当前进度换算，位置不跳
+  double start;
   final int lane;
-  final TextPainter fill;
-  final TextPainter stroke;
-  final double width;
+
+  /// 改字号 / 不透明度时就地重排
+  TextPainter fill;
+  TextPainter stroke;
+  double width;
 
   void dispose() {
     fill.dispose();
@@ -93,16 +95,50 @@ class DanmakuLayerState extends State<DanmakuLayer> with SingleTickerProviderSta
       widget.state.addListener(_onState);
       _onState();
     }
-    if (!identical(oldWidget.comments, widget.comments) ||
-        oldWidget.shift != widget.shift ||
-        oldWidget.config.fontSize != widget.config.fontSize ||
-        oldWidget.config.opacity != widget.config.opacity ||
-        oldWidget.config.area != widget.config.area ||
-        oldWidget.config.speed != widget.config.speed ||
-        oldWidget.config.showFixed != widget.config.showFixed) {
+    if (!identical(oldWidget.comments, widget.comments) || oldWidget.shift != widget.shift) {
       _reset = true;
+    } else {
+      // 播放中调整样式：屏幕上的弹幕就地更新，不清屏
+      _restyle(oldWidget.config, widget.config);
     }
     _syncTicker();
+  }
+
+  void _restyle(DanmakuConfig old, DanmakuConfig c) {
+    var changed = false;
+    if (old.fontSize != c.fontSize || old.opacity != c.opacity) {
+      for (final l in _live) {
+        l.dispose();
+        final (fill, stroke) = _paint(l.comment);
+        l
+          ..fill = fill
+          ..stroke = stroke
+          ..width = fill.width;
+      }
+      changed = true;
+    }
+    if (old.speed != c.speed) {
+      // 保持每条滚动弹幕已经走过的比例
+      final now = _lastNow;
+      for (final l in _live) {
+        if (l.comment.mode == DanmakuMode.scroll) l.start = now - (now - l.start) / old.speed * c.speed;
+      }
+      changed = true;
+    }
+    if (old.area != c.area || old.fontSize != c.fontSize || old.showFixed != c.showFixed) {
+      final laneH = c.fontSize * 1.32;
+      final scrollLanes = (_size.height * c.area / laneH).floor().clamp(1, 60);
+      final fixedLanes = (_size.height * 0.4 / laneH).floor().clamp(1, 30);
+      _live.removeWhere((l) {
+        final out = l.comment.mode == DanmakuMode.scroll
+            ? l.lane >= scrollLanes
+            : (!c.showFixed || l.lane >= fixedLanes);
+        if (out) l.dispose();
+        return out;
+      });
+      changed = true;
+    }
+    if (changed) _repaint.tick();
   }
 
   void _syncTicker() {
