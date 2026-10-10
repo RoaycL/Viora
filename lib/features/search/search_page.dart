@@ -221,7 +221,7 @@ class _Keyboard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     Widget key(String label, VoidCallback onTap, {double width = 80}) => VFocusable(
-      radius: 14,
+      radius: VRadius.md,
       scale: 1.08,
       showRing: false,
       onActivate: onTap,
@@ -232,7 +232,7 @@ class _Keyboard extends StatelessWidget {
         alignment: Alignment.center,
         decoration: BoxDecoration(
           color: focused ? Colors.white : const Color(0x0FFFFFFF),
-          borderRadius: BorderRadius.circular(14),
+          borderRadius: BorderRadius.circular(VRadius.md),
         ),
         child: Text(
           label,

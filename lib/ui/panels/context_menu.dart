@@ -49,7 +49,7 @@ class _ContextMenuPanel extends StatelessWidget {
         padding: const EdgeInsets.all(32),
         child: Glass(
           width: 560,
-          radius: 32,
+          radius: VRadius.panel,
           blur: 40,
           fill: const Color(0x8C12141C),
           padding: const EdgeInsets.fromLTRB(32, 36, 32, 28),
@@ -62,7 +62,7 @@ class _ContextMenuPanel extends StatelessWidget {
               for (var i = 0; i < actions.length; i++) ...[
                 VFocusable(
                   autofocus: i == 0,
-                  radius: 18,
+                  radius: VRadius.md,
                   scale: 1.02,
                   showRing: false,
                   onActivate: () {
@@ -75,7 +75,7 @@ class _ContextMenuPanel extends StatelessWidget {
                     padding: const EdgeInsets.symmetric(horizontal: 20),
                     decoration: BoxDecoration(
                       color: focused ? Colors.white : const Color(0x0DFFFFFF),
-                      borderRadius: BorderRadius.circular(18),
+                      borderRadius: BorderRadius.circular(VRadius.md),
                     ),
                     child: Row(
                       children: [
@@ -161,7 +161,7 @@ class _PopupMenu extends StatelessWidget {
       type: MaterialType.transparency,
       child: Glass(
         width: 380,
-        radius: 18,
+        radius: VRadius.card,
         blur: 30,
         fill: const Color(0xE614161E),
         padding: const EdgeInsets.all(10),
@@ -182,7 +182,7 @@ class _PopupMenu extends StatelessWidget {
             for (var i = 0; i < actions.length; i++)
               VFocusable(
                 autofocus: i == 0 && !InputMode.pointer,
-                radius: 10,
+                radius: VRadius.sm,
                 scale: 1,
                 showRing: false,
                 onActivate: () {
@@ -195,7 +195,7 @@ class _PopupMenu extends StatelessWidget {
                   padding: const EdgeInsets.symmetric(horizontal: 14),
                   decoration: BoxDecoration(
                     color: focused ? const Color(0x24FFFFFF) : const Color(0x00FFFFFF),
-                    borderRadius: BorderRadius.circular(10),
+                    borderRadius: BorderRadius.circular(VRadius.sm),
                   ),
                   child: Row(
                     children: [

@@ -499,7 +499,7 @@ class _SourceCard extends StatelessWidget {
     final latency = option.latencyMs;
     return VFocusable(
       focusNode: node,
-      radius: 22,
+      radius: VRadius.card,
       scale: 1.05,
       onActivate: onTap,
       builder: (context, focused) => AnimatedContainer(
@@ -509,7 +509,7 @@ class _SourceCard extends StatelessWidget {
         padding: const EdgeInsets.all(24),
         decoration: BoxDecoration(
           color: focused ? const Color(0x29FFFFFF) : const Color(0x12FFFFFF),
-          borderRadius: BorderRadius.circular(22),
+          borderRadius: BorderRadius.circular(VRadius.card),
           border: Border.all(color: const Color(0x1FFFFFFF)),
         ),
         child: Column(

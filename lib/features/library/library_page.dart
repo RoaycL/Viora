@@ -275,7 +275,7 @@ class _ServerCard extends ConsumerWidget {
     final icon = _iconGradient(s.displayName);
     return VFocusable(
       autofocus: autofocus,
-      radius: 24,
+      radius: VRadius.panel,
       scale: 1.05,
       onFocusChange: (focused) {
         if (focused && InputMode.shouldAutoScroll) {
@@ -294,7 +294,7 @@ class _ServerCard extends ConsumerWidget {
         padding: const EdgeInsets.fromLTRB(26, 24, 26, 24),
         decoration: BoxDecoration(
           color: focused ? const Color(0x26FFFFFF) : const Color(0x0FFFFFFF),
-          borderRadius: BorderRadius.circular(24),
+          borderRadius: BorderRadius.circular(VRadius.panel),
           border: Border.all(color: const Color(0x1AFFFFFF)),
         ),
         child: Stack(
@@ -327,7 +327,7 @@ class _ServerCard extends ConsumerWidget {
                       height: 52,
                       clipBehavior: Clip.antiAlias,
                       decoration: BoxDecoration(
-                        borderRadius: BorderRadius.circular(14),
+                        borderRadius: BorderRadius.circular(VRadius.md),
                         gradient: icon,
                         boxShadow: const [BoxShadow(color: Color(0x59000000), blurRadius: 16, offset: Offset(0, 6))],
                       ),
@@ -344,7 +344,10 @@ class _ServerCard extends ConsumerWidget {
                     const SizedBox(width: 12),
                     Container(
                       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-                      decoration: BoxDecoration(color: const Color(0x1AFFFFFF), borderRadius: BorderRadius.circular(6)),
+                      decoration: BoxDecoration(
+                        color: const Color(0x1AFFFFFF),
+                        borderRadius: BorderRadius.circular(VRadius.xs),
+                      ),
                       child: Text(
                         s.type.label.toUpperCase(),
                         style: const TextStyle(fontSize: 14, letterSpacing: 1, color: Color(0xB3FFFFFF)),
@@ -380,7 +383,7 @@ class _ServerCard extends ConsumerWidget {
                         padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
                         decoration: BoxDecoration(
                           border: Border.all(color: const Color(0x99FF788C)),
-                          borderRadius: BorderRadius.circular(6),
+                          borderRadius: BorderRadius.circular(VRadius.xs),
                         ),
                         child: const Text('R18', style: TextStyle(fontSize: 14, color: VColors.adult)),
                       ),

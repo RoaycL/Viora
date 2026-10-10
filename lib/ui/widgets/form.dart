@@ -86,7 +86,7 @@ class _VTextFieldState extends State<VTextField> {
               height: 68,
               decoration: BoxDecoration(
                 color: focused ? const Color(0x24FFFFFF) : const Color(0x12FFFFFF),
-                borderRadius: BorderRadius.circular(18),
+                borderRadius: BorderRadius.circular(VRadius.md),
                 border: Border.all(color: focused ? Colors.white : const Color(0x1FFFFFFF), width: focused ? 3 : 1),
               ),
               alignment: Alignment.centerLeft,
@@ -144,7 +144,7 @@ class VToggle extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return VFocusable(
-      radius: 18,
+      radius: VRadius.md,
       scale: 1.02,
       alignment: Alignment.centerLeft,
       onActivate: () => onChanged(!value),
@@ -155,7 +155,7 @@ class VToggle extends StatelessWidget {
         padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
         decoration: BoxDecoration(
           color: focused ? const Color(0x29FFFFFF) : const Color(0x0DFFFFFF),
-          borderRadius: BorderRadius.circular(18),
+          borderRadius: BorderRadius.circular(VRadius.md),
         ),
         child: Row(
           children: [
@@ -178,7 +178,7 @@ class VToggle extends StatelessWidget {
               alignment: value ? Alignment.centerRight : Alignment.centerLeft,
               decoration: BoxDecoration(
                 color: value ? const Color(0xFF5B8CFF) : const Color(0x33FFFFFF),
-                borderRadius: BorderRadius.circular(18),
+                borderRadius: BorderRadius.circular(VRadius.md),
               ),
               child: Container(
                 width: 28,

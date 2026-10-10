@@ -47,7 +47,7 @@ class _UpdateDialog extends ConsumerWidget {
     return Center(
       child: Glass(
         width: 880,
-        radius: 32,
+        radius: VRadius.panel,
         blur: 40,
         fill: const Color(0xB312141C),
         padding: const EdgeInsets.fromLTRB(48, 44, 48, 40),

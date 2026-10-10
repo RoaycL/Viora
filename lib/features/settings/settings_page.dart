@@ -530,7 +530,7 @@ class _CategoryItem extends StatelessWidget {
   Widget build(BuildContext context) {
     return VFocusable(
       autofocus: autofocus,
-      radius: 18,
+      radius: VRadius.sm,
       scale: PlatformProfile.isTv ? 1.03 : 1,
       alignment: Alignment.centerLeft,
       showRing: false,
@@ -551,7 +551,7 @@ class _CategoryItem extends StatelessWidget {
           duration: VMotion.focus,
           height: tv ? 68 : 56,
           padding: const EdgeInsets.symmetric(horizontal: 22),
-          decoration: BoxDecoration(color: bg, borderRadius: BorderRadius.circular(tv ? 18 : 14)),
+          decoration: BoxDecoration(color: bg, borderRadius: BorderRadius.circular(VRadius.sm)),
           child: Row(
             children: [
               if (!tv) ...[
@@ -626,7 +626,7 @@ class _TmdbAttribution extends StatelessWidget {
   Widget build(BuildContext context) {
     return Container(
       padding: const EdgeInsets.all(24),
-      decoration: BoxDecoration(color: const Color(0x0AFFFFFF), borderRadius: BorderRadius.circular(20)),
+      decoration: BoxDecoration(color: const Color(0x0AFFFFFF), borderRadius: BorderRadius.circular(VRadius.md)),
       child: Row(
         children: [
           Image.asset('assets/images/tmdb_logo.png', height: 28, filterQuality: FilterQuality.medium),

@@ -50,15 +50,26 @@ Widget mediaLandscapeCard(
   FocusNode node, {
   String? tag,
   IconData? tagIcon,
+  String? watchedOn,
   VoidCallback? onActivate,
   VoidCallback? onMenu,
 }) {
   final isEpisode = item.kind == MediaKind.episode;
   final remaining = item.runtime != null && item.position > Duration.zero ? item.runtime! - item.position : null;
-  final caption = [
-    ?item.episodeLabel,
-    if (remaining != null && remaining > Duration.zero) '剩 ${formatDuration(remaining)}',
-  ].join(' · ');
+  // 观看记录样式（[watchedOn] = 服务器名）：图上"看到 26:16"，下面"5 小时前 · 服务器"，标题后灰字"第 1 季 · 195 集"
+  final watch = watchedOn != null;
+  final caption = watch
+      ? (item.position > Duration.zero ? '看到 ${formatClock(item.position)}' : '')
+      : [
+          ?item.episodeLabel,
+          if (remaining != null && remaining > Duration.zero) '剩 ${formatDuration(remaining)}',
+        ].join(' · ');
+  final episodeText = item.seasonNumber != null && item.episodeNumber != null
+      ? '第 ${item.seasonNumber} 季 · ${item.episodeNumber} 集'
+      : item.episodeLabel;
+  final subtitle = watch
+      ? [?timeAgo(item.lastPlayed), watchedOn].join(' · ')
+      : (isEpisode ? item.name : mediaSubtitle(item));
   return LandscapeCard(
     node: node,
     art: placeholderArt(item.id),
@@ -69,7 +80,8 @@ Widget mediaLandscapeCard(
       fallbackSeed: item.id,
     ),
     title: isEpisode ? (item.seriesName ?? item.name) : item.name,
-    subtitle: isEpisode ? item.name : mediaSubtitle(item),
+    titleSuffix: watch && isEpisode ? episodeText : null,
+    subtitle: subtitle,
     tag: tag,
     tagIcon: tagIcon,
     caption: caption.isEmpty ? null : caption,
@@ -77,6 +89,18 @@ Widget mediaLandscapeCard(
     onActivate: onActivate ?? () => playMediaItem(context, item),
     onMenu: onMenu,
   );
+}
+
+/// "刚刚 / 5 分钟前 / 5 小时前 / 2 天前 / 3 月 12 日"
+String? timeAgo(DateTime? t) {
+  if (t == null) return null;
+  final d = DateTime.now().difference(t.toLocal());
+  if (d.inMinutes < 1) return '刚刚';
+  if (d.inHours < 1) return '${d.inMinutes} 分钟前';
+  if (d.inDays < 1) return '${d.inHours} 小时前';
+  if (d.inDays < 30) return '${d.inDays} 天前';
+  final l = t.toLocal();
+  return l.year == DateTime.now().year ? '${l.month} 月 ${l.day} 日' : '${l.year} 年 ${l.month} 月';
 }
 
 String formatDuration(Duration d) {

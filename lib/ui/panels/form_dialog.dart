@@ -70,7 +70,7 @@ class _FormDialogState extends State<_FormDialog> {
         type: MaterialType.transparency,
         child: Glass(
           width: 920,
-          radius: 28,
+          radius: VRadius.panel,
           blur: 40,
           fill: const Color(0xCC14161E),
           padding: const EdgeInsets.fromLTRB(40, 36, 40, 32),
@@ -133,7 +133,7 @@ class SettingsEntry extends StatelessWidget {
   Widget build(BuildContext context) {
     return Container(
       padding: const EdgeInsets.fromLTRB(24, 14, 14, 14),
-      decoration: BoxDecoration(color: const Color(0x0DFFFFFF), borderRadius: BorderRadius.circular(18)),
+      decoration: BoxDecoration(color: const Color(0x0DFFFFFF), borderRadius: BorderRadius.circular(VRadius.md)),
       child: Row(
         children: [
           Expanded(
@@ -172,7 +172,7 @@ class SmallIconButton extends StatelessWidget {
     return Opacity(
       opacity: enabled ? 1 : 0.35,
       child: VFocusable(
-        radius: 12,
+        radius: VRadius.sm,
         scale: 1.04,
         showRing: false,
         onActivate: onPressed,
@@ -182,7 +182,7 @@ class SmallIconButton extends StatelessWidget {
           padding: EdgeInsets.symmetric(horizontal: label == null ? 12 : 16),
           decoration: BoxDecoration(
             color: focused ? Colors.white : const Color(0x14FFFFFF),
-            borderRadius: BorderRadius.circular(12),
+            borderRadius: BorderRadius.circular(VRadius.sm),
           ),
           child: Row(
             mainAxisSize: MainAxisSize.min,
@@ -210,7 +210,7 @@ class SmallSwitch extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return VFocusable(
-      radius: 18,
+      radius: VRadius.md,
       scale: 1.04,
       showRing: false,
       onActivate: () => onChanged(!value),
@@ -222,7 +222,7 @@ class SmallSwitch extends StatelessWidget {
         alignment: value ? Alignment.centerRight : Alignment.centerLeft,
         decoration: BoxDecoration(
           color: value ? const Color(0xFF5B8CFF) : const Color(0x33FFFFFF),
-          borderRadius: BorderRadius.circular(18),
+          borderRadius: BorderRadius.circular(VRadius.md),
           border: Border.all(color: focused ? Colors.white : const Color(0x00000000), width: 2),
         ),
         child: Container(

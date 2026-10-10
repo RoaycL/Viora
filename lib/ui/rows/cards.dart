@@ -19,6 +19,7 @@ class LandscapeCard extends StatelessWidget {
     this.subtitle,
     this.tag,
     this.tagIcon,
+    this.titleSuffix,
     this.caption,
     this.progress,
     this.onActivate,
@@ -37,6 +38,9 @@ class LandscapeCard extends StatelessWidget {
   final String title;
   final String? subtitle;
   final String? tag;
+
+  /// 标题后的灰色附加信息（如"第 1 季 · 195 集"）
+  final String? titleSuffix;
 
   /// 角标前的小图标（继续观看用服务器图标标注来源）
   final IconData? tagIcon;
@@ -78,7 +82,7 @@ class LandscapeCard extends StatelessWidget {
                       left: 16,
                       top: 14,
                       child: Glass(
-                        radius: 8,
+                        radius: VRadius.xs,
                         blur: 12,
                         fill: const Color(0x59000000),
                         border: const Color(0x00000000),
@@ -116,8 +120,24 @@ class LandscapeCard extends StatelessWidget {
           ),
         ),
         const SizedBox(height: 12),
-        Text(title, style: _titleStyle, maxLines: 1, overflow: TextOverflow.ellipsis),
-        if (subtitle != null) ...[
+        if (titleSuffix == null)
+          Text(title, style: _titleStyle, maxLines: 1, overflow: TextOverflow.ellipsis)
+        else
+          Text.rich(
+            TextSpan(
+              children: [
+                TextSpan(text: title),
+                TextSpan(
+                  text: '  $titleSuffix',
+                  style: _subStyle.copyWith(fontSize: _titleStyle.fontSize),
+                ),
+              ],
+            ),
+            style: _titleStyle,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+          ),
+        if (subtitle != null && subtitle!.isNotEmpty) ...[
           const SizedBox(height: 4),
           Text(subtitle!, style: _subStyle, maxLines: 1, overflow: TextOverflow.ellipsis),
         ],
@@ -238,7 +258,7 @@ class _ResourceBadge extends StatelessWidget {
       decoration: BoxDecoration(
         color: has ? const Color(0xCC0E3A22) : const Color(0xA6000000),
         border: has ? Border.all(color: const Color(0x665BE38A)) : null,
-        borderRadius: BorderRadius.circular(8),
+        borderRadius: BorderRadius.circular(VRadius.xs),
       ),
       child: Text(
         has ? '$count 个资源' : '无资源',
@@ -330,10 +350,10 @@ class BrandCard extends StatelessWidget {
   Widget build(BuildContext context) {
     return VFocusable(
       focusNode: node,
-      radius: 20,
+      radius: VRadius.card,
       onActivate: onActivate,
       builder: (context, focused) => ClipRRect(
-        borderRadius: BorderRadius.circular(20),
+        borderRadius: BorderRadius.circular(VRadius.card),
         child: SizedBox(
           width: width,
           height: height,

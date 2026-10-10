@@ -704,7 +704,7 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
                         if (_pendingSeek != null)
                           Center(
                             child: Glass(
-                              radius: 24,
+                              radius: VRadius.panel,
                               padding: const EdgeInsets.symmetric(horizontal: 36, vertical: 20),
                               child: Text(formatClock(_pendingSeek!), style: VText.h2.copyWith(fontSize: 44)),
                             ),
@@ -842,7 +842,7 @@ class _Osd extends StatelessWidget {
           right: VSpace.safeH,
           bottom: VSpace.safeV,
           child: Glass(
-            radius: 32,
+            radius: VRadius.panel,
             blur: 36,
             fill: const Color(0x6B14161E),
             padding: const EdgeInsets.fromLTRB(36, 28, 36, 26),
@@ -929,7 +929,7 @@ class _InfoPanel extends StatelessWidget {
     ];
     return Glass(
       width: 620,
-      radius: 24,
+      radius: VRadius.panel,
       fill: const Color(0x9914161E),
       padding: const EdgeInsets.all(28),
       child: Column(
@@ -972,7 +972,7 @@ class _ErrorPanel extends StatelessWidget {
     return Center(
       child: Glass(
         width: 900,
-        radius: 32,
+        radius: VRadius.panel,
         padding: const EdgeInsets.all(44),
         child: Column(
           mainAxisSize: MainAxisSize.min,
@@ -1051,7 +1051,7 @@ class _SkipButton extends StatelessWidget {
                 padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 2),
                 decoration: BoxDecoration(
                   border: Border.all(color: const Color(0x590B0C10)),
-                  borderRadius: BorderRadius.circular(8),
+                  borderRadius: BorderRadius.circular(VRadius.xs),
                 ),
                 child: Text(
                   PlatformProfile.isTv ? 'OK' : 'Enter',
