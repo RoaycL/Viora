@@ -458,10 +458,18 @@ class EmbyClient {
 
   /// 外挂字幕地址
   PlaybackRequest? subtitle(MediaSourceInfo source, MediaStreamInfo stream) {
-    final delivery = stream.deliveryUrl;
-    if (delivery == null || delivery.isEmpty) return null;
     final c = composer;
     final base = c.apiBase;
+    var delivery = stream.deliveryUrl;
+    if (delivery == null || delivery.isEmpty) {
+      // 服务器没给投递地址时按标准路径取（Emby / Jellyfin 通用）
+      if (!stream.isExternal) return null;
+      final ext = switch ((stream.codec ?? '').toLowerCase()) {
+        'subrip' || '' => 'srt',
+        final c => c,
+      };
+      delivery = '/Videos/${source.itemId}/${source.id}/Subtitles/${stream.index}/Stream.$ext';
+    }
     final original = delivery.startsWith('http')
         ? Uri.parse(delivery)
         : base.replace(path: '${base.path}${delivery.split('?').first}', query: delivery.split('?').skip(1).join('?'));
@@ -471,6 +479,30 @@ class EmbyClient {
       headers: headers,
       userAgent: headers['User-Agent']!,
     );
+  }
+
+  // ───────────────────────── 在线字幕 ─────────────────────────
+
+  /// 让服务器用它配置的字幕插件（如 OpenSubtitles）在线搜索字幕；[language] 为三字母代码，如 chi / eng
+  Future<List<RemoteSubtitle>> searchSubtitles(String itemId, String language) async {
+    final data = await _request('GET', '/Items/$itemId/RemoteSearch/Subtitles/$language');
+    return [
+      for (final j in (data as List? ?? const []).whereType<Map<String, dynamic>>())
+        RemoteSubtitle(
+          id: j['Id']?.toString() ?? '',
+          name: j['Name']?.toString() ?? '',
+          provider: j['ProviderName']?.toString() ?? '',
+          format: j['Format']?.toString(),
+          language: j['ThreeLetterISOLanguageName']?.toString() ?? j['Language']?.toString(),
+          downloads: (j['DownloadCount'] as num?)?.toInt(),
+          rating: (j['CommunityRating'] as num?)?.toDouble(),
+        ),
+    ]..sort((a, b) => (b.downloads ?? 0).compareTo(a.downloads ?? 0));
+  }
+
+  /// 服务器下载这条字幕并保存在视频旁边，之后作为外挂字幕出现在播放信息里
+  Future<void> downloadSubtitle(String itemId, String subtitleId) async {
+    await _request('POST', '/Items/$itemId/RemoteSearch/Subtitles/${Uri.encodeComponent(subtitleId)}');
   }
 
   Future<void> reportStart(MediaSourceInfo s, Duration position, String? playSessionId) =>
@@ -661,3 +693,24 @@ class EmbyClient {
 
 /// 播放会话 ID（服务器未返回时本地生成）
 String newPlaySessionId() => List.generate(16, (_) => Random().nextInt(16).toRadixString(16)).join();
+
+/// 服务器在线搜到的字幕
+class RemoteSubtitle {
+  const RemoteSubtitle({
+    required this.id,
+    required this.name,
+    required this.provider,
+    this.format,
+    this.language,
+    this.downloads,
+    this.rating,
+  });
+
+  final String id;
+  final String name;
+  final String provider;
+  final String? format;
+  final String? language;
+  final int? downloads;
+  final double? rating;
+}

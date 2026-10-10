@@ -954,9 +954,94 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
             final req = _client?.subtitle(_source!, x);
             if (req != null) _engine?.addExternalSubtitle(req.url, title: x.displayName, language: x.language);
           }),
+        MenuAction('在线搜索字幕…', Icons.travel_explore_rounded, _searchOnlineSubtitles),
       ],
     );
   });
+
+  // ───────────────────────── 在线字幕 ─────────────────────────
+
+  /// 让媒体服务器用它的字幕插件（OpenSubtitles 等）在线搜索；下载后服务器保存在视频旁边，下次播放也能直接用
+  Future<void> _searchOnlineSubtitles() => _menu(
+    () => showContextMenu(
+      context,
+      title: '在线搜索字幕',
+      actions: [
+        MenuAction('中文字幕', Icons.translate_rounded, () => _searchSubtitles('chi', '中文')),
+        MenuAction('英文字幕', Icons.translate_rounded, () => _searchSubtitles('eng', '英文')),
+      ],
+    ),
+  );
+
+  Future<void> _searchSubtitles(String language, String label) async {
+    final client = _client, item = _item;
+    if (client == null || item == null) return;
+    showToast('正在搜索$label字幕…');
+    List<RemoteSubtitle> list;
+    try {
+      list = await client.searchSubtitles(item.id, language);
+    } catch (e) {
+      final denied = e is MediaServerException && (e.statusCode == 401 || e.statusCode == 403);
+      showToast(denied ? '当前账号没有字幕管理权限：请在服务器的用户设置里允许管理字幕' : '搜索字幕失败：$e');
+      return;
+    }
+    if (!mounted) return;
+    if (list.isEmpty) {
+      showToast('没有找到$label字幕（服务器需要安装 OpenSubtitles 等字幕插件）');
+      return;
+    }
+    await _menu(
+      () => showContextMenu(
+        context,
+        title: '$label字幕 · ${list.length} 个结果',
+        actions: [
+          for (final r in list.take(40))
+            MenuAction(
+              [
+                r.name,
+                r.provider,
+                ?r.format?.toUpperCase(),
+                if (r.downloads != null) '${r.downloads} 次下载',
+              ].where((x) => x.isNotEmpty).join(' · '),
+              Icons.closed_caption_outlined,
+              () => _downloadSubtitle(r),
+            ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _downloadSubtitle(RemoteSubtitle r) async {
+    final client = _client, item = _item, source = _source;
+    if (client == null || item == null || source == null) return;
+    showToast('正在下载字幕…');
+    final before = {for (final x in source.subtitles) x.index};
+    try {
+      await client.downloadSubtitle(item.id, r.id);
+      // 服务器保存字幕后才会出现在播放信息里：最多等几秒
+      MediaSourceInfo? updated;
+      List<MediaStreamInfo> added = const [];
+      for (var i = 0; i < 5 && added.isEmpty; i++) {
+        if (i > 0) await Future<void>.delayed(const Duration(seconds: 1));
+        final info = await client.playbackInfo(item.id, isPlayback: false);
+        updated = info.sources.where((x) => x.id == source.id).firstOrNull;
+        added = updated?.subtitles.where((x) => x.isExternal && !before.contains(x.index)).toList() ?? const [];
+      }
+      if (!mounted) return;
+      if (updated == null || added.isEmpty) {
+        showToast('字幕已下载到服务器，重新打开播放后可在字幕菜单里选择');
+        return;
+      }
+      setState(() => _source = updated);
+      final x = added.last;
+      final req = client.subtitle(updated, x);
+      if (req == null) return;
+      await _engine?.addExternalSubtitle(req.url, title: x.displayName, language: x.language);
+      showToast('已加载字幕：${x.displayName}');
+    } catch (e) {
+      showToast('下载字幕失败：$e');
+    }
+  }
 
   Future<void> _openRateMenu() => _menu(() {
     final rate = _state.rate;
