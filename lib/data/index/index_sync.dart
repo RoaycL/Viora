@@ -1,6 +1,7 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../emby/emby_client.dart';
 import '../config/config_store.dart';
 import '../media/server_registry.dart';
 import 'media_index.dart';
@@ -29,7 +30,9 @@ class SyncStatus {
 /// 索引同步（docs/04-aggregation.md §2）：
 /// 添加服务器 / 超过 7 天 → 全量；平时启动 → 按 MinDateLastSaved 增量。
 class IndexSyncController extends Notifier<Map<String, SyncStatus>> {
-  static const _pageSize = 500;
+  /// 每页条数与页间隔：后台慢慢同步，避免 NAS 一下子满负载
+  static const _pageSize = 200;
+  static const _pagePause = Duration(milliseconds: 400);
   static const _fullEvery = Duration(days: 7);
 
   @override
@@ -70,12 +73,15 @@ class IndexSyncController extends Notifier<Map<String, SyncStatus>> {
           sortBy: 'DateCreated,SortName',
           sortOrder: 'Ascending',
           minDateLastSaved: full ? null : st.incrAt?.subtract(const Duration(minutes: 5)),
+          fields: EmbyClient.indexFields,
+          userData: false,
         );
         total = page.total;
         index.upsert(serverId, page.items, gen: gen);
         start += page.items.length;
         _set(serverId, SyncStatus(running: true, done: start, total: total, count: index.count(serverId)));
         if (page.items.isEmpty || start >= total) break;
+        await Future<void>.delayed(_pagePause);
       }
       if (full) {
         index.finishFull(serverId, gen);

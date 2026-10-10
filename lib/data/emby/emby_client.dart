@@ -223,9 +223,14 @@ class EmbyClient {
     return _server.userId ?? '';
   }
 
+  // 不请求 RecursiveItemCount / PrimaryImageAspectRatio：Emby 要为每部剧递归统计、读取图片尺寸，列表一长 NAS 负载很高
   static const _fields =
-      'PrimaryImageAspectRatio,ProductionYear,PremiereDate,ProviderIds,Overview,Genres,CommunityRating,'
-      'OfficialRating,DateCreated,ChildCount,RecursiveItemCount,UserData,OriginalTitle';
+      'ProductionYear,PremiereDate,ProviderIds,Overview,Genres,CommunityRating,'
+      'OfficialRating,DateCreated,ChildCount,UserData,OriginalTitle';
+
+  /// 聚合索引用的精简字段：不要用户数据（播放进度等），服务器不用逐条查用户状态
+  static const indexFields =
+      'ProductionYear,PremiereDate,ProviderIds,Overview,Genres,CommunityRating,DateCreated,OriginalTitle';
   static const _imageQuery = {'EnableImageTypes': 'Primary,Backdrop,Thumb,Logo', 'ImageTypeLimit': '1'};
 
   // ───────────────────────── 浏览 ─────────────────────────
@@ -256,6 +261,8 @@ class EmbyClient {
     String? searchTerm,
     DateTime? minDateLastSaved,
     String? filters,
+    String? fields,
+    bool userData = true,
   }) async {
     final data = await _request(
       'GET',
@@ -268,7 +275,8 @@ class EmbyClient {
         'Limit': '$limit',
         'SortBy': sortBy,
         'SortOrder': sortOrder,
-        'Fields': _fields,
+        'Fields': fields ?? _fields,
+        if (!userData) 'EnableUserData': 'false',
         'SearchTerm': ?searchTerm,
         'MinDateLastSaved': ?minDateLastSaved?.toUtc().toIso8601String(),
         'Filters': ?filters,
@@ -374,11 +382,15 @@ class EmbyClient {
 
   // ───────────────────────── 播放 ─────────────────────────
 
-  Future<({List<MediaSourceInfo> sources, String? playSessionId})> playbackInfo(String itemId) async {
+  /// [isPlayback]：真正开始播放时为 true；详情页列资源 / 预加载时为 false，服务器不用为此准备播放会话
+  Future<({List<MediaSourceInfo> sources, String? playSessionId})> playbackInfo(
+    String itemId, {
+    bool isPlayback = true,
+  }) async {
     final data = await _request(
       'POST',
       '/Items/$itemId/PlaybackInfo',
-      query: {'UserId': await _userId(), 'IsPlayback': 'true', 'AutoOpenLiveStream': 'true'},
+      query: {'UserId': await _userId(), 'IsPlayback': '$isPlayback', 'AutoOpenLiveStream': '$isPlayback'},
       body: {'UserId': await _userId()},
     ) as Map<String, dynamic>;
     final sources = [
@@ -552,7 +564,7 @@ class EmbyClient {
       seasonId: j['SeasonId'] as String?,
       seasonNumber: j['ParentIndexNumber'] as int? ?? (j['Type'] == 'Season' ? j['IndexNumber'] as int? : null),
       episodeNumber: j['Type'] == 'Episode' ? j['IndexNumber'] as int? : null,
-      childCount: j['ChildCount'] as int? ?? j['RecursiveItemCount'] as int?,
+      childCount: j['ChildCount'] as int?,
       played: user['Played'] as bool? ?? false,
       favorite: user['IsFavorite'] as bool? ?? false,
       position: ticksToDuration(user['PlaybackPositionTicks'] as num?),

@@ -13,6 +13,7 @@ import '../../ui/focus/row_focus.dart';
 import '../../ui/rows/cards.dart';
 import '../../ui/rows/focus_row.dart';
 import '../../ui/widgets/buttons.dart';
+import '../../ui/widgets/page_back_button.dart';
 import '../../ui/widgets/server_image.dart';
 import '../../ui/widgets/toast.dart';
 import '../browse/media_cards.dart';
@@ -376,6 +377,7 @@ class _ItemDetailPageState extends ConsumerState<ItemDetailPage> {
             ),
           ),
         ),
+        const PageBackButton(),
       ],
     );
   }
@@ -413,12 +415,7 @@ class _Title extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final text = Text(
-      title,
-      maxLines: 2,
-      overflow: TextOverflow.ellipsis,
-      style: VText.display.copyWith(fontSize: title.length > 8 ? 72 : 100, letterSpacing: 2),
-    );
+    final text = Text(title, maxLines: 2, overflow: TextOverflow.ellipsis, style: VText.titleFor(title));
     // 标题已换成中文时不用（通常是英文的）Logo 图
     if (item.logo == null || item.kind == MediaKind.episode || title != item.name) return text;
     return SizedBox(

@@ -54,8 +54,9 @@ class PlaybackPreloader {
     final hit = cached(serverId, itemId);
     if (hit != null) return Future.value(hit);
     final key = _key(serverId, itemId);
+    // 预加载 / 列资源只查询，不让服务器准备播放会话
     return _pending[key] ??= client
-        .playbackInfo(itemId)
+        .playbackInfo(itemId, isPlayback: false)
         .then((r) {
           put(serverId, itemId, r);
           return r;

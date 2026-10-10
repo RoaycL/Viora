@@ -5,6 +5,7 @@ import '../../app/theme.dart';
 import '../../data/tmdb/tmdb_client.dart';
 import '../../ui/focus/focus_auto_scroll.dart';
 import '../../ui/rows/cards.dart';
+import '../../ui/widgets/page_back_button.dart';
 import '../../ui/widgets/tmdb_image.dart';
 import 'tmdb_cards.dart';
 
@@ -108,30 +109,37 @@ class _TmdbGrid extends StatelessWidget {
   Widget build(BuildContext context) {
     return Material(
       color: VColors.background,
-      child: FocusAutoScroll(
-        child: SingleChildScrollView(
-          padding: const EdgeInsets.fromLTRB(VSpace.safeH, 110, VSpace.safeH, 200),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              ?header,
-              const SizedBox(height: 40),
-              if (error != null)
-                Text(error!, style: VText.label.copyWith(color: VColors.bad))
-              else if (loading && items.isEmpty)
-                const Text('加载中…', style: VText.label)
-              else
-                Wrap(
-                  spacing: 24,
-                  runSpacing: 32,
+      child: Stack(
+        children: [
+          Positioned.fill(
+            child: FocusAutoScroll(
+              child: SingleChildScrollView(
+                padding: const EdgeInsets.fromLTRB(VSpace.safeH, 110, VSpace.safeH, 200),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    for (var i = 0; i < items.length; i++)
-                      _GridTile(key: ValueKey(items[i].key), title: items[i], autofocus: i == 0),
+                    ?header,
+                    const SizedBox(height: 40),
+                    if (error != null)
+                      Text(error!, style: VText.label.copyWith(color: VColors.bad))
+                    else if (loading && items.isEmpty)
+                      const Text('加载中…', style: VText.label)
+                    else
+                      Wrap(
+                        spacing: 24,
+                        runSpacing: 32,
+                        children: [
+                          for (var i = 0; i < items.length; i++)
+                            _GridTile(key: ValueKey(items[i].key), title: items[i], autofocus: i == 0),
+                        ],
+                      ),
                   ],
                 ),
-            ],
+              ),
+            ),
           ),
-        ),
+          const PageBackButton(),
+        ],
       ),
     );
   }

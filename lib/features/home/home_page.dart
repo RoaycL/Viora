@@ -37,14 +37,15 @@ class HomePage extends StatelessWidget {
   Widget build(BuildContext context) => const RowFocusScope(child: _HomeBody());
 }
 
-/// 背景：占位渐变 + 真实图片
+/// 背景：占位渐变 + 真实图片；[hero] 为焦点在推荐行上时 Hero 区显示的预览信息
 @immutable
 class _Backdrop {
-  const _Backdrop(this.key, this.art, [this.image]);
+  const _Backdrop(this.key, this.art, [this.image, this.hero]);
 
   final Object key;
   final ArtSpec art;
   final Widget? image;
+  final HeroEntry? hero;
 }
 
 class _HomeBody extends ConsumerStatefulWidget {
@@ -60,6 +61,9 @@ class _HomeBodyState extends ConsumerState<_HomeBody> {
   int _heroIndex = 0;
   _Backdrop? _backdrop;
   Timer? _backdropDebounce;
+
+  /// 焦点 / 鼠标停在推荐行的某部作品上时，Hero 区显示它的信息（与背景一致）
+  HeroEntry? _preview;
 
   /// 焦点在"继续观看"卡片上停留 0.8 秒后预加载（按 OK 后起播更快）
   Timer? _preloadDebounce;
@@ -80,15 +84,81 @@ class _HomeBodyState extends ConsumerState<_HomeBody> {
     super.dispose();
   }
 
-  /// 背景切换加防抖，避免快速移动 / 鼠标划过时背景频繁闪烁。
+  /// 背景（和 Hero 预览）切换加防抖，避免快速移动 / 鼠标划过时频繁闪烁。
   void _setBackdrop(_Backdrop b) {
     _backdropDebounce?.cancel();
     _backdropDebounce = Timer(const Duration(milliseconds: 220), () {
-      if (mounted && b.key != _backdrop?.key) setState(() => _backdrop = b);
+      if (!mounted) return;
+      if (b.key != _backdrop?.key || b.hero?.key != _preview?.key) {
+        setState(() {
+          _backdrop = b;
+          _preview = b.hero;
+        });
+      }
     });
   }
 
-  _Backdrop _tmdbBackdrop(TmdbTitle t) => _Backdrop(
+  HeroEntry _tmdbHero(TmdbTitle t, String badge, {required List<MediaItem> copies}) => HeroEntry(
+    key: t.key,
+    title: t.title,
+    latinTitle: t.originalTitle,
+    art: placeholderArt(t.key),
+    logo: _TmdbLogo(t),
+    badge: badge,
+    kindLabel: t.isTv ? '剧集' : '电影',
+    year: t.year,
+    genres: t.genreNames,
+    rating: t.rating,
+    overview: t.overview,
+    resources: copies.length,
+    // 媒体库里有资源才能播放
+    onPlay: copies.isEmpty ? null : () => playTmdbTitle(context, copies.first),
+    onDetail: () => openTmdbTitle(context, ref, t),
+    onSearch: () => context.go('/search?q=${Uri.encodeComponent(t.title)}'),
+  );
+
+  HeroEntry _itemHero(MediaItem it, String badge, {int? resources, String? server}) {
+    final episode = it.kind == MediaKind.episode;
+    final logo = episode ? null : it.logo;
+    return HeroEntry(
+      key: 'item:${it.serverId}/${it.id}',
+      title: episode ? (it.seriesName ?? it.name) : it.name,
+      latinTitle: episode ? [?it.episodeLabel, it.name].join('  ') : it.originalTitle,
+      art: placeholderArt(it.id),
+      logo: logo == null
+          ? null
+          : ServerImage(
+              serverId: it.serverId,
+              image: logo,
+              width: 620,
+              fit: BoxFit.contain,
+              alignment: Alignment.bottomLeft,
+              transparentFallback: true,
+            ),
+      badge: badge,
+      kindLabel: [
+        switch (it.kind) {
+          MediaKind.series => '剧集',
+          MediaKind.episode => '单集',
+          _ => '电影',
+        },
+        ?server,
+      ].join(' · '),
+      year: it.year,
+      genres: it.genres,
+      rating: it.rating != null && it.rating! > 0 ? it.rating : null,
+      overview: it.overview ?? '',
+      resources: resources,
+      onPlay: it.playable
+          ? () => playMediaItem(context, it)
+          : it.kind == MediaKind.series
+          ? () => openMediaItem(context, it)
+          : null,
+      onDetail: () => openMediaItem(context, it),
+    );
+  }
+
+  _Backdrop _tmdbBackdrop(TmdbTitle t, {String? badge}) => _Backdrop(
     t.key,
     placeholderArt(t.key),
     t.backdropPath == null
@@ -100,14 +170,16 @@ class _HomeBodyState extends ConsumerState<_HomeBody> {
             fallbackSeed: t.key,
             transparentFallback: true,
           ),
+    badge == null ? null : _tmdbHero(t, badge, copies: ref.read(libraryCopiesProvider(linkKeyOf(t)))),
   );
 
-  _Backdrop _itemBackdrop(MediaItem it) {
+  _Backdrop _itemBackdrop(MediaItem it, {String? badge, int? resources, String? server}) {
     final img = it.backdrop ?? it.thumb;
     return _Backdrop(
       '${it.serverId}/${it.id}',
       placeholderArt(it.id),
       img == null ? null : ServerImage(serverId: it.serverId, image: img, width: 1920, transparentFallback: true),
+      badge == null ? null : _itemHero(it, badge, resources: resources, server: server),
     );
   }
 
@@ -122,65 +194,15 @@ class _HomeBodyState extends ConsumerState<_HomeBody> {
   }
 
   List<(HeroEntry, _Backdrop)> _heroes(List<TmdbTitle> trending, List<AggregatedTitle> recent) {
-    final heroes = <(HeroEntry, _Backdrop)>[];
-    for (final t in trending.where((t) => t.backdropPath != null).take(8)) {
-      final copies = ref.watch(libraryCopiesProvider(linkKeyOf(t)));
-      heroes.add((
-        HeroEntry(
-          key: t.key,
-          title: t.title,
-          latinTitle: t.originalTitle,
-          art: placeholderArt(t.key),
-          logo: _TmdbLogo(t),
-          badge: '今日趋势',
-          kindLabel: t.isTv ? '剧集' : '电影',
-          year: t.year,
-          genres: t.genreNames,
-          rating: t.rating,
-          overview: t.overview,
-          resources: copies.length,
-          // 媒体库里有资源才能播放
-          onPlay: copies.isEmpty ? null : () => playTmdbTitle(context, copies.first),
-          onDetail: () => openTmdbTitle(context, ref, t),
-          onSearch: () => context.go('/search?q=${Uri.encodeComponent(t.title)}'),
-        ),
-        _tmdbBackdrop(t),
-      ));
-    }
+    final heroes = [
+      for (final t in trending.where((t) => t.backdropPath != null).take(8))
+        (_tmdbHero(t, '今日趋势', copies: ref.watch(libraryCopiesProvider(linkKeyOf(t)))), _tmdbBackdrop(t)),
+    ];
     if (heroes.isNotEmpty) return heroes;
     // 没有 TMDB：用媒体库最近入库
     return [
       for (final g in recent.where((g) => g.primary.backdrop != null).take(8))
-        (
-          HeroEntry(
-            key: '${g.primary.serverId}/${g.primary.id}',
-            title: g.primary.name,
-            latinTitle: g.primary.originalTitle,
-            art: placeholderArt(g.primary.id),
-            logo: g.primary.logo == null
-                ? null
-                : ServerImage(
-                    serverId: g.primary.serverId,
-                    image: g.primary.logo,
-                    width: 620,
-                    fit: BoxFit.contain,
-                    alignment: Alignment.bottomLeft,
-                    transparentFallback: true,
-                  ),
-            badge: '最近入库',
-            kindLabel: g.primary.kind == MediaKind.series ? '剧集' : '电影',
-            year: g.primary.year,
-            genres: g.primary.genres,
-            rating: g.primary.rating,
-            overview: g.primary.overview ?? '',
-            resources: g.copies.length,
-            onPlay: () => g.primary.kind == MediaKind.movie
-                ? context.push('/play/${g.primary.serverId}/${g.primary.id}?pos=0')
-                : openMediaItem(context, g.primary),
-            onDetail: () => openMediaItem(context, g.primary),
-          ),
-          _itemBackdrop(g.primary),
-        ),
+        (_itemHero(g.primary, '最近入库', resources: g.copies.length), _itemBackdrop(g.primary)),
     ];
   }
 
@@ -189,19 +211,26 @@ class _HomeBodyState extends ConsumerState<_HomeBody> {
     final servers = ref.watch(configProvider.select((c) => c.servers));
     final tmdbOn = ref.watch(tmdbClientProvider) != null;
     final serverNames = {for (final s in servers) s.id: s.name};
-    final resume = servers.isEmpty
-        ? const <MediaItem>[]
-        : dedupeWatched(ref.watch(resumeProvider).value ?? const <MediaItem>[]);
+    final resumeAsync = ref.watch(resumeProvider);
+    final resume = servers.isEmpty ? const <MediaItem>[] : dedupeWatched(resumeAsync.value ?? const <MediaItem>[]);
+    final resumeLoading = servers.isNotEmpty && resumeAsync.isLoading && resume.isEmpty;
     final recent = ref.watch(recentlyAddedProvider);
     List<TmdbTitle> row(TmdbRow r) => ref.watch(tmdbRowProvider(r)).value ?? const [];
+    bool rowLoading(TmdbRow r) => tmdbOn && ref.watch(tmdbRowProvider(r)).isLoading;
     final heroes = _heroes(row(TmdbRow.trendingDay), recent);
-    final heroLoading = tmdbOn && ref.watch(tmdbRowProvider(TmdbRow.trendingDay)).isLoading;
-    final people = ref.watch(tmdbPeopleProvider).value ?? const <TmdbPerson>[];
+    final heroLoading = rowLoading(TmdbRow.trendingDay) || (servers.isNotEmpty && !tmdbOn && recent.isEmpty);
+    final peopleAsync = ref.watch(tmdbPeopleProvider);
+    final people = peopleAsync.value ?? const <TmdbPerson>[];
     final heroIndex = heroes.isEmpty ? 0 : _heroIndex % heroes.length;
+    final preview = _preview;
     final backdrop = _backdrop ?? (heroes.isEmpty ? null : heroes[heroIndex].$2);
+    // 没配置 TMDB 时，推荐行显示占位并说明
+    const tmdbHint = '配置 TMDB 后显示（设置 → 元数据）';
 
-    if (heroes.isEmpty && resume.isEmpty && !heroLoading) {
-      return _Welcome(hasServers: servers.isNotEmpty, tmdbOn: tmdbOn);
+    Widget tmdbRow(int index, String title, TmdbRow r) {
+      if (!tmdbOn) return _SkeletonRow(title: title, note: tmdbHint, animate: false);
+      if (rowLoading(r)) return _SkeletonRow(title: title);
+      return _tmdbRow(index, title, row(r));
     }
 
     return BackHandler(
@@ -222,7 +251,7 @@ class _HomeBodyState extends ConsumerState<_HomeBody> {
                 listenable: _scroll,
                 builder: (context, _) {
                   final offset = _scroll.hasClients ? _scroll.offset : 0.0;
-                  return ColoredBox(color: VColors.background.withValues(alpha: (offset / 500).clamp(0.0, 1.0) * 0.6));
+                  return ColoredBox(color: VColors.background.withValues(alpha: (offset / 500).clamp(0.0, 1.0) * 0.45));
                 },
               ),
             ),
@@ -234,35 +263,38 @@ class _HomeBodyState extends ConsumerState<_HomeBody> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  if (heroes.isNotEmpty)
+                  if (heroes.isNotEmpty || preview != null)
                     HomeHero(
                       key: _heroKey,
                       rowIndex: 0,
-                      items: [for (final h in heroes) h.$1],
-                      index: heroIndex,
+                      items: preview != null ? [preview] : [for (final h in heroes) h.$1],
+                      index: preview != null ? 0 : heroIndex,
+                      showDots: preview == null,
                       onIndexChanged: (i) {
-                        setState(() => _heroIndex = i);
+                        setState(() {
+                          _heroIndex = i;
+                          _preview = null;
+                        });
                         _setBackdrop(heroes[i % heroes.length].$2);
                       },
                       onFocused: () {
-                        _setBackdrop(heroes[heroIndex].$2);
+                        // 遥控器 / 键盘回到 Hero：恢复轮播；鼠标从卡片移到 Hero 按钮上：保留预览，按钮作用于刚才那部作品
                         if (InputMode.shouldAutoScroll) {
+                          if (heroes.isNotEmpty) {
+                            setState(() => _preview = null);
+                            _setBackdrop(heroes[heroIndex].$2);
+                          }
                           _scroll.animateTo(0, duration: VMotion.scroll, curve: Curves.easeOutCubic);
                         }
                       },
                     )
+                  else if (heroLoading)
+                    const _HeroSkeleton()
                   else
-                    const SizedBox(
-                      height: 280,
-                      child: Align(
-                        alignment: Alignment.topRight,
-                        child: Padding(
-                          padding: EdgeInsets.only(right: VSpace.safeH, top: VSpace.safeV),
-                          child: StatusBar(),
-                        ),
-                      ),
-                    ),
-                  if (resume.isNotEmpty)
+                    _Welcome(hasServers: servers.isNotEmpty, tmdbOn: tmdbOn),
+                  if (resumeLoading)
+                    const _SkeletonRow(title: '继续观看', landscape: true)
+                  else if (resume.isNotEmpty)
                     FocusRow(
                       rowIndex: 1,
                       title: '继续观看',
@@ -270,7 +302,8 @@ class _HomeBodyState extends ConsumerState<_HomeBody> {
                       itemExtent: LandscapeCard.width,
                       height: LandscapeCard.height,
                       onItemFocused: (i) {
-                        _setBackdrop(_itemBackdrop(resume[i]));
+                        final server = serverNames[resume[i].serverId] ?? '未知服务器';
+                        _setBackdrop(_itemBackdrop(resume[i], badge: '继续观看', server: server));
                         _preloadResume(resume[i]);
                       },
                       itemBuilder: (context, i, node) => mediaLandscapeCard(
@@ -289,15 +322,26 @@ class _HomeBodyState extends ConsumerState<_HomeBody> {
                       itemCount: recent.length,
                       itemExtent: PosterCard.width,
                       height: PosterCard.height,
-                      onItemFocused: (i) => _setBackdrop(_itemBackdrop(recent[i].primary)),
+                      onItemFocused: (i) => _setBackdrop(
+                        _itemBackdrop(
+                          recent[i].primary,
+                          badge: '最近入库',
+                          resources: recent[i].copies.length,
+                          server: serverNames[recent[i].primary.serverId],
+                        ),
+                      ),
                       itemBuilder: (context, i, node) =>
                           mediaPosterCard(context, recent[i].primary, node, resources: recent[i].copies.length),
                     ),
-                  _tmdbRow(3, '正在热映', row(TmdbRow.nowPlaying)),
-                  _tmdbRow(4, '正在播出', row(TmdbRow.onTheAir)),
-                  _tmdbRow(5, '本周趋势', row(TmdbRow.trendingWeek)),
-                  _tmdbRow(6, '今日动漫', row(TmdbRow.animeToday)),
-                  if (people.isNotEmpty)
+                  tmdbRow(3, '正在热映', TmdbRow.nowPlaying),
+                  tmdbRow(4, '正在播出', TmdbRow.onTheAir),
+                  tmdbRow(5, '本周趋势', TmdbRow.trendingWeek),
+                  tmdbRow(6, '今日动漫', TmdbRow.animeToday),
+                  if (!tmdbOn)
+                    const _SkeletonRow(title: '热门人物', note: tmdbHint, circle: true, animate: false)
+                  else if (peopleAsync.isLoading && people.isEmpty)
+                    const _SkeletonRow(title: '热门人物', circle: true)
+                  else if (people.isNotEmpty)
                     FocusRow(
                       rowIndex: 7,
                       title: '热门人物',
@@ -332,7 +376,7 @@ class _HomeBodyState extends ConsumerState<_HomeBody> {
                         );
                       },
                     ),
-                  _tmdbRow(9, '高分剧集', row(TmdbRow.topRatedTv)),
+                  tmdbRow(9, '高分剧集', TmdbRow.topRatedTv),
                 ],
               ),
             ),
@@ -350,7 +394,7 @@ class _HomeBodyState extends ConsumerState<_HomeBody> {
       itemCount: items.length,
       itemExtent: PosterCard.width,
       height: PosterCard.height,
-      onItemFocused: (i) => _setBackdrop(_tmdbBackdrop(items[i])),
+      onItemFocused: (i) => _setBackdrop(_tmdbBackdrop(items[i], badge: title)),
       itemBuilder: (context, i, node) => TmdbPosterCard(title: items[i], node: node),
     );
   }
@@ -365,11 +409,12 @@ class _TmdbLogo extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final logo = ref.watch(tmdbTitleProvider((isTv: title.isTv, id: title.id))).value?.logoPath;
+    // 与详情页一致：固定字号（短标题 100、长标题 72），最多两行
     final text = Text(
       title.title,
-      maxLines: 1,
+      maxLines: 2,
       overflow: TextOverflow.ellipsis,
-      style: VText.display.copyWith(
+      style: VText.titleFor(title.title).copyWith(
         shadows: const [Shadow(color: Color(0x73000000), blurRadius: 40, offset: Offset(0, 6))],
       ),
     );
@@ -388,7 +433,7 @@ class _TmdbLogo extends ConsumerWidget {
   }
 }
 
-/// 首次使用：没有服务器、也没有 TMDB
+/// 首次使用 / 未配置：占据 Hero 区，结构和正常首页一致（右上角状态栏、左侧说明与按钮）
 class _Welcome extends StatelessWidget {
   const _Welcome({required this.hasServers, required this.tmdbOn});
 
@@ -397,46 +442,204 @@ class _Welcome extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(VSpace.contentLeft, 220, VSpace.safeH, 0),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
+    return SizedBox(
+      height: HomeHero.height,
+      child: Stack(
         children: [
-          const Text('欢迎使用 Viora', style: VText.display),
-          const SizedBox(height: 20),
-          SizedBox(
-            width: 900,
-            child: Text(
-              hasServers
-                  ? '媒体库还在同步中。配置 TMDB 后，首页会显示今日趋势、正在热映等推荐，并标注你的媒体库里有没有资源。'
-                  : '添加 Emby / Jellyfin 服务器后，这里会显示继续观看和最近入库；配置 TMDB 后还会显示热门推荐。',
-              style: VText.body.copyWith(color: VColors.textSecondary),
-            ),
-          ),
-          const SizedBox(height: 48),
-          Row(
-            children: [
-              if (!hasServers) ...[
-                PillButton(
-                  autofocus: true,
-                  large: true,
-                  icon: Icons.add_rounded,
-                  label: '添加服务器',
-                  onPressed: () => context.go('/library/add'),
+          const Positioned(right: VSpace.safeH, top: VSpace.safeV, child: StatusBar()),
+          Positioned(
+            left: VSpace.contentLeft,
+            top: 150,
+            width: 980,
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+                  decoration: BoxDecoration(color: const Color(0x24FFFFFF), borderRadius: BorderRadius.circular(8)),
+                  child: const Text('开始使用', style: TextStyle(fontSize: 20, letterSpacing: 1)),
                 ),
-                const SizedBox(width: 32),
+                const SizedBox(height: 22),
+                const Text('欢迎使用 Viora', style: VText.display),
+                const SizedBox(height: 22),
+                Text(
+                  [
+                    if (!hasServers) '添加 Emby / Jellyfin 服务器后，这里会显示继续观看和最近入库。',
+                    if (!tmdbOn) '配置 TMDB 后会显示今日趋势、正在热映等推荐，并标注你的媒体库里有没有资源。',
+                  ].join('\n'),
+                  style: VText.body.copyWith(color: const Color(0xC7FFFFFF), height: 1.7),
+                ),
+                const SizedBox(height: 40),
+                FocusButtonRow(
+                  rowIndex: 0,
+                  spacing: 32,
+                  autoScroll: false,
+                  children: [
+                    if (!hasServers)
+                      (node) => PillButton(
+                        focusNode: node,
+                        autofocus: true,
+                        large: true,
+                        icon: Icons.add_rounded,
+                        label: '添加服务器',
+                        onPressed: () => context.go('/library/add'),
+                      ),
+                    if (!tmdbOn)
+                      (node) => PillButton(
+                        focusNode: node,
+                        autofocus: hasServers,
+                        large: hasServers,
+                        icon: Icons.movie_filter_outlined,
+                        label: '设置 TMDB',
+                        onPressed: () => context.go('/settings'),
+                      ),
+                  ],
+                ),
               ],
-              if (!tmdbOn)
-                PillButton(
-                  autofocus: hasServers,
-                  icon: Icons.movie_filter_outlined,
-                  label: '设置 TMDB',
-                  onPressed: () => context.go('/settings'),
-                ),
-            ],
+            ),
           ),
         ],
       ),
     );
   }
+}
+
+/// 加载中的 Hero 占位：和真实 Hero 同样的位置与尺寸
+class _HeroSkeleton extends StatelessWidget {
+  const _HeroSkeleton();
+
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox(
+      height: HomeHero.height,
+      child: Stack(
+        children: [
+          const Positioned(right: VSpace.safeH, top: VSpace.safeV, child: StatusBar()),
+          Positioned(
+            left: VSpace.contentLeft,
+            top: 118,
+            width: 900,
+            child: _Shimmer(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  _block(160, 32),
+                  const SizedBox(height: 40),
+                  _block(560, 110),
+                  const SizedBox(height: 40),
+                  _block(360, 26),
+                  const SizedBox(height: 30),
+                  _block(780, 24),
+                  const SizedBox(height: 14),
+                  _block(620, 24),
+                  const SizedBox(height: 50),
+                  Row(children: [_block(220, 68, radius: 34), const SizedBox(width: 40), _block(170, 60, radius: 30)]),
+                ],
+              ),
+            ),
+          ),
+          Positioned(
+            left: VSpace.contentLeft,
+            bottom: 24,
+            child: Text('正在加载推荐…', style: VText.caption.copyWith(color: VColors.textTertiary)),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+Widget _block(double w, double h, {double radius = 10}) => Container(
+  width: w,
+  height: h,
+  decoration: BoxDecoration(color: const Color(0x1FFFFFFF), borderRadius: BorderRadius.circular(radius)),
+);
+
+/// 推荐行占位：加载中时呼吸闪烁；未配置时静态并显示说明
+class _SkeletonRow extends StatelessWidget {
+  const _SkeletonRow({
+    required this.title,
+    this.note,
+    this.landscape = false,
+    this.circle = false,
+    this.animate = true,
+  });
+
+  final String title;
+  final String? note;
+  final bool landscape;
+  final bool circle;
+  final bool animate;
+
+  @override
+  Widget build(BuildContext context) {
+    final w = circle ? PersonCard.size : (landscape ? LandscapeCard.width : PosterCard.width);
+    final h = circle ? PersonCard.size : (landscape ? LandscapeCard.imageHeight : PosterCard.imageHeight);
+    final cards = Row(
+      children: [
+        for (var i = 0; i < 9; i++) ...[
+          Column(
+            crossAxisAlignment: circle ? CrossAxisAlignment.center : CrossAxisAlignment.start,
+            children: [
+              _block(w, h, radius: circle ? w / 2 : VRadius.card),
+              const SizedBox(height: 14),
+              _block(circle ? w * 0.7 : w * 0.75, 20, radius: 6),
+            ],
+          ),
+          SizedBox(width: circle ? 40 : VSpace.rowGap),
+        ],
+      ],
+    );
+    return Padding(
+      padding: const EdgeInsets.only(left: VSpace.contentLeft, top: 28, bottom: 28),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.baseline,
+            textBaseline: TextBaseline.alphabetic,
+            children: [
+              Text(title, style: VText.rowTitle.copyWith(color: const Color(0xEBFFFFFF))),
+              const SizedBox(width: 16),
+              Text(note ?? '加载中…', style: VText.caption.copyWith(color: VColors.textTertiary)),
+            ],
+          ),
+          const SizedBox(height: 20),
+          ClipRect(
+            child: SingleChildScrollView(
+              scrollDirection: Axis.horizontal,
+              physics: const NeverScrollableScrollPhysics(),
+              child: animate ? _Shimmer(child: cards) : Opacity(opacity: 0.6, child: cards),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// 占位的呼吸动画
+class _Shimmer extends StatefulWidget {
+  const _Shimmer({required this.child});
+
+  final Widget child;
+
+  @override
+  State<_Shimmer> createState() => _ShimmerState();
+}
+
+class _ShimmerState extends State<_Shimmer> with SingleTickerProviderStateMixin {
+  late final _c = AnimationController(vsync: this, duration: const Duration(milliseconds: 1100))..repeat(reverse: true);
+
+  @override
+  void dispose() {
+    _c.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) => FadeTransition(
+    opacity: Tween(begin: 0.45, end: 1.0).animate(CurvedAnimation(parent: _c, curve: Curves.easeInOut)),
+    child: widget.child,
+  );
 }

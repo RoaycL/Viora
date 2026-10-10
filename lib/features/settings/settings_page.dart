@@ -438,6 +438,8 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
           ),
           const SizedBox(height: 16),
           PillButton(icon: Icons.save_rounded, label: '保存更新地址', onPressed: _saveManifest),
+          const SizedBox(height: 40),
+          const _TmdbAttribution(),
         ],
       ),
     ];
@@ -510,7 +512,7 @@ class _CategoryItem extends StatelessWidget {
     return VFocusable(
       autofocus: autofocus,
       radius: 18,
-      scale: 1.03,
+      scale: PlatformProfile.isTv ? 1.03 : 1,
       alignment: Alignment.centerLeft,
       showRing: false,
       onActivate: onSelect,
@@ -518,18 +520,31 @@ class _CategoryItem extends StatelessWidget {
         if (focused && InputMode.shouldAutoScroll) onSelect();
       },
       builder: (context, focused) {
-        final fg = focused ? const Color(0xFF0B0C10) : (selected ? Colors.white : VColors.textSecondary);
+        // Windows：低调的悬停底色 + 选中项左侧强调条；电视：焦点白底，远处也能看清
+        final tv = PlatformProfile.isTv;
+        final fg = tv && focused
+            ? const Color(0xFF0B0C10)
+            : (selected || focused ? Colors.white : VColors.textSecondary);
+        final bg = tv
+            ? (focused ? Colors.white : (selected ? const Color(0x29FFFFFF) : const Color(0x00FFFFFF)))
+            : (selected ? const Color(0x1FFFFFFF) : (focused ? const Color(0x0FFFFFFF) : const Color(0x00FFFFFF)));
         return AnimatedContainer(
           duration: VMotion.focus,
-          height: 68,
+          height: tv ? 68 : 56,
           padding: const EdgeInsets.symmetric(horizontal: 22),
-          decoration: BoxDecoration(
-            color: focused ? Colors.white : (selected ? const Color(0x29FFFFFF) : const Color(0x00FFFFFF)),
-            borderRadius: BorderRadius.circular(18),
-          ),
+          decoration: BoxDecoration(color: bg, borderRadius: BorderRadius.circular(tv ? 18 : 14)),
           child: Row(
             children: [
-              Icon(category.icon, size: 28, color: fg),
+              if (!tv) ...[
+                AnimatedContainer(
+                  duration: VMotion.focus,
+                  width: 4,
+                  height: selected ? 24 : 0,
+                  decoration: BoxDecoration(color: VColors.accent, borderRadius: BorderRadius.circular(2)),
+                ),
+                const SizedBox(width: 14),
+              ],
+              Icon(category.icon, size: tv ? 28 : 24, color: fg),
               const SizedBox(width: 16),
               Text(
                 category.label,
@@ -578,6 +593,38 @@ class _InfoLine extends StatelessWidget {
             child: Text(label, style: VText.label.copyWith(color: VColors.textTertiary)),
           ),
           Expanded(child: Text(value, style: VText.label)),
+        ],
+      ),
+    );
+  }
+}
+
+/// TMDB 署名（TMDB API 使用条款要求）
+class _TmdbAttribution extends StatelessWidget {
+  const _TmdbAttribution();
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(24),
+      decoration: BoxDecoration(color: const Color(0x0AFFFFFF), borderRadius: BorderRadius.circular(20)),
+      child: Row(
+        children: [
+          Image.asset('assets/images/tmdb_logo.png', height: 28, filterQuality: FilterQuality.medium),
+          const SizedBox(width: 28),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text('影视元数据、图片与推荐来自 TMDB（themoviedb.org）', style: VText.label.copyWith(fontSize: 20)),
+                const SizedBox(height: 6),
+                Text(
+                  'This product uses the TMDB API but is not endorsed or certified by TMDB.',
+                  style: VText.small.copyWith(color: VColors.textTertiary),
+                ),
+              ],
+            ),
+          ),
         ],
       ),
     );

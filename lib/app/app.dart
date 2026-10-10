@@ -9,6 +9,7 @@ import 'package:go_router/go_router.dart';
 import '../data/config/config_store.dart';
 import '../data/media/server_registry.dart';
 import '../player/playback_cache.dart';
+import '../ui/widgets/cached_image.dart';
 import '../player/preload.dart';
 import '../data/index/index_sync.dart';
 import '../features/update/update_controller.dart';
@@ -66,8 +67,11 @@ class _VioraAppState extends ConsumerState<VioraApp> {
             } catch (_) {}
           }),
         );
+        // 等首页加载完再在后台同步索引，不和首页抢服务器资源
+        await Future<void>.delayed(const Duration(seconds: 8));
         await ref.read(indexSyncProvider.notifier).syncAll();
       });
+      CachedNetImage.prune();
     }
   }
 
@@ -160,7 +164,9 @@ class _VioraAppState extends ConsumerState<VioraApp> {
         child: _WithTitleBar(
           canGoBack: _canGoBack,
           onBack: _handleBack,
+          // Windows 离屏幕近，界面按 2240 宽的画布缩放（比电视的 1920 小约 15%），更精致
           child: DesignScale(
+            designWidth: PlatformProfile.isDesktop ? 2240 : 1920,
             child: Stack(
               children: [
                 ?child,

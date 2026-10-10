@@ -110,3 +110,11 @@ TV 端搜索输入：屏幕键盘（拼音首字母 + 全拼两种布局）、�
 | 聚合搜索 | `lib/features/search/search_page.dart`（本地索引先出结果，再并发实时搜索各服务器、单台 5 秒超时，回来一台合并一台） |
 
 Web 预览构建不支持 SQLite（条件导入 `sqlite_stub.dart`），此时只走服务器实时搜索。
+
+### 6.1 减轻媒体服务器负载（v0.8.1）
+
+- 客户端只在登录、线路、代理、UA 变化时重建（`AppConfig.clientKey`）；测速延迟、片量、访问时间写回配置不再触发各列表重新请求。
+- 索引同步用精简字段（不含 UserData / RecursiveItemCount / ChildCount），每页 200 条、页间隔 400ms，启动后延迟约 9 秒开始。
+- 列表请求去掉 `RecursiveItemCount`、`PrimaryImageAspectRatio`（Emby 需逐条递归统计 / 读取图片尺寸）。
+- 详情页列资源与预加载用 `IsPlayback=false` 查询播放信息。
+- 图片：请求尺寸固定为 240 / 360 / 480 / 720 / 1080 / 1440 / 1920 / 2560 / 3840 几档（Emby 每个新尺寸都要现场缩放），并缓存到本地磁盘（上限 512MB），再次打开不再向服务器请求。

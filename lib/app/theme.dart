@@ -67,6 +67,9 @@ const _fontFallback = <String>[
 
 abstract final class VText {
   static const display = TextStyle(fontSize: 112, fontWeight: FontWeight.w900, height: 1, letterSpacing: 6);
+
+  /// 作品大标题（首页 Hero 与详情页统一）：8 个字以内 100，更长 72，最多两行
+  static TextStyle titleFor(String title) => display.copyWith(fontSize: title.length > 8 ? 72 : 100, letterSpacing: 2);
   static const h1 = TextStyle(fontSize: 48, fontWeight: FontWeight.w900, letterSpacing: 2);
   static const h2 = TextStyle(fontSize: 36, fontWeight: FontWeight.w700);
   static const rowTitle = TextStyle(fontSize: 28, fontWeight: FontWeight.w700);

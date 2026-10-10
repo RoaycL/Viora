@@ -41,7 +41,9 @@ class _StatusBarState extends ConsumerState<StatusBar> {
         : online == 0
         ? VColors.bad
         : VColors.warn;
+    // mainAxisSize.min：放在 Align 里也贴着右边，不会被撑开跑到左边
     return Row(
+      mainAxisSize: MainAxisSize.min,
       children: [
         if (servers.isNotEmpty) ...[
           Glass(

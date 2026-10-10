@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../../app/input/intents.dart';
+import '../../app/platform_profile.dart';
 import '../../app/theme.dart';
 import 'input_mode.dart';
 
@@ -94,6 +95,9 @@ class _VFocusableState extends State<VFocusable> {
   Widget build(BuildContext context) {
     final child = widget.builder(context, _focused);
     final radius = BorderRadius.circular(widget.radius);
+    // Windows 离屏幕近：放大幅度减半、光晕更淡、描边更细；电视保持远距离也能看清的焦点效果
+    final desktop = PlatformProfile.isDesktop;
+    final scale = desktop ? 1 + (widget.scale - 1) * 0.5 : widget.scale;
 
     Widget decorated = AnimatedContainer(
       duration: VMotion.focus,
@@ -101,23 +105,25 @@ class _VFocusableState extends State<VFocusable> {
       decoration: BoxDecoration(
         borderRadius: radius,
         boxShadow: _focused && widget.showRing
-            ? const [
-                BoxShadow(color: Color(0x1FFFFFFF), spreadRadius: 6),
-                BoxShadow(color: VColors.focusGlow, blurRadius: 50, offset: Offset(0, 18)),
-              ]
+            ? desktop
+                  ? const [BoxShadow(color: Color(0x40000000), blurRadius: 24, offset: Offset(0, 10))]
+                  : const [
+                      BoxShadow(color: Color(0x1FFFFFFF), spreadRadius: 6),
+                      BoxShadow(color: VColors.focusGlow, blurRadius: 50, offset: Offset(0, 18)),
+                    ]
             : const [],
       ),
       foregroundDecoration: _focused && widget.showRing
           ? BoxDecoration(
               borderRadius: radius,
-              border: Border.all(color: VColors.focusRing, width: widget.ringWidth),
+              border: Border.all(color: VColors.focusRing, width: desktop ? 2 : widget.ringWidth),
             )
           : null,
       child: child,
     );
 
     decorated = AnimatedScale(
-      scale: _focused ? widget.scale : 1,
+      scale: _focused ? scale : 1,
       duration: VMotion.focus,
       curve: Curves.easeOut,
       alignment: widget.alignment,

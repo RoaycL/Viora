@@ -90,6 +90,7 @@ class _AppShellState extends State<AppShell> {
                   active: _active,
                   nodes: _railNodes,
                   scope: _railScope,
+                  onPointerLeave: focusContent,
                   onSelect: (item) {
                     if (item != _active) context.go(item.path);
                     // 选中后进入内容区；新页面的 autofocus 会接管焦点。

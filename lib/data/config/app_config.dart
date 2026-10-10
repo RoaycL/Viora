@@ -77,6 +77,18 @@ class ServerConfig {
     this.seriesCount,
   });
 
+  /// 影响连接与请求结果的字段。测速延迟、片量、访问时间等变化不应重建客户端、重新请求服务器。
+  String get connectionKey => [
+    type.name,
+    username,
+    password,
+    userId,
+    token,
+    activeLineId,
+    userAgent,
+    for (final l in lines) '${l.id}|${l.url}|${l.proxied}',
+  ].join('\u0001');
+
   final String id;
   final ServerType type;
   final String name;
@@ -359,6 +371,21 @@ class AppConfig {
     this.tmdb = const TmdbConfig(),
     this.deviceId = '',
   });
+
+  /// 所有服务器的连接键（只在登录、线路、代理、UA 等变化时改变）
+  String get serversKey => [for (final s in servers) '${s.id}#${s.connectionKey}'].join('\u0002');
+
+  /// 某台服务器客户端依赖的全部配置
+  String clientKey(String serverId) => [
+    server(serverId)?.connectionKey,
+    proxy.baseUrl,
+    proxy.scope.name,
+    playback.userAgent,
+    playback.uaForApi,
+    playback.clientName,
+    playback.deviceName,
+    deviceId,
+  ].join('\u0003');
 
   final List<ServerConfig> servers;
   final ProxyConfig proxy;
