@@ -13,7 +13,8 @@ final libraryCopiesProvider = Provider.family<List<MediaItem>, TmdbLinkKey>((ref
   ref.watch(indexRevisionProvider);
   final index = ref.watch(mediaIndexProvider).value;
   if (index == null) return const [];
-  final servers = ref.watch(configProvider.select((c) => {for (final s in c.servers) s.id}));
+  ref.watch(configProvider.select((c) => c.serversKey));
+  final servers = {for (final s in ref.read(configProvider).servers) s.id};
   try {
     return index
         .byTmdb(key.isTv ? MediaKind.series : MediaKind.movie, '${key.id}')
@@ -31,7 +32,8 @@ final recentlyAddedProvider = Provider<List<AggregatedTitle>>((ref) {
   ref.watch(indexRevisionProvider);
   final index = ref.watch(mediaIndexProvider).value;
   if (index == null) return const [];
-  final servers = ref.watch(configProvider.select((c) => {for (final s in c.servers) s.id}));
+  ref.watch(configProvider.select((c) => c.serversKey));
+  final servers = {for (final s in ref.read(configProvider).servers) s.id};
   try {
     return groupTitles(index.latest(limit: 60).where((c) => servers.contains(c.serverId))).take(24).toList();
   } catch (_) {

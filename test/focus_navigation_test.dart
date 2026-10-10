@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:viora/app/app.dart';
 import 'package:viora/app/input/intents.dart';
+import 'package:viora/data/config/app_config.dart';
 import 'package:viora/data/tmdb/tmdb_client.dart';
 
 String? get focused => FocusManager.instance.primaryFocus?.debugLabel;
@@ -33,6 +34,7 @@ TmdbTitle fixtureTitle(int id, String title) =>
     TmdbTitle(id: id, isTv: true, title: title, backdropPath: '/b$id.jpg', posterPath: '/p$id.jpg', rating: 8.5);
 
 final tmdbFixtures = [
+  tmdbClientProvider.overrideWithValue(TmdbClient(const TmdbConfig(apiKey: 'test'), const ProxyConfig())),
   tmdbRowProvider.overrideWith(
     (ref, row) async => [
       fixtureTitle(row.index * 100 + 1, row == TmdbRow.trendingDay ? '时光代理人' : '${row.name}-1'),
@@ -183,6 +185,21 @@ void main() {
     await press(tester, LogicalKeyboardKey.arrowLeft);
     expect(focused, 'nav:/');
     expect(railOffset(), Offset.zero);
+    await unmount(tester);
+  });
+
+  testWidgets('首次安装（没有服务器、没有 TMDB）：首页显示引导和推荐行占位，焦点在"添加服务器"', (tester) async {
+    autoCheckUpdatesOnLaunch = false;
+    tester.view.physicalSize = const Size(1920, 1080);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+    await tester.pumpWidget(const ProviderScope(child: VioraApp()));
+    await tester.pump(const Duration(seconds: 1));
+    expect(find.text('欢迎使用 Viora'), findsOneWidget);
+    expect(find.text('添加服务器'), findsOneWidget);
+    expect(find.text('正在热映'), findsOneWidget);
+    expect(find.text('配置 TMDB 后显示（设置 → 元数据）'), findsWidgets);
+    expect(focused, isNotNull);
     await unmount(tester);
   });
 }

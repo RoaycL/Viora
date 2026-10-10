@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../data/media/media_models.dart';
 import '../../data/media/server_registry.dart';
 import 'art.dart';
+import 'cached_image.dart';
 import 'image_sizing.dart';
 
 /// 媒体服务器上的图片：地址经过线路 / 代理改写，请求带 UA。
@@ -39,11 +40,9 @@ class ServerImage extends ConsumerWidget {
     if (client == null || image == null) return fallback;
     final px = ImageSizing.physicalWidth(context, width);
     final req = client.image(image!, maxWidth: px);
-    return Image.network(
-      req.url.toString(),
-      headers: req.headers,
-      // 按显示尺寸解码，大图不会占满内存（电视盒子尤其重要）
-      cacheWidth: px,
+    return Image(
+      // 磁盘缓存 + 按显示尺寸解码（大图不会占满内存，电视盒子尤其重要）
+      image: netImage(req.url.toString(), headers: req.headers, cacheWidth: px),
       fit: fit,
       alignment: alignment,
       gaplessPlayback: true,

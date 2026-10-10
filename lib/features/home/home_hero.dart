@@ -61,7 +61,11 @@ class HomeHero extends StatefulWidget {
     required this.index,
     required this.onIndexChanged,
     required this.onFocused,
+    this.showDots = true,
   });
+
+  /// 显示轮播指示点（显示推荐行焦点的预览时隐藏）
+  final bool showDots;
 
   static const height = 660.0;
   static const rotateEvery = Duration(seconds: 8);
@@ -177,25 +181,26 @@ class HomeHeroState extends State<HomeHero> implements FocusRowHandle {
           ),
           // 状态栏随 Hero 一起滚走，不遮挡下方内容
           const Positioned(right: VSpace.safeH, top: VSpace.safeV, child: StatusBar()),
-          Positioned(
-            right: VSpace.safeH,
-            top: 600,
-            child: Row(
-              children: [
-                for (var i = 0; i < widget.items.length; i++)
-                  AnimatedContainer(
-                    duration: VMotion.scroll,
-                    margin: const EdgeInsets.only(left: 10),
-                    width: i == widget.index ? 36 : 8,
-                    height: 8,
-                    decoration: BoxDecoration(
-                      color: i == widget.index ? Colors.white : const Color(0x59FFFFFF),
-                      borderRadius: BorderRadius.circular(4),
+          if (widget.showDots)
+            Positioned(
+              right: VSpace.safeH,
+              top: 600,
+              child: Row(
+                children: [
+                  for (var i = 0; i < widget.items.length; i++)
+                    AnimatedContainer(
+                      duration: VMotion.scroll,
+                      margin: const EdgeInsets.only(left: 10),
+                      width: i == widget.index ? 36 : 8,
+                      height: 8,
+                      decoration: BoxDecoration(
+                        color: i == widget.index ? Colors.white : const Color(0x59FFFFFF),
+                        borderRadius: BorderRadius.circular(4),
+                      ),
                     ),
-                  ),
-              ],
+                ],
+              ),
             ),
-          ),
         ],
       ),
     );
@@ -226,12 +231,15 @@ class _HeroInfo extends StatelessWidget {
           ],
         ),
     ];
-    final titleText = Text(
-      t.title,
-      maxLines: 1,
-      overflow: TextOverflow.ellipsis,
-      style: VText.display.copyWith(
-        shadows: const [Shadow(color: Color(0x73000000), blurRadius: 40, offset: Offset(0, 6))],
+    final titleText = FittedBox(
+      fit: BoxFit.scaleDown,
+      alignment: Alignment.bottomLeft,
+      child: Text(
+        t.title,
+        maxLines: 1,
+        style: VText.display.copyWith(
+          shadows: const [Shadow(color: Color(0x73000000), blurRadius: 40, offset: Offset(0, 6))],
+        ),
       ),
     );
     const dot = Text('  •  ', style: TextStyle(fontSize: 22, color: Color(0x66FFFFFF)));

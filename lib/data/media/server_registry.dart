@@ -10,8 +10,9 @@ String appVersion = '0.0.0';
 
 /// 按服务器 ID 取客户端。配置变化（登录令牌、线路、代理、UA）时自动重建。
 final serverClientProvider = Provider.family<EmbyClient?, String>((ref, serverId) {
-  // 只在这台服务器、代理或播放设置变化时重建，其他服务器的变化不影响
-  ref.watch(configProvider.select((c) => (c.server(serverId), c.proxy, c.playback, c.deviceId)));
+  // 只在这台服务器的连接信息（登录、线路、代理、UA）变化时重建。
+  // 测速延迟、片量、访问时间等写回配置时不重建，避免依赖它的列表全部重新请求服务器。
+  ref.watch(configProvider.select((c) => c.clientKey(serverId)));
   final config = ref.read(configProvider);
   final server = config.server(serverId);
   if (server == null) return null;
@@ -33,7 +34,8 @@ EmbyClient clientForDraft(AppConfig config, ServerConfig server) =>
 
 /// 所有已登录服务器的"继续观看"，按服务器返回顺序合并（docs/05 §2.1）。
 final resumeProvider = FutureProvider<List<MediaItem>>((ref) async {
-  final config = ref.watch(configProvider);
+  ref.watch(configProvider.select((c) => c.serversKey));
+  final config = ref.read(configProvider);
   final results = await Future.wait(
     config.servers.where((s) => s.loggedIn).map((s) async {
       try {

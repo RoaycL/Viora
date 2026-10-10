@@ -55,8 +55,8 @@ class SideNavRail extends StatefulWidget {
 class _SideNavRailState extends State<SideNavRail> {
   static const hideDelay = Duration(seconds: 3);
 
-  /// 鼠标唤出导航栏的左边缘热区宽度
-  static const _edgeWidth = 28.0;
+  /// 鼠标唤出导航栏的左侧热区：导航栏收起时所占的宽度（不拦截点击，下面的内容照常可点）
+  static const _edgeWidth = 24.0 + VSpace.navRailWidth;
 
   bool _expanded = false;
   bool _visible = true;

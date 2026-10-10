@@ -156,7 +156,16 @@ class _RowAutoFocusState extends State<RowAutoFocus> {
 
 /// 一行按钮（详情页操作按钮等），参与行导航。
 class FocusButtonRow extends StatefulWidget {
-  const FocusButtonRow({super.key, required this.rowIndex, required this.children, this.spacing = 18});
+  const FocusButtonRow({
+    super.key,
+    required this.rowIndex,
+    required this.children,
+    this.spacing = 18,
+    this.autoScroll = true,
+  });
+
+  /// 获得焦点时把按钮行滚到视口约 30% 处；页面顶部的按钮行（如首页引导）不需要
+  final bool autoScroll;
 
   final int rowIndex;
   final List<Widget Function(FocusNode node)> children;
@@ -185,7 +194,7 @@ class _FocusButtonRowState extends State<FocusButtonRow> implements FocusRowHand
       node.addListener(() {
         if (node.hasPrimaryFocus) {
           _remembered = i;
-          if (InputMode.shouldAutoScroll) {
+          if (InputMode.shouldAutoScroll && widget.autoScroll) {
             Scrollable.ensureVisible(context, alignment: 0.3, duration: const Duration(milliseconds: 250));
           }
         }

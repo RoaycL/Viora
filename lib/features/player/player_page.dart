@@ -237,9 +237,14 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
     _stopped = true;
     final client = _client, source = _source;
     if (client != null && source != null && _started) {
-      client.reportStopped(source, _state.position, _playSessionId);
-      ref.invalidate(resumeProvider);
-      ref.invalidate(itemProvider((serverId: widget.serverId, itemId: widget.itemId)));
+      // 页面销毁时不能再用 ref（Riverpod 会抛错并打断后续的关闭播放器），用提前保存的容器；
+      // 等服务器记下进度后再刷新继续观看 / 详情
+      final container = _container;
+      final key = (serverId: widget.serverId, itemId: widget.itemId);
+      Future(() => client.reportStopped(source, _state.position, _playSessionId)).catchError((_) {}).whenComplete(() {
+        container?.invalidate(resumeProvider);
+        container?.invalidate(itemProvider(key));
+      });
     }
   }
 
@@ -368,7 +373,28 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
   }
 
   @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    _container ??= ProviderScope.containerOf(context, listen: false);
+  }
+
+  /// dispose 里不能用 ref，提前拿到容器
+  ProviderContainer? _container;
+
+  @override
   void dispose() {
+    // 最先关闭播放器：后面任何一步出错都不能让视频在后台继续播放
+    final engine = _engine;
+    _engine?.state.removeListener(_onEngineState);
+    final clear = _container?.read(configProvider).playback.clearCacheOnExit ?? true;
+    final handoff = _handoff;
+    Future(() async {
+      try {
+        await engine?.dispose();
+      } finally {
+        if (clear) await PlaybackCache.clear(keepPreload: handoff);
+      }
+    });
     _reportStopped();
     SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
     DesignScale.snapshotAllowed.value = true;
@@ -380,14 +406,6 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
     _seekTimer?.cancel();
     _segments?.dispose();
     _focus.dispose();
-    _engine?.state.removeListener(_onEngineState);
-    final engine = _engine;
-    final clear = ref.read(configProvider).playback.clearCacheOnExit;
-    // 先关播放器（释放缓存文件），再清除播放缓存
-    Future(() async {
-      await engine?.dispose();
-      if (clear) await PlaybackCache.clear(keepPreload: _handoff);
-    });
     super.dispose();
   }
 

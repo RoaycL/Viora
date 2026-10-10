@@ -12,7 +12,8 @@ import '../browse/media_cards.dart';
 
 /// 所有已登录服务器上收藏的电影 / 剧集，同一部作品合并
 final favoritesProvider = FutureProvider<List<AggregatedTitle>>((ref) async {
-  final servers = ref.watch(configProvider.select((c) => c.servers)).where((s) => s.loggedIn);
+  ref.watch(configProvider.select((c) => c.serversKey));
+  final servers = ref.read(configProvider).servers.where((s) => s.loggedIn);
   final lists = await Future.wait(
     servers.map((s) async {
       try {
@@ -31,7 +32,8 @@ final favoritesProvider = FutureProvider<List<AggregatedTitle>>((ref) async {
 
 /// 最近看过：已看完的电影 / 单集按观看时间倒序，同一部剧只保留最近的一集
 final recentlyPlayedProvider = FutureProvider<List<MediaItem>>((ref) async {
-  final servers = ref.watch(configProvider.select((c) => c.servers)).where((s) => s.loggedIn);
+  ref.watch(configProvider.select((c) => c.serversKey));
+  final servers = ref.read(configProvider).servers.where((s) => s.loggedIn);
   final lists = await Future.wait(
     servers.map((s) async {
       try {
