@@ -210,7 +210,7 @@ class _HomeBodyState extends ConsumerState<_HomeBody> {
   Widget build(BuildContext context) {
     final servers = ref.watch(configProvider.select((c) => c.servers));
     final tmdbOn = ref.watch(tmdbClientProvider) != null;
-    final serverNames = {for (final s in servers) s.id: s.name};
+    final serverNames = {for (final s in servers) s.id: s.displayName};
     final resumeAsync = ref.watch(resumeProvider);
     final resume = servers.isEmpty ? const <MediaItem>[] : dedupeWatched(resumeAsync.value ?? const <MediaItem>[]);
     final resumeLoading = servers.isNotEmpty && resumeAsync.isLoading && resume.isEmpty;
@@ -259,7 +259,7 @@ class _HomeBodyState extends ConsumerState<_HomeBody> {
           Positioned.fill(
             child: SingleChildScrollView(
               controller: _scroll,
-              padding: const EdgeInsets.only(bottom: 420),
+              padding: const EdgeInsets.only(bottom: 40),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
@@ -377,6 +377,7 @@ class _HomeBodyState extends ConsumerState<_HomeBody> {
                       },
                     ),
                   tmdbRow(9, '高分剧集', TmdbRow.topRatedTv),
+                  const _EndOfPage(),
                 ],
               ),
             ),
@@ -642,4 +643,26 @@ class _ShimmerState extends State<_Shimmer> with SingleTickerProviderStateMixin 
     opacity: Tween(begin: 0.45, end: 1.0).animate(CurvedAnimation(parent: _c, curve: Curves.easeInOut)),
     child: widget.child,
   );
+}
+
+/// 首页结尾：滚到底时提示已经到底，而不是一大片空白
+class _EndOfPage extends StatelessWidget {
+  const _EndOfPage();
+
+  @override
+  Widget build(BuildContext context) {
+    const line = Expanded(child: Divider(color: Color(0x1FFFFFFF), height: 1));
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(VSpace.contentLeft, 48, VSpace.safeH, 24),
+      child: Row(
+        children: [
+          line,
+          const SizedBox(width: 20),
+          Text('已经到底了', style: VText.caption.copyWith(color: VColors.textTertiary)),
+          const SizedBox(width: 20),
+          line,
+        ],
+      ),
+    );
+  }
 }

@@ -46,7 +46,8 @@ class _VioraAppState extends ConsumerState<VioraApp> {
   static const _tabRoots = {'/', '/library', '/search', '/favorites', '/history', '/settings'};
 
   void _updateCanGoBack() {
-    _canGoBack.value = !_tabRoots.contains(_router.routerDelegate.currentConfiguration.uri.path);
+    // 详情页、播放页是压栈打开的（路径不变），所以还要看能不能 pop
+    _canGoBack.value = _router.canPop() || !_tabRoots.contains(_router.routerDelegate.currentConfiguration.uri.path);
   }
 
   @override

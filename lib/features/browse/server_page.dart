@@ -247,7 +247,11 @@ class _LibraryGridPageState extends ConsumerState<LibraryGridPage> {
 
   @override
   Widget build(BuildContext context) {
-    const columns = 7;
+    // 按画布宽度算列数（Windows 画布更宽，列数更多），卡片等比放大铺满每一格
+    final columns =
+        ((MediaQuery.sizeOf(context).width - VSpace.contentLeft - VSpace.safeH + 24) / (PosterCard.width + 24))
+            .floor()
+            .clamp(3, 12);
     return CustomScrollView(
       scrollCacheExtent: const ScrollCacheExtent.pixels(1400),
       slivers: [
@@ -283,7 +287,7 @@ class _LibraryGridPageState extends ConsumerState<LibraryGridPage> {
         SliverPadding(
           padding: const EdgeInsets.fromLTRB(VSpace.contentLeft, 12, VSpace.safeH, 200),
           sliver: SliverGrid.builder(
-            gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+            gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
               crossAxisCount: columns,
               mainAxisSpacing: 32,
               crossAxisSpacing: 24,
@@ -292,7 +296,11 @@ class _LibraryGridPageState extends ConsumerState<LibraryGridPage> {
             itemCount: _items.length,
             itemBuilder: (context, i) {
               if (i >= _items.length - columns * 2) WidgetsBinding.instance.addPostFrameCallback((_) => _loadMore());
-              return _GridPoster(item: _items[i], autofocus: i == 0);
+              return FittedBox(
+                fit: BoxFit.fitWidth,
+                alignment: Alignment.topLeft,
+                child: _GridPoster(item: _items[i], autofocus: i == 0),
+              );
             },
           ),
         ),

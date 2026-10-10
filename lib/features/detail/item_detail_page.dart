@@ -13,7 +13,6 @@ import '../../ui/focus/row_focus.dart';
 import '../../ui/rows/cards.dart';
 import '../../ui/rows/focus_row.dart';
 import '../../ui/widgets/buttons.dart';
-import '../../ui/widgets/page_back_button.dart';
 import '../../ui/widgets/server_image.dart';
 import '../../ui/widgets/toast.dart';
 import '../browse/media_cards.dart';
@@ -180,7 +179,7 @@ class _ItemDetailPageState extends ConsumerState<ItemDetailPage> {
             decoration: BoxDecoration(
               gradient: LinearGradient(
                 stops: [0, 0.32, 0.62, 1],
-                colors: [Color(0xFA07080B), Color(0xE607080B), Color(0x5907080B), Color(0x1407080B)],
+                colors: [Color(0xCC07080B), Color(0xA607080B), Color(0x3307080B), Color(0x0007080B)],
               ),
             ),
           ),
@@ -377,7 +376,6 @@ class _ItemDetailPageState extends ConsumerState<ItemDetailPage> {
             ),
           ),
         ),
-        const PageBackButton(),
       ],
     );
   }

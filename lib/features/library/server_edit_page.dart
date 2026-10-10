@@ -115,7 +115,11 @@ class _ServerEditPageState extends ConsumerState<ServerEditPage> {
         throw const MediaServerException('所有线路都连不上，请检查地址、端口或代理设置');
       }
       final info = await client.publicInfo();
-      if (server.name.isEmpty) server = server.copyWith(name: info['ServerName'] as String? ?? '媒体服务器');
+      // Emby 可能返回空的 ServerName：再退到地址的主机名
+      final serverName = (info['ServerName'] as String?)?.trim() ?? '';
+      if (server.name.trim().isEmpty) {
+        server = server.copyWith(name: serverName.isNotEmpty ? serverName : server.displayName);
+      }
       if (!server.loggedIn) server = await client.login();
       try {
         final c = await clientForDraft(config, server).counts();

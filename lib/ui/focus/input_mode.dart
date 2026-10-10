@@ -1,3 +1,4 @@
+import 'package:flutter/gestures.dart';
 import 'package:flutter/services.dart';
 
 /// 最近一次交互是鼠标还是按键（遥控器 / 键盘 / 手柄）。
@@ -13,6 +14,9 @@ abstract final class InputMode {
 
   static void markPointer() => _pointer = true;
 
+  /// 鼠标最近的位置（窗口坐标）：右键菜单在这里弹出
+  static Offset? lastPointer;
+
   /// 焦点变化时是否应该自动滚动
   static bool get shouldAutoScroll => !_pointer;
 
@@ -22,6 +26,9 @@ abstract final class InputMode {
     HardwareKeyboard.instance.addHandler((event) {
       _pointer = false;
       return false;
+    });
+    GestureBinding.instance.pointerRouter.addGlobalRoute((event) {
+      if (event is PointerDownEvent || event is PointerHoverEvent) lastPointer = event.position;
     });
   }
 }

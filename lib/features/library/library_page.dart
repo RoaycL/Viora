@@ -13,6 +13,7 @@ import '../../ui/focus/focusable.dart';
 import '../../ui/glass/glass.dart';
 import '../../ui/panels/context_menu.dart';
 import '../../ui/widgets/buttons.dart';
+import '../../ui/widgets/cached_image.dart';
 import '../../ui/widgets/toast.dart';
 import '../../ui/focus/input_mode.dart';
 
@@ -49,6 +50,15 @@ class _LibraryPageState extends ConsumerState<LibraryPage> {
         final client = ref.read(serverClientProvider(s.id));
         if (client == null) return;
         await client.probeAll();
+        // 早期添加的服务器可能没有名称：补上服务器自己报的名称
+        if (s.name.trim().isEmpty) {
+          try {
+            final n = ((await client.publicInfo())['ServerName'] as String?)?.trim() ?? '';
+            if (n.isNotEmpty) {
+              await ref.read(configProvider.notifier).updateServer(s.id, (old) => old.copyWith(name: n));
+            }
+          } catch (_) {}
+        }
         try {
           final c = await client.counts();
           await ref
@@ -192,7 +202,7 @@ class _ServerCard extends ConsumerWidget {
     final store = ref.read(configProvider.notifier);
     return showContextMenu(
       context,
-      title: server.name,
+      title: server.displayName,
       actions: [
         MenuAction('测速', Icons.speed_rounded, () async {
           showToast('正在测速…');
@@ -223,7 +233,7 @@ class _ServerCard extends ConsumerWidget {
           }),
         MenuAction('编辑', Icons.edit_rounded, () => context.go('/library/edit/${server.id}')),
         MenuAction('重新同步索引', Icons.sync_rounded, () {
-          showToast('正在重建「${server.name}」的索引…');
+          showToast('正在重建「${server.displayName}」的索引…');
           ref.read(indexSyncProvider.notifier).syncServer(server.id, forceFull: true);
         }),
         MenuAction('重新登录', Icons.login_rounded, () async {
@@ -237,12 +247,12 @@ class _ServerCard extends ConsumerWidget {
         MenuAction('删除', Icons.delete_outline_rounded, () {
           showContextMenu(
             context,
-            title: '删除「${server.name}」？',
+            title: '删除「${server.displayName}」？',
             actions: [
               MenuAction('确认删除', Icons.delete_forever_rounded, () {
                 store.removeServer(server.id);
                 ref.read(indexSyncProvider.notifier).forget(server.id);
-                showToast('已删除「${server.name}」');
+                showToast('已删除「${server.displayName}」');
               }),
               MenuAction('取消', Icons.close_rounded, () {}),
             ],
@@ -262,7 +272,7 @@ class _ServerCard extends ConsumerWidget {
       _Status.down => VColors.bad,
       _Status.unknown => VColors.textMuted,
     };
-    final icon = _iconGradient(s.name);
+    final icon = _iconGradient(s.displayName);
     return VFocusable(
       autofocus: autofocus,
       radius: 24,
@@ -311,18 +321,24 @@ class _ServerCard extends ConsumerWidget {
               children: [
                 Row(
                   children: [
+                    // 用户头像；没有头像时显示服务器名首字母
                     Container(
                       width: 52,
                       height: 52,
-                      alignment: Alignment.center,
+                      clipBehavior: Clip.antiAlias,
                       decoration: BoxDecoration(
                         borderRadius: BorderRadius.circular(14),
                         gradient: icon,
                         boxShadow: const [BoxShadow(color: Color(0x59000000), blurRadius: 16, offset: Offset(0, 6))],
                       ),
-                      child: Text(
-                        s.name.isEmpty ? '?' : s.name.characters.first.toUpperCase(),
-                        style: const TextStyle(fontSize: 24, fontWeight: FontWeight.w800),
+                      child: _UserAvatar(
+                        serverId: s.id,
+                        fallback: Center(
+                          child: Text(
+                            s.displayName.characters.first.toUpperCase(),
+                            style: const TextStyle(fontSize: 24, fontWeight: FontWeight.w800),
+                          ),
+                        ),
                       ),
                     ),
                     const SizedBox(width: 12),
@@ -353,7 +369,7 @@ class _ServerCard extends ConsumerWidget {
                   children: [
                     Flexible(
                       child: Text(
-                        s.name,
+                        s.displayName,
                         style: const TextStyle(fontSize: 26, fontWeight: FontWeight.w700),
                         overflow: TextOverflow.ellipsis,
                       ),
@@ -474,4 +490,25 @@ String formatCount(int n) {
     buf.write(s[i]);
   }
   return buf.toString();
+}
+
+/// 服务器上当前用户的头像
+class _UserAvatar extends ConsumerWidget {
+  const _UserAvatar({required this.serverId, required this.fallback});
+
+  final String serverId;
+  final Widget fallback;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final req = ref.watch(serverClientProvider(serverId))?.userImage(maxWidth: 160);
+    if (req == null) return fallback;
+    return Image(
+      image: netImage(req.url.toString(), headers: req.headers, cacheWidth: 160),
+      fit: BoxFit.cover,
+      gaplessPlayback: true,
+      frameBuilder: (context, child, frame, sync) => frame == null && !sync ? fallback : child,
+      errorBuilder: (_, _, _) => fallback,
+    );
+  }
 }

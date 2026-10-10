@@ -1,11 +1,12 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../ui/widgets/fill_grid.dart';
+
 import '../../app/theme.dart';
 import '../../data/tmdb/tmdb_client.dart';
 import '../../ui/focus/focus_auto_scroll.dart';
 import '../../ui/rows/cards.dart';
-import '../../ui/widgets/page_back_button.dart';
 import '../../ui/widgets/tmdb_image.dart';
 import 'tmdb_cards.dart';
 
@@ -125,9 +126,8 @@ class _TmdbGrid extends StatelessWidget {
                     else if (loading && items.isEmpty)
                       const Text('加载中…', style: VText.label)
                     else
-                      Wrap(
-                        spacing: 24,
-                        runSpacing: 32,
+                      FillGrid(
+                        itemWidth: PosterCard.width,
                         children: [
                           for (var i = 0; i < items.length; i++)
                             _GridTile(key: ValueKey(items[i].key), title: items[i], autofocus: i == 0),
@@ -138,7 +138,6 @@ class _TmdbGrid extends StatelessWidget {
               ),
             ),
           ),
-          const PageBackButton(),
         ],
       ),
     );

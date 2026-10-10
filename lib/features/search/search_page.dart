@@ -3,6 +3,8 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../ui/widgets/fill_grid.dart';
+
 import '../../app/platform_profile.dart';
 import '../../app/theme.dart';
 import '../../data/config/config_store.dart';
@@ -153,9 +155,8 @@ class _SearchPageState extends ConsumerState<SearchPage> {
                 padding: const EdgeInsets.only(right: VSpace.safeH, top: 110, bottom: 200),
                 child: hasQuery && _results.isEmpty && !_searchingRemote
                     ? Text('没有找到相关内容', style: VText.label.copyWith(color: VColors.textTertiary))
-                    : Wrap(
-                        spacing: 24,
-                        runSpacing: 32,
+                    : FillGrid(
+                        itemWidth: PosterCard.width,
                         children: [
                           for (final g in _results)
                             _ResultCard(key: ValueKey('${g.primary.serverId}/${g.primary.id}'), title: g),
