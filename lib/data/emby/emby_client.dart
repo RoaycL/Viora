@@ -6,6 +6,7 @@ import 'package:flutter/foundation.dart';
 
 import '../config/app_config.dart';
 import '../media/media_models.dart';
+import '../media/zh.dart';
 import '../net/request_composer.dart';
 
 /// 交给播放器的最终请求：URL 已完成线路选择和代理改写，headers 含播放 UA 与鉴权。
@@ -462,14 +463,16 @@ class EmbyClient {
       serverId: _server.id,
       id: id,
       kind: MediaKind.fromEmby(j['Type'] as String?),
-      name: j['Name'] as String? ?? '',
+      name: j['Type'] == 'Season'
+          ? localizeSeasonName(j['Name'] as String? ?? '', j['IndexNumber'] as int?)
+          : j['Name'] as String? ?? '',
       originalTitle: j['OriginalTitle'] as String?,
       overview: j['Overview'] as String?,
       year: j['ProductionYear'] as int? ?? premiere?.year,
       premiereDate: premiere,
       rating: (j['CommunityRating'] as num?)?.toDouble(),
       officialRating: j['OfficialRating'] as String?,
-      genres: (j['Genres'] as List?)?.cast<String>() ?? const [],
+      genres: [for (final g in (j['Genres'] as List?)?.cast<String>() ?? const <String>[]) translateGenre(g)],
       runtime: j['RunTimeTicks'] == null ? null : ticksToDuration(j['RunTimeTicks'] as num),
       tmdbId: (providers['Tmdb'] ?? providers['tmdb'])?.toString(),
       imdbId: (providers['Imdb'] ?? providers['imdb'])?.toString(),

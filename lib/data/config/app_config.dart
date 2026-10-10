@@ -244,36 +244,77 @@ class PlaybackConfig {
   );
 }
 
+/// TMDB（用于补全中文元数据；M4 起也用于首页推荐）
+class TmdbConfig {
+  const TmdbConfig({this.apiKey = '', this.baseUrl = '', this.useProxy = false});
+
+  /// v3 API Key 或 v4 读取令牌（Read Access Token）
+  final String apiKey;
+
+  /// 空 = https://api.themoviedb.org/3；也可以填自建的 TMDB 反代地址
+  final String baseUrl;
+
+  /// 通过「反向代理」访问 TMDB
+  final bool useProxy;
+
+  bool get enabled => apiKey.trim().isNotEmpty;
+
+  String get effectiveBaseUrl {
+    final b = baseUrl.trim().replaceAll(RegExp(r'/+$'), '');
+    return b.isEmpty ? 'https://api.themoviedb.org/3' : b;
+  }
+
+  TmdbConfig copyWith({String? apiKey, String? baseUrl, bool? useProxy}) =>
+      TmdbConfig(apiKey: apiKey ?? this.apiKey, baseUrl: baseUrl ?? this.baseUrl, useProxy: useProxy ?? this.useProxy);
+
+  Map<String, dynamic> toJson() => {'apiKey': apiKey, 'baseUrl': baseUrl, 'useProxy': useProxy};
+
+  factory TmdbConfig.fromJson(Map<String, dynamic> j) => TmdbConfig(
+    apiKey: j['apiKey'] as String? ?? '',
+    baseUrl: j['baseUrl'] as String? ?? '',
+    useProxy: j['useProxy'] as bool? ?? false,
+  );
+}
+
 class AppConfig {
   const AppConfig({
     this.servers = const [],
     this.proxy = const ProxyConfig(),
     this.playback = const PlaybackConfig(),
+    this.tmdb = const TmdbConfig(),
     this.deviceId = '',
   });
 
   final List<ServerConfig> servers;
   final ProxyConfig proxy;
   final PlaybackConfig playback;
+  final TmdbConfig tmdb;
 
   /// 每台设备固定的 DeviceId（避免被服务器当成新设备反复占用设备数）
   final String deviceId;
 
   ServerConfig? server(String id) => servers.where((s) => s.id == id).firstOrNull;
 
-  AppConfig copyWith({List<ServerConfig>? servers, ProxyConfig? proxy, PlaybackConfig? playback, String? deviceId}) =>
-      AppConfig(
-        servers: servers ?? this.servers,
-        proxy: proxy ?? this.proxy,
-        playback: playback ?? this.playback,
-        deviceId: deviceId ?? this.deviceId,
-      );
+  AppConfig copyWith({
+    List<ServerConfig>? servers,
+    ProxyConfig? proxy,
+    PlaybackConfig? playback,
+    TmdbConfig? tmdb,
+    String? deviceId,
+  }) => AppConfig(
+    servers: servers ?? this.servers,
+    proxy: proxy ?? this.proxy,
+    playback: playback ?? this.playback,
+    tmdb: tmdb ?? this.tmdb,
+    deviceId: deviceId ?? this.deviceId,
+  );
 
   Map<String, dynamic> toJson() => {
     'version': 1,
     'servers': servers.map((s) => s.toJson()).toList(),
     'proxy': proxy.toJson(),
     'playback': playback.toJson(),
+    'tmdb': tmdb.toJson(),
     'deviceId': deviceId,
   };
 
@@ -281,6 +322,7 @@ class AppConfig {
     servers: [for (final s in (j['servers'] as List? ?? const [])) ServerConfig.fromJson(s as Map<String, dynamic>)],
     proxy: ProxyConfig.fromJson(j['proxy'] as Map<String, dynamic>? ?? const {}),
     playback: PlaybackConfig.fromJson(j['playback'] as Map<String, dynamic>? ?? const {}),
+    tmdb: TmdbConfig.fromJson(j['tmdb'] as Map<String, dynamic>? ?? const {}),
     deviceId: j['deviceId'] as String? ?? '',
   );
 }

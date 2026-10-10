@@ -1,11 +1,14 @@
+import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../app/theme.dart';
 import '../../data/config/app_config.dart';
 import '../../data/config/config_store.dart';
+import '../../data/media/media_models.dart';
 import '../../data/media/server_registry.dart';
 import '../../data/net/request_composer.dart';
+import '../../data/tmdb/tmdb_client.dart';
 import '../../ui/focus/focus_auto_scroll.dart';
 import '../../ui/glass/glass.dart';
 import '../../ui/widgets/buttons.dart';
@@ -28,6 +31,9 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
   late final _device = TextEditingController();
   late final _proxy = TextEditingController();
   late final _manifest = TextEditingController();
+  late final _tmdbKey = TextEditingController();
+  late final _tmdbBase = TextEditingController();
+  bool _tmdbTesting = false;
   String _version = '';
   String _source = '';
 
@@ -39,12 +45,14 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
     _client.text = c.playback.clientName;
     _device.text = c.playback.deviceName;
     _proxy.text = c.proxy.baseUrl;
+    _tmdbKey.text = c.tmdb.apiKey;
+    _tmdbBase.text = c.tmdb.baseUrl;
     _load();
   }
 
   @override
   void dispose() {
-    for (final c in [_ua, _client, _device, _proxy, _manifest]) {
+    for (final c in [_ua, _client, _device, _proxy, _manifest, _tmdbKey, _tmdbBase]) {
       c.dispose();
     }
     super.dispose();
@@ -91,6 +99,30 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
           ),
         );
     showToast(url.isEmpty ? '已关闭反向代理' : '反向代理地址已保存');
+  }
+
+  Future<void> _saveTmdb() async {
+    final store = ref.read(configProvider.notifier);
+    await store.update(
+      (c) => c.copyWith(
+        tmdb: c.tmdb.copyWith(apiKey: _tmdbKey.text.trim(), baseUrl: _tmdbBase.text.trim()),
+      ),
+    );
+    final config = ref.read(configProvider);
+    if (!config.tmdb.enabled) {
+      showToast('已清除 TMDB 设置');
+      return;
+    }
+    setState(() => _tmdbTesting = true);
+    try {
+      final meta = await TmdbClient(config.tmdb, config.proxy).details(MediaKind.movie, '550');
+      showToast('TMDB 连接成功：${meta?.title ?? ''}');
+      ref.invalidate(zhMetaProvider);
+    } catch (e) {
+      showToast('TMDB 连接失败：${e is DioException ? (e.response?.statusCode ?? e.message) : e}');
+    } finally {
+      if (mounted) setState(() => _tmdbTesting = false);
+    }
   }
 
   Future<void> _saveManifest() async {
@@ -179,6 +211,42 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
                 ),
                 const SizedBox(height: 24),
                 PillButton(icon: Icons.save_rounded, label: '保存播放设置', onPressed: _savePlayback),
+              ],
+            ),
+
+            // ───────── 元数据 ─────────
+            _Section(
+              title: '元数据 · TMDB',
+              children: [
+                Text(
+                  '媒体库里的标题、简介、类型不是中文时，用 TMDB 的简体中文数据补全；之后首页推荐也会用到。',
+                  style: VText.caption.copyWith(color: VColors.textSecondary),
+                ),
+                const SizedBox(height: 20),
+                VTextField(label: 'TMDB API Key 或读取令牌（themoviedb.org → 设置 → API）', controller: _tmdbKey, width: 1000),
+                const SizedBox(height: 20),
+                VTextField(
+                  label: '自定义 API 地址（可留空）',
+                  controller: _tmdbBase,
+                  hint: 'https://api.themoviedb.org/3',
+                  keyboardType: TextInputType.url,
+                  width: 1000,
+                ),
+                const SizedBox(height: 20),
+                VToggle(
+                  label: '通过反向代理访问 TMDB',
+                  subtitle: '国内网络直连 TMDB 不稳定时打开（需先填写反向代理的完整地址）',
+                  value: config.tmdb.useProxy,
+                  width: 1000,
+                  onChanged: (v) =>
+                      ref.read(configProvider.notifier).update((c) => c.copyWith(tmdb: c.tmdb.copyWith(useProxy: v))),
+                ),
+                const SizedBox(height: 24),
+                PillButton(
+                  icon: Icons.save_rounded,
+                  label: _tmdbTesting ? '测试中…' : '保存并测试',
+                  onPressed: _tmdbTesting ? null : _saveTmdb,
+                ),
               ],
             ),
 

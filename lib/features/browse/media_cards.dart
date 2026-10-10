@@ -1,7 +1,9 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../data/media/media_models.dart';
+import '../../data/tmdb/tmdb_client.dart';
 import '../../ui/rows/cards.dart';
 import '../../ui/widgets/server_image.dart';
 
@@ -25,16 +27,18 @@ String mediaSubtitle(MediaItem item) {
   return parts.join(' · ');
 }
 
-/// 海报卡（电影 / 剧集）
+/// 海报卡（电影 / 剧集）。媒体库不是中文时，用 TMDB 的中文标题。
 Widget mediaPosterCard(BuildContext context, MediaItem item, FocusNode node, {VoidCallback? onMenu}) {
-  return PosterCard(
-    node: node,
-    art: placeholderArt(item.id),
-    image: ServerImage(serverId: item.serverId, image: item.primary, fallbackSeed: item.id),
-    title: item.name,
-    subtitle: mediaSubtitle(item),
-    onActivate: () => openMediaItem(context, item),
-    onMenu: onMenu,
+  return Consumer(
+    builder: (context, ref, _) => PosterCard(
+      node: node,
+      art: placeholderArt(item.id),
+      image: ServerImage(serverId: item.serverId, image: item.primary, fallbackSeed: item.id),
+      title: localizedMeta(ref, item).title,
+      subtitle: mediaSubtitle(item),
+      onActivate: () => openMediaItem(context, item),
+      onMenu: onMenu,
+    ),
   );
 }
 

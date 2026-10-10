@@ -116,7 +116,7 @@ class RequestComposer {
   }
 
   Map<String, String> headers(RequestKind kind) {
-    final h = <String, String>{'User-Agent': userAgentFor(kind)};
+    final h = <String, String>{'User-Agent': userAgentFor(kind), 'Accept-Language': 'zh-CN,zh;q=0.9'};
     final auth = authorization();
     switch (server.type) {
       case ServerType.emby:

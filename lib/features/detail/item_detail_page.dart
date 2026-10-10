@@ -5,6 +5,7 @@ import 'package:go_router/go_router.dart';
 import '../../app/theme.dart';
 import '../../data/media/media_models.dart';
 import '../../data/media/server_registry.dart';
+import '../../data/tmdb/tmdb_client.dart';
 import '../../ui/focus/focusable.dart';
 import '../../ui/focus/row_focus.dart';
 import '../../ui/rows/cards.dart';
@@ -95,6 +96,7 @@ class _ItemDetailPageState extends ConsumerState<ItemDetailPage> {
     final nextUp = isSeries ? ref.watch(_nextUpProvider(_key)).value : null;
     final sources = item.playable ? ref.watch(_sourcesProvider(_key)).value ?? const <MediaSourceInfo>[] : const [];
 
+    final zh = localizedMeta(ref, item);
     final favorite = _favorite ?? item.favorite;
     final played = _played ?? item.played;
     final playTarget = isSeries ? (nextUp ?? episodes.firstOrNull) : item;
@@ -109,7 +111,7 @@ class _ItemDetailPageState extends ConsumerState<ItemDetailPage> {
 
     final meta = [
       if (item.year != null) '${item.year}',
-      if (item.genres.isNotEmpty) item.genres.take(3).join(' / '),
+      if (zh.genres.isNotEmpty) zh.genres.take(3).join(' / '),
       if (item.runtime != null && !isSeries) formatDuration(item.runtime!),
       if (isSeries && seasons.isNotEmpty) '${seasons.length} 季',
       ?item.officialRating,
@@ -162,7 +164,7 @@ class _ItemDetailPageState extends ConsumerState<ItemDetailPage> {
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          _Title(serverId: widget.serverId, item: item),
+                          _Title(serverId: widget.serverId, item: item, title: zh.title),
                           if (item.kind == MediaKind.episode && item.seriesName != null) ...[
                             const SizedBox(height: 12),
                             Text(
@@ -189,10 +191,10 @@ class _ItemDetailPageState extends ConsumerState<ItemDetailPage> {
                               ],
                             ),
                           ],
-                          if (item.overview?.isNotEmpty == true) ...[
+                          if (zh.overview?.isNotEmpty == true) ...[
                             const SizedBox(height: 18),
                             Text(
-                              item.overview!,
+                              zh.overview!,
                               maxLines: 3,
                               overflow: TextOverflow.ellipsis,
                               style: VText.body.copyWith(color: const Color(0xCCFFFFFF), height: 1.65),
@@ -321,20 +323,22 @@ class _ItemDetailPageState extends ConsumerState<ItemDetailPage> {
 
 /// 有 Logo 显示 Logo 图，否则显示大字标题。
 class _Title extends StatelessWidget {
-  const _Title({required this.serverId, required this.item});
+  const _Title({required this.serverId, required this.item, required this.title});
 
   final String serverId;
   final MediaItem item;
+  final String title;
 
   @override
   Widget build(BuildContext context) {
     final text = Text(
-      item.kind == MediaKind.episode ? item.name : item.name,
+      title,
       maxLines: 2,
       overflow: TextOverflow.ellipsis,
-      style: VText.display.copyWith(fontSize: item.name.length > 8 ? 72 : 100, letterSpacing: 2),
+      style: VText.display.copyWith(fontSize: title.length > 8 ? 72 : 100, letterSpacing: 2),
     );
-    if (item.logo == null || item.kind == MediaKind.episode) return text;
+    // 标题已换成中文时不用（通常是英文的）Logo 图
+    if (item.logo == null || item.kind == MediaKind.episode || title != item.name) return text;
     return SizedBox(
       height: 160,
       width: 640,
