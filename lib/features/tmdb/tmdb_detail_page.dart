@@ -9,6 +9,7 @@ import '../../ui/focus/row_focus.dart';
 import '../../ui/rows/cards.dart';
 import '../../ui/rows/focus_row.dart';
 import '../../ui/widgets/buttons.dart';
+import '../../ui/widgets/page_back_button.dart';
 import '../../ui/widgets/tmdb_image.dart';
 import '../browse/media_cards.dart';
 import 'tmdb_cards.dart';
@@ -227,6 +228,7 @@ class _TmdbDetail extends ConsumerWidget {
             ),
           ),
         ),
+        const PageBackButton(),
       ],
     );
   }

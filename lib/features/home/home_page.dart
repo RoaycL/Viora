@@ -251,7 +251,7 @@ class _HomeBodyState extends ConsumerState<_HomeBody> {
                 listenable: _scroll,
                 builder: (context, _) {
                   final offset = _scroll.hasClients ? _scroll.offset : 0.0;
-                  return ColoredBox(color: VColors.background.withValues(alpha: (offset / 500).clamp(0.0, 1.0) * 0.6));
+                  return ColoredBox(color: VColors.background.withValues(alpha: (offset / 500).clamp(0.0, 1.0) * 0.45));
                 },
               ),
             ),

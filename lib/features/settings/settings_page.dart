@@ -512,7 +512,7 @@ class _CategoryItem extends StatelessWidget {
     return VFocusable(
       autofocus: autofocus,
       radius: 18,
-      scale: 1.03,
+      scale: PlatformProfile.isTv ? 1.03 : 1,
       alignment: Alignment.centerLeft,
       showRing: false,
       onActivate: onSelect,
@@ -520,18 +520,31 @@ class _CategoryItem extends StatelessWidget {
         if (focused && InputMode.shouldAutoScroll) onSelect();
       },
       builder: (context, focused) {
-        final fg = focused ? const Color(0xFF0B0C10) : (selected ? Colors.white : VColors.textSecondary);
+        // Windows：低调的悬停底色 + 选中项左侧强调条；电视：焦点白底，远处也能看清
+        final tv = PlatformProfile.isTv;
+        final fg = tv && focused
+            ? const Color(0xFF0B0C10)
+            : (selected || focused ? Colors.white : VColors.textSecondary);
+        final bg = tv
+            ? (focused ? Colors.white : (selected ? const Color(0x29FFFFFF) : const Color(0x00FFFFFF)))
+            : (selected ? const Color(0x1FFFFFFF) : (focused ? const Color(0x0FFFFFFF) : const Color(0x00FFFFFF)));
         return AnimatedContainer(
           duration: VMotion.focus,
-          height: 68,
+          height: tv ? 68 : 56,
           padding: const EdgeInsets.symmetric(horizontal: 22),
-          decoration: BoxDecoration(
-            color: focused ? Colors.white : (selected ? const Color(0x29FFFFFF) : const Color(0x00FFFFFF)),
-            borderRadius: BorderRadius.circular(18),
-          ),
+          decoration: BoxDecoration(color: bg, borderRadius: BorderRadius.circular(tv ? 18 : 14)),
           child: Row(
             children: [
-              Icon(category.icon, size: 28, color: fg),
+              if (!tv) ...[
+                AnimatedContainer(
+                  duration: VMotion.focus,
+                  width: 4,
+                  height: selected ? 24 : 0,
+                  decoration: BoxDecoration(color: VColors.accent, borderRadius: BorderRadius.circular(2)),
+                ),
+                const SizedBox(width: 14),
+              ],
+              Icon(category.icon, size: tv ? 28 : 24, color: fg),
               const SizedBox(width: 16),
               Text(
                 category.label,

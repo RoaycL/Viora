@@ -46,8 +46,9 @@ class PageBackdrop extends StatelessWidget {
           const DecoratedBox(
             decoration: BoxDecoration(
               gradient: LinearGradient(
-                stops: [0, 0.3, 0.62, 1],
-                colors: [Color(0xF507080B), Color(0xD107080B), Color(0x3307080B), Color(0x0007080B)],
+                // 左侧压暗减轻：背景图延伸到导航栏下方，同时保证 Hero 文字可读
+                stops: [0, 0.32, 0.65, 1],
+                colors: [Color(0x9907080B), Color(0x8007080B), Color(0x1F07080B), Color(0x0007080B)],
               ),
             ),
           ),
