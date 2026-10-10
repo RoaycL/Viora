@@ -73,7 +73,9 @@ class ServerLine {
 class ReverseProxy {
   String id;
   String name;
-  String template;           // 见 03-media-servers.md §5
+  ProxyKind kind;            // embyReverseProxyGo（默认）/ custom，见 03-media-servers.md §5
+  String baseUrl;            // "完整地址"
+  String? template;          // custom 时使用
   Map<String, String> extraHeaders;
 }
 

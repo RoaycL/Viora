@@ -53,7 +53,7 @@ X-Emby-Authorization: MediaBrowser Client="Viora", Device="Living Room TV", Devi
 ### 2.3 播放策略
 
 - 默认 **直接播放**（`Static=true`），客户端解码；不主动请求转码（避免给服务器压力，也是公益服的普遍要求）。
-- `strm` / 网盘直链（`MediaSource.IsRemote` 或 `Path` 为 http）：服务器通常会 302 到外部地址，播放器需要跟随重定向；重定向后的地址是否继续走代理由代理配置决定（见 §5.3）。
+- `strm` / 网盘直链（`MediaSource.IsRemote` 或 `Path` 为 http）：服务器通常会 302 到外部地址，播放器需要跟随重定向；重定向后的地址是否继续走代理由代理配置决定（见 §5.2、§5.4）。
 - 仅当两个内核都无法解码时，才提示用户"请求服务器转码"（手动，非自动）。
 
 ## 3. Plex
@@ -93,37 +93,64 @@ X-Emby-Authorization: MediaBrowser Client="Viora", Device="Living Room TV", Devi
 ```
 ReverseProxy {
   name: "我的代理",
-  template: "https://embyproxy.example.com/proxy/{url}",
-  extraHeaders: { "X-Proxy-Key": "..." }   // 可选，代理鉴权
+  kind: embyReverseProxyGo,          // 默认类型，见 §5.2
+  baseUrl: "https://embyproxy.example.com/proxy/",   // 即 Rex 的"完整地址"
+  template: null,                    // kind = custom 时使用
+  extraHeaders: {}
 }
 ```
 
-### 5.2 模板变量
+### 5.2 默认类型：emby-reverse-proxy-go
+
+用户实际使用的反代服务端是 [Gsy-allen/emby-reverse-proxy-go](https://github.com/Gsy-allen/emby-reverse-proxy-go)，按其源码确认的行为如下：
+
+| 项 | 行为 | 对客户端的要求 |
+| --- | --- | --- |
+| URL 格式 | `{完整地址}/{scheme}/{host}/{port}{path}?{query}` | **端口必须显式写出**，443 / 80 也要写；`scheme` 只能是 `http` / `https` |
+| 子路径 | 服务端只认 `/{scheme}/...`，`/proxy/` 这类前缀由前置 Nginx 去掉，并通过 `X-Forwarded-Prefix` 告诉服务端 | 客户端只管拼"完整地址"，不需要额外 Header |
+| 鉴权 | 没有代理级鉴权 | 不需要额外 Header |
+| User-Agent | 原样透传给上游 | **自定义 UA 经过代理后仍然有效** |
+| 302 重定向 | 服务端不跟随重定向，而是把 `Location` 改写成代理地址（**包括跳到其他域名的网盘/CDN 地址**）后返回给客户端 | 客户端正常跟随即可，默认整条链路都走代理 |
+| 响应体改写 | `PlaybackInfo` 和 `Sessions/Playing/Progress` 的 JSON 里出现的绝对地址（如 `DirectStreamUrl`）会被改写成代理地址 | 客户端拿到的播放地址可能已经是代理地址，**拼接前要先判断，避免重复套代理** |
+| Referer / Origin | 还原为上游真实值；去掉 `X-Forwarded-*`、`Via` 等头 | 无 |
+| WebSocket | 支持（需前置 Nginx 转发 Upgrade 头） | Emby 的会话 WebSocket 也可走代理 |
+| 内网目标 | 默认拒绝 localhost / 内网地址（`BLOCK_PRIVATE_TARGETS=true`） | 内网服务器的线路不要绑代理；绑定时提示 |
+
+示例：完整地址 `https://embyproxy.example.com/proxy/`，原地址 `https://emby.a.com/emby/Items?x=1`
+→ `https://embyproxy.example.com/proxy/https/emby.a.com/443/emby/Items?x=1`
+
+客户端配套逻辑：
+
+- **去重**：URL 已以"完整地址"开头时不再改写。
+- **还原（unwrap）**：能把代理地址反解回原地址（解析 `/{scheme}/{host}/{port}`），用于日志显示真实目标，以及下面的"网盘直连"。
+- **网盘直连（可选，默认关）**：302 目标被代理改写后，若反解出的域名与服务器域名不同（即网盘/CDN），可选择还原为原地址直连，节省代理流量。
+- **内网检测**：线路地址是内网 IP / `localhost` / `.local` 时，绑定代理前提示"该代理默认不允许访问内网地址"。
+
+### 5.3 其他代理类型（kind = custom）
+
+保留模板方式，兼容其他反代：
 
 | 变量 | 含义 | 示例（原地址 `https://emby.a.com:8920/emby/Items?x=1`） |
 | --- | --- | --- |
 | `{url}` | 完整原地址 | `https://emby.a.com:8920/emby/Items?x=1` |
 | `{url_encoded}` | URL 编码后的完整原地址 | `https%3A%2F%2Femby.a.com...` |
-| `{scheme}` `{host}` `{port}` `{path}` `{query}` | 拆分字段 | `https` / `emby.a.com` / `8920` / `/emby/Items` / `x=1` |
-
-常见三种写法都能覆盖：
+| `{scheme}` `{host}` `{port}` `{path}` `{query}` | 拆分字段（`{port}` 总是显式端口） | `https` / `emby.a.com` / `8920` / `/emby/Items` / `x=1` |
 
 | 代理类型 | 模板 |
 | --- | --- |
-| 前缀拼接型（Rex 的"完整地址"就是这种） | `https://proxy.example.com/proxy/{url}` |
+| emby-reverse-proxy-go（等价写法） | `{base}{scheme}/{host}/{port}{path}?{query}` |
+| 前缀拼接整条 URL | `https://proxy.example.com/{url}` |
 | 参数型 | `https://proxy.example.com/?target={url_encoded}` |
-| 主机替换 + Header 型 | 模板 `https://proxy.example.com{path}?{query}`，`extraHeaders: { "X-Target-Host": "{scheme}://{host}:{port}" }` |
+| 主机替换 + Header 型 | `https://proxy.example.com{path}?{query}`，`extraHeaders: { "X-Target-Host": "{scheme}://{host}:{port}" }` |
 
-用户只填"完整地址"且末尾是 `/` 时，自动按前缀拼接型处理（等价于 `{完整地址}{url}`），与 Rex 行为一致。
-
-### 5.3 作用范围
+### 5.4 作用范围
 
 - `proxyScope`：`apiAndStream`（默认）/ `streamOnly` / `apiOnly`。
 - 图片请求跟随 API 的规则。
-- **重定向跟随**：服务器返回 302 到网盘/CDN 时，选项"重定向后的地址也走代理"（默认关：直连 CDN 通常更快；部分网络环境需要打开）。实现上 Windows（mpv）和 Android（ExoPlayer 自定义 `DataSource`）都需要自己处理重定向，而不是交给底层自动跟随，才能对重定向目标再做一次改写。
+- 对于不改写 `Location` 的自定义代理：播放器需要自己处理 302（Windows 的 mpv 和 Android 的 ExoPlayer 自定义 `DataSource` 都关闭自动跟随），对重定向目标再改写一次。
 - 更换代理地址后，已绑定的线路继续生效（绑定关系存的是 `proxyId`，与 Rex 提示一致）。
 
-### 5.4 绑定页交互（TV）
+### 5.5 绑定页交互（TV）
 
 ```
 ┌ 绑定线路 ─────────────────────────────────────────────────────────┐
@@ -146,7 +173,7 @@ ReverseProxy {
 - 设置后，以下请求使用该 UA：
   - 视频流（mpv `user-agent` 选项 / ExoPlayer `DefaultHttpDataSource.Factory.setUserAgent`）
   - 外挂字幕下载
-  - 重定向后的网盘/CDN 请求
+  - 重定向后的网盘/CDN 请求（经 emby-reverse-proxy-go 时 UA 原样透传）
 - 可选开关"API 与图片也使用此 UA"（默认关；某些服务器只在播放时校验 UA，API 用真实 UA 便于服务器统计，打开后则全部统一）。
 - Emby/Jellyfin 的 `X-Emby-Authorization` 中 `Client` / `Device` / `Version` 单独可配（§2.1）。
 
@@ -169,5 +196,5 @@ ReverseProxy {
 | 内核 | 设置方式 |
 | --- | --- |
 | mpv | `user-agent=<ua>`，其余头用 `http-header-fields`（逗号分隔，需转义） |
-| ExoPlayer | 自定义 `HttpDataSource.Factory`：设置 UA、默认 Header、关闭自动跨协议重定向并手动处理（§5.3） |
+| ExoPlayer | 自定义 `HttpDataSource.Factory`：设置 UA、默认 Header、关闭自动跨协议重定向并手动处理（§5.4） |
 | 图片 | 图片加载器的 headers 由同一 `RequestComposer` 生成 |

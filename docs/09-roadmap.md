@@ -19,10 +19,10 @@
 | # | 问题 | 影响 |
 | --- | --- | --- |
 | 1 | 技术栈是否接受 Flutter + 双内核方案（见 01 §3） | 全局 |
-| 2 | TheOtherDB、PublicMetaDB、IntroDB、TheIntroDB 的官方 API 文档 / 是否需要 API Key | 05 §3 Provider 实现 |
+| 2 | TheOtherDB、PublicMetaDB、IntroDB、TheIntroDB 的 API（暂时留空，Provider 先做接口占位） | 05 §3 |
 | 3 | 飞牛影视是否有可用的官方或社区 API 文档 | M7 工作量 |
-| 4 | 反向代理的服务端是自建的哪一种（前缀拼接 `…/proxy/{url}` 还是其他），是否需要鉴权 Header | 03 §5 默认模板 |
-| 5 | 默认主题：深色（推荐大屏）还是沿用 Rex 的浅色毛玻璃 | 06 §2 |
+| 4 | ~~反向代理服务端类型~~ 已确认：emby-reverse-proxy-go（见 03 §5.2） | — |
+| 5 | ~~默认主题~~ 已确认：深色 | — |
 | 6 | 首页推荐默认是否隐藏"无资源"的 TMDB 条目 | 06 §4 |
 | 7 | Android TV 最低版本（建议 Android 7.0 / API 24） | 兼容性与 ExoPlayer 能力 |
 | 8 | 外部评分（豆瓣 / IMDb / 烂番茄）与家长指南的数据源 | 详情页后续版本 |

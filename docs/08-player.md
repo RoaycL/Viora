@@ -39,7 +39,7 @@ abstract class PlayerEngine {
 
 - 每次 `open` 都带完整 `headers`，由 `RequestComposer` 生成：`User-Agent`（播放 UA）、鉴权头、代理附加头。
 - mpv：`user-agent`、`http-header-fields`、`network-timeout=15`、`demuxer-max-bytes`（缓冲大小设置）、`cache=yes`。
-- ExoPlayer：自定义 `HttpDataSource.Factory`（OkHttp 实现），处理 UA、Header、302 改写（03 §5.3）、`Range` 请求；`DefaultLoadControl` 缓冲时长可配置。
+- ExoPlayer：自定义 `HttpDataSource.Factory`（OkHttp 实现），处理 UA、Header、302 处理（03 §5.2、§5.4）、`Range` 请求；`DefaultLoadControl` 缓冲时长可配置。
 
 ### 3.2 画面
 
