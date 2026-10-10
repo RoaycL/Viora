@@ -7,7 +7,7 @@ import '../../ui/rows/cards.dart';
 import '../../ui/widgets/server_image.dart';
 import '../../ui/widgets/tmdb_image.dart';
 
-/// 打开 TMDB 条目的详情页。首页、推荐行只做展示，进详情页后才到各服务器搜索资源（docs/04-aggregation.md §5）
+/// 打开 TMDB 条目的详情页。首页、推荐行只做展示，进详情页后才到各服务器搜索资源（docs/04-aggregation.md §7）
 void openTmdbTitle(BuildContext context, TmdbTitle t) => context.push('/tmdb/${t.type}/${t.id}');
 
 /// 播放 TMDB 条目：电影直接播放（默认资源），剧集进详情选集

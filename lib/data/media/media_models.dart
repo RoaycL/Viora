@@ -220,7 +220,7 @@ class MediaStreamInfo {
   }
 }
 
-/// 一个可播放版本（docs/04-aggregation.md §5）
+/// 一个可播放版本（docs/04-aggregation.md §7）
 class MediaSourceInfo {
   const MediaSourceInfo({
     required this.serverId,

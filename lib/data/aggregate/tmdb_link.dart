@@ -50,7 +50,7 @@ TmdbSearchKey searchKeyOf(TmdbTitle t) =>
     (isTv: t.isTv, id: t.id, title: t.title, originalTitle: t.originalTitle, year: t.year);
 
 /// 进入 TMDB 详情页时才做的聚合搜索：本地索引 + 到每台服务器按中文名 / 原名实时搜索，
-/// 按 TMDB ID 匹配（服务器条目没有 TMDB ID 时按标题 + 年份 ±1）。首页、推荐行不触发（docs/04-aggregation.md §5）。
+/// 按 TMDB ID 匹配（服务器条目没有 TMDB ID 时按标题 + 年份 ±1）。首页、推荐行不触发（docs/04-aggregation.md §7）。
 final tmdbLibrarySearchProvider = FutureProvider.autoDispose.family<List<MediaItem>, TmdbSearchKey>((ref, key) async {
   final found = <String, MediaItem>{
     for (final c in ref.read(libraryCopiesProvider((isTv: key.isTv, id: key.id)))) '${c.serverId}/${c.id}': c,

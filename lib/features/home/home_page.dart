@@ -127,7 +127,7 @@ class _HomeBodyState extends ConsumerState<_HomeBody> {
     });
   }
 
-  /// TMDB 推荐只做展示：不在首页查媒体库资源，进详情页再到各服务器搜索（docs/04-aggregation.md §5）
+  /// TMDB 推荐只做展示：不在首页查媒体库资源，进详情页再到各服务器搜索（docs/04-aggregation.md §7）
   HeroEntry _tmdbHero(TmdbTitle t, String badge) => HeroEntry(
     key: t.key,
     title: t.title,

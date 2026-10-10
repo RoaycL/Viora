@@ -11,7 +11,7 @@ import '../media/media_models.dart';
 import '../media/server_registry.dart';
 import '../../player/preload.dart';
 
-/// 一个可播放的版本：哪台服务器、哪个条目（电影 / 单集）、哪个 MediaSource（docs/04-aggregation.md §5）
+/// 一个可播放的版本：哪台服务器、哪个条目（电影 / 单集）、哪个 MediaSource（docs/04-aggregation.md §7）
 @immutable
 class SourceOption {
   const SourceOption({required this.item, required this.source, required this.serverName, this.latencyMs});
