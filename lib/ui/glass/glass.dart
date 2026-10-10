@@ -3,6 +3,7 @@ import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../app/platform_profile.dart';
 import '../../app/theme.dart';
 
 /// 磨砂玻璃的性能档位（docs/06-ui-design.md §2.1）。
@@ -19,7 +20,9 @@ enum GlassQuality {
 
 class GlassQualityNotifier extends Notifier<GlassQuality> {
   @override
-  GlassQuality build() => GlassQuality.medium;
+  // 电视盒子 GPU 弱：实时模糊（BackdropFilter）每帧都要重新模糊整块背景，是首页卡顿的主要来源，
+  // 电视默认不做实时模糊，用更不透明的深色面板；Windows 保持磨砂效果
+  GlassQuality build() => PlatformProfile.isTv ? GlassQuality.low : GlassQuality.medium;
 
   void set(GlassQuality q) => state = q;
 }

@@ -65,7 +65,11 @@ class HomeHero extends StatefulWidget {
     required this.onFocused,
     this.showDots = true,
     this.autoRotate = true,
+    this.isReady,
   });
+
+  /// 第 i 部是否已经准备好（图片已下载解码）；没准备好时轮播先等着，不切过去
+  final bool Function(int index)? isReady;
 
   /// 显示轮播指示点（显示推荐行焦点的预览时隐藏）
   final bool showDots;
@@ -73,8 +77,8 @@ class HomeHero extends StatefulWidget {
   /// 是否自动轮播（正在预览推荐行作品、Hero 已滚出视野时为 false）
   final bool autoRotate;
 
-  /// 无操作多久后自动切到下一部
-  static const rotateEvery = Duration(seconds: 3);
+  /// 无操作多久后自动切到下一部：Windows 3 秒；电视 8 秒（电视远看、性能弱，切太快显得卡）
+  static Duration get rotateEvery => PlatformProfile.isTv ? const Duration(seconds: 8) : const Duration(seconds: 3);
 
   /// Hero 高度：占屏幕约 72%（封面背景更大，下面的行往下移）
   static double heightOf(BuildContext context) => (MediaQuery.sizeOf(context).height * 0.72).clamp(660.0, 1200.0);
@@ -138,7 +142,7 @@ class HomeHeroState extends State<HomeHero> implements FocusRowHandle {
   @override
   void initState() {
     super.initState();
-    // 每秒检查一次：无操作满 3 秒、且距上次切换满 3 秒时切到下一部
+    // 每秒检查一次：无操作、且距上次切换都满 rotateEvery 时切到下一部（下一部还没准备好就先等）
     _rotate = Timer.periodic(const Duration(seconds: 1), (_) {
       if (!mounted || !widget.autoRotate || widget.items.length < 2) return;
       // Hero 已经滚出视野（在看下面的行）时不轮播
@@ -146,6 +150,8 @@ class HomeHeroState extends State<HomeHero> implements FocusRowHandle {
       if (pos != null && pos.hasPixels && pos.pixels > HomeHero.heightOf(context) / 2) return;
       final now = DateTime.now();
       if (InputMode.idle < HomeHero.rotateEvery || now.difference(_lastSwitch) < HomeHero.rotateEvery) return;
+      final next = (widget.index + 1) % widget.items.length;
+      if (widget.isReady?.call(next) == false) return;
       _switchTo(widget.index + 1);
     });
   }

@@ -1,5 +1,3 @@
-import '../../ui/widgets/end_of_page.dart';
-
 import 'dart:async';
 
 import 'package:flutter/material.dart';
@@ -21,6 +19,9 @@ import '../../ui/rows/focus_row.dart';
 import '../../ui/widgets/art.dart';
 import '../../ui/widgets/backdrop.dart';
 import '../../ui/widgets/buttons.dart';
+import '../../ui/widgets/cached_image.dart';
+import '../../ui/widgets/end_of_page.dart';
+import '../../ui/widgets/image_sizing.dart';
 import '../../ui/widgets/server_image.dart';
 import '../../ui/widgets/status_bar.dart';
 import '../../ui/widgets/tmdb_image.dart';
@@ -63,6 +64,57 @@ class _HomeBodyState extends ConsumerState<_HomeBody> {
   int _heroIndex = 0;
   _Backdrop? _backdrop;
   Timer? _backdropDebounce;
+
+  /// 已经准备好（详情、Logo、背景图都已下载解码）的 Hero：轮播只切到准备好的，避免切过去后标题、Logo、背景依次闪出来
+  final _readyHeroes = <String>{};
+  final _warming = <String>{};
+  final _warmStarted = <String, DateTime>{};
+
+  /// 准备好了，或者已经等了 10 秒（网络慢 / 图片下载不下来时不让轮播一直卡住）
+  bool _heroReady(String key) {
+    if (_readyHeroes.contains(key)) return true;
+    final started = _warmStarted[key];
+    return started != null && DateTime.now().difference(started) > const Duration(seconds: 10);
+  }
+
+  /// 预热当前和下一部：一部一部来，不一次性把 8 张大图塞进电视内存
+  Future<void> _warmHeroes(List<TmdbTitle> list, int index) async {
+    if (list.isEmpty) return;
+    for (final t in [list[index % list.length], list[(index + 1) % list.length]]) {
+      if (_readyHeroes.contains(t.key) || !_warming.add(t.key)) continue;
+      _warmStarted[t.key] = DateTime.now();
+      try {
+        final client = ref.read(tmdbClientProvider);
+        if (client == null || !mounted) return;
+        String? logo;
+        try {
+          logo = (await ref.read(tmdbTitleProvider((isTv: t.isTv, id: t.id)).future))?.logoPath;
+        } catch (_) {}
+        if (!mounted) return;
+        // 和 TmdbImage 用一样的地址与解码宽度，才能命中同一份图片缓存
+        final bg = ImageSizing.physicalWidth(context, 1920);
+        final logoPx = ImageSizing.physicalWidth(context, 620);
+        await Future.wait([
+          if (t.backdropPath != null)
+            precacheImage(
+              netImage(client.image(t.backdropPath!, size: TmdbImageKind.backdrop.sizeFor(bg)), cacheWidth: bg),
+              context,
+              onError: (_, _) {},
+            ),
+          if (logo != null)
+            precacheImage(
+              netImage(client.image(logo, size: TmdbImageKind.logo.sizeFor(logoPx)), cacheWidth: logoPx),
+              context,
+              onError: (_, _) {},
+            ),
+        ]);
+      } catch (_) {
+      } finally {
+        _warming.remove(t.key);
+        _readyHeroes.add(t.key);
+      }
+    }
+  }
 
   /// 焦点 / 鼠标停在推荐行的某部作品上时，Hero 区显示它的信息（与背景一致）
   HeroEntry? _preview;
@@ -245,6 +297,16 @@ class _HomeBodyState extends ConsumerState<_HomeBody> {
     List<TmdbTitle> row(TmdbRow r) => ref.watch(tmdbRowProvider(r)).value ?? const [];
     bool rowLoading(TmdbRow r) => tmdbOn && ref.watch(tmdbRowProvider(r)).isLoading;
     final heroes = _heroes(row(TmdbRow.trendingDay), recent);
+    // 与 _heroes 里的 TMDB 轮播项一一对应
+    final heroTitles = row(TmdbRow.trendingDay).where((t) => t.backdropPath != null).take(8).toList();
+    if (heroTitles.isNotEmpty) {
+      final next = heroTitles[(_heroIndex + 1) % heroTitles.length].key;
+      if (!_readyHeroes.contains(next) && !_warming.contains(next)) {
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (mounted) _warmHeroes(heroTitles, _heroIndex);
+        });
+      }
+    }
     final heroLoading = rowLoading(TmdbRow.trendingDay) || (servers.isNotEmpty && !tmdbOn && recent.isEmpty);
     final peopleAsync = ref.watch(tmdbPeopleProvider);
     final people = peopleAsync.value ?? const <TmdbPerson>[];
@@ -298,6 +360,9 @@ class _HomeBodyState extends ConsumerState<_HomeBody> {
                       index: preview != null ? 0 : heroIndex,
                       showDots: preview == null,
                       autoRotate: preview == null,
+                      isReady: heroTitles.isEmpty || heroTitles.length != heroes.length
+                          ? null
+                          : (i) => _heroReady(heroTitles[i % heroTitles.length].key),
                       onIndexChanged: (i) {
                         setState(() {
                           _heroIndex = i;
@@ -437,7 +502,8 @@ class _TmdbLogo extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final logo = ref.watch(tmdbTitleProvider((isTv: title.isTv, id: title.id))).value?.logoPath;
+    final detail = ref.watch(tmdbTitleProvider((isTv: title.isTv, id: title.id)));
+    final logo = detail.value?.logoPath;
     // 与详情页一致：固定字号（短标题 100、长标题 72），最多两行
     final text = Text(
       title.title,
@@ -447,6 +513,8 @@ class _TmdbLogo extends ConsumerWidget {
         shadows: const [Shadow(color: Color(0x73000000), blurRadius: 40, offset: Offset(0, 6))],
       ),
     );
+    // 还不知道有没有 Logo 时留空（不先显示文字再换成 Logo，电视上看起来像闪了一下）
+    if (detail.isLoading && !detail.hasValue) return const SizedBox(height: 150);
     if (logo == null) return text;
     return ConstrainedBox(
       constraints: const BoxConstraints(maxWidth: 620, maxHeight: 150),
@@ -456,7 +524,8 @@ class _TmdbLogo extends ConsumerWidget {
         width: 620,
         fit: BoxFit.contain,
         alignment: Alignment.bottomLeft,
-        fallback: text,
+        transparentFallback: true,
+        errorFallback: text,
       ),
     );
   }

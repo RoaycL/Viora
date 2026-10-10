@@ -1,5 +1,7 @@
 import 'package:flutter/widgets.dart';
 
+import '../../app/platform_profile.dart';
+
 /// 按设备实际分辨率决定图片尺寸（docs/06-ui-design.md §2.2）：
 /// 设计稿上的宽度 × 每个设计像素对应的物理像素数（[DesignScale] 写进 MediaQuery.devicePixelRatio）。
 /// 4K 电视请求更大的图保证清晰，小窗口请求小图省流量和内存。
@@ -11,6 +13,8 @@ abstract final class ImageSizing {
   static int physicalWidth(BuildContext context, double designWidth) {
     final dpr = MediaQuery.maybeDevicePixelRatioOf(context) ?? 1;
     final px = (designWidth * dpr).ceil();
-    return tiers.firstWhere((t) => t >= px, orElse: () => tiers.last);
+    final w = tiers.firstWhere((t) => t >= px, orElse: () => tiers.last);
+    // 电视界面按 1080P 渲染，图片最多解码到 1920 宽：4K 解码一张背景就要 30MB 以上内存、几百毫秒 CPU
+    return PlatformProfile.isTv && w > 1920 ? 1920 : w;
   }
 }
