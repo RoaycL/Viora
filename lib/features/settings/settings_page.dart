@@ -438,6 +438,8 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
           ),
           const SizedBox(height: 16),
           PillButton(icon: Icons.save_rounded, label: '保存更新地址', onPressed: _saveManifest),
+          const SizedBox(height: 40),
+          const _TmdbAttribution(),
         ],
       ),
     ];
@@ -578,6 +580,38 @@ class _InfoLine extends StatelessWidget {
             child: Text(label, style: VText.label.copyWith(color: VColors.textTertiary)),
           ),
           Expanded(child: Text(value, style: VText.label)),
+        ],
+      ),
+    );
+  }
+}
+
+/// TMDB 署名（TMDB API 使用条款要求）
+class _TmdbAttribution extends StatelessWidget {
+  const _TmdbAttribution();
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(24),
+      decoration: BoxDecoration(color: const Color(0x0AFFFFFF), borderRadius: BorderRadius.circular(20)),
+      child: Row(
+        children: [
+          Image.asset('assets/images/tmdb_logo.png', height: 28, filterQuality: FilterQuality.medium),
+          const SizedBox(width: 28),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text('影视元数据、图片与推荐来自 TMDB（themoviedb.org）', style: VText.label.copyWith(fontSize: 20)),
+                const SizedBox(height: 6),
+                Text(
+                  'This product uses the TMDB API but is not endorsed or certified by TMDB.',
+                  style: VText.small.copyWith(color: VColors.textTertiary),
+                ),
+              ],
+            ),
+          ),
         ],
       ),
     );
