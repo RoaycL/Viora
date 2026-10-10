@@ -225,12 +225,9 @@ class _Logo extends StatelessWidget {
     return SizedBox(
       width: 56,
       child: Center(
-        child: ShaderMask(
-          shaderCallback: (rect) => const LinearGradient(colors: [Colors.white, VColors.accent]).createShader(rect),
-          child: const Text(
-            'V',
-            style: TextStyle(fontSize: 30, fontWeight: FontWeight.w800, color: Colors.white),
-          ),
+        child: ClipRRect(
+          borderRadius: BorderRadius.circular(VRadius.sm),
+          child: Image.asset('assets/images/app_icon.png', width: 44, height: 44, filterQuality: FilterQuality.medium),
         ),
       ),
     );
