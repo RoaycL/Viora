@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../../app/platform_profile.dart';
 import '../../app/theme.dart';
+import '../focus/focus_auto_scroll.dart';
 import '../focus/input_mode.dart';
 import '../focus/focusable.dart';
 import '../glass/glass.dart';
@@ -59,38 +60,62 @@ class _ContextMenuPanel extends StatelessWidget {
             children: [
               Text(title, style: VText.h2.copyWith(fontSize: 30), maxLines: 1, overflow: TextOverflow.ellipsis),
               const SizedBox(height: 20),
-              for (var i = 0; i < actions.length; i++) ...[
-                VFocusable(
-                  autofocus: i == 0,
-                  radius: VRadius.md,
-                  scale: 1.02,
-                  showRing: false,
-                  onActivate: () {
-                    Navigator.of(context).pop();
-                    actions[i].onSelected();
-                  },
-                  builder: (context, focused) => AnimatedContainer(
-                    duration: VMotion.focus,
-                    height: 68,
-                    padding: const EdgeInsets.symmetric(horizontal: 20),
-                    decoration: BoxDecoration(
-                      color: focused ? Colors.white : const Color(0x0DFFFFFF),
-                      borderRadius: BorderRadius.circular(VRadius.md),
-                    ),
-                    child: Row(
+              // 项目多（如剧集列表）时可以滚动，焦点移到哪就滚到哪
+              Flexible(
+                child: FocusAutoScroll(
+                  alignment: 0.5,
+                  child: SingleChildScrollView(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
                       children: [
-                        Icon(actions[i].icon, size: 26, color: focused ? const Color(0xFF0B0C10) : Colors.white),
-                        const SizedBox(width: 16),
-                        Text(
-                          actions[i].label,
-                          style: TextStyle(fontSize: 22, color: focused ? const Color(0xFF0B0C10) : Colors.white),
-                        ),
+                        for (var i = 0; i < actions.length; i++) ...[
+                          VFocusable(
+                            autofocus: i == 0,
+                            radius: VRadius.md,
+                            scale: 1.02,
+                            showRing: false,
+                            onActivate: () {
+                              Navigator.of(context).pop();
+                              actions[i].onSelected();
+                            },
+                            builder: (context, focused) => AnimatedContainer(
+                              duration: VMotion.focus,
+                              height: 68,
+                              padding: const EdgeInsets.symmetric(horizontal: 20),
+                              decoration: BoxDecoration(
+                                color: focused ? Colors.white : const Color(0x0DFFFFFF),
+                                borderRadius: BorderRadius.circular(VRadius.md),
+                              ),
+                              child: Row(
+                                children: [
+                                  Icon(
+                                    actions[i].icon,
+                                    size: 26,
+                                    color: focused ? const Color(0xFF0B0C10) : Colors.white,
+                                  ),
+                                  const SizedBox(width: 16),
+                                  Expanded(
+                                    child: Text(
+                                      actions[i].label,
+                                      maxLines: 1,
+                                      overflow: TextOverflow.ellipsis,
+                                      style: TextStyle(
+                                        fontSize: 22,
+                                        color: focused ? const Color(0xFF0B0C10) : Colors.white,
+                                      ),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ),
+                          const SizedBox(height: 10),
+                        ],
                       ],
                     ),
                   ),
                 ),
-                const SizedBox(height: 10),
-              ],
+              ),
             ],
           ),
         ),
@@ -133,7 +158,8 @@ class _PopupLayout extends SingleChildLayoutDelegate {
   final Offset anchor;
 
   @override
-  BoxConstraints getConstraintsForChild(BoxConstraints constraints) => constraints.loosen();
+  BoxConstraints getConstraintsForChild(BoxConstraints constraints) =>
+      constraints.loosen().deflate(const EdgeInsets.all(16));
 
   @override
   Offset getPositionForChild(Size size, Size child) {
@@ -179,33 +205,52 @@ class _PopupMenu extends StatelessWidget {
                   style: VText.small.copyWith(color: VColors.textTertiary),
                 ),
               ),
-            for (var i = 0; i < actions.length; i++)
-              VFocusable(
-                autofocus: i == 0 && !InputMode.pointer,
-                radius: VRadius.sm,
-                scale: 1,
-                showRing: false,
-                onActivate: () {
-                  Navigator.of(context).pop();
-                  actions[i].onSelected();
-                },
-                builder: (context, focused) => AnimatedContainer(
-                  duration: VMotion.focus,
-                  height: 50,
-                  padding: const EdgeInsets.symmetric(horizontal: 14),
-                  decoration: BoxDecoration(
-                    color: focused ? const Color(0x24FFFFFF) : const Color(0x00FFFFFF),
-                    borderRadius: BorderRadius.circular(VRadius.sm),
-                  ),
-                  child: Row(
+            Flexible(
+              child: FocusAutoScroll(
+                alignment: 0.5,
+                child: SingleChildScrollView(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
                     children: [
-                      Icon(actions[i].icon, size: 22, color: Colors.white),
-                      const SizedBox(width: 14),
-                      Text(actions[i].label, style: const TextStyle(fontSize: 20, color: Colors.white)),
+                      for (var i = 0; i < actions.length; i++)
+                        VFocusable(
+                          autofocus: i == 0 && !InputMode.pointer,
+                          radius: VRadius.sm,
+                          scale: 1,
+                          showRing: false,
+                          onActivate: () {
+                            Navigator.of(context).pop();
+                            actions[i].onSelected();
+                          },
+                          builder: (context, focused) => AnimatedContainer(
+                            duration: VMotion.focus,
+                            height: 50,
+                            padding: const EdgeInsets.symmetric(horizontal: 14),
+                            decoration: BoxDecoration(
+                              color: focused ? const Color(0x24FFFFFF) : const Color(0x00FFFFFF),
+                              borderRadius: BorderRadius.circular(VRadius.sm),
+                            ),
+                            child: Row(
+                              children: [
+                                Icon(actions[i].icon, size: 22, color: Colors.white),
+                                const SizedBox(width: 14),
+                                Expanded(
+                                  child: Text(
+                                    actions[i].label,
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: const TextStyle(fontSize: 20, color: Colors.white),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ),
                     ],
                   ),
                 ),
               ),
+            ),
           ],
         ),
       ),

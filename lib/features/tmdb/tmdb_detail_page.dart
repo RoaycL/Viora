@@ -1,9 +1,14 @@
+import '../../ui/widgets/end_of_page.dart';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../app/theme.dart';
 import '../../data/aggregate/tmdb_link.dart';
+import '../../data/config/config_store.dart';
+import '../../data/media/media_models.dart';
+import '../../ui/panels/context_menu.dart';
 import '../../data/tmdb/tmdb_client.dart';
 import '../../ui/focus/row_focus.dart';
 import '../../ui/rows/cards.dart';
@@ -14,7 +19,7 @@ import '../browse/media_cards.dart';
 import 'tmdb_cards.dart';
 
 /// TMDB 作品详情：媒体库里没有的作品（首页推荐、人物作品、相似推荐点进来）。
-/// 媒体库里有时直接跳到媒体库详情，见 [openTmdbTitle]。
+/// 进入后才到各服务器搜索资源（[tmdbLibrarySearchProvider]），找到时可直接播放或选择资源。
 class TmdbDetailPage extends ConsumerWidget {
   const TmdbDetailPage({super.key, required this.isTv, required this.id});
 
@@ -70,7 +75,12 @@ class _TmdbDetail extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final copies = ref.watch(libraryCopiesProvider(linkKeyOf(t)));
+    // 进入详情页才到各服务器搜索资源
+    final search = ref.watch(tmdbLibrarySearchProvider(searchKeyOf(t)));
+    final copies = search.value ?? const <MediaItem>[];
+    final searching = search.isLoading;
+    final servers = ref.watch(configProvider.select((c) => c.servers));
+    String serverName(String id) => servers.where((s) => s.id == id).firstOrNull?.displayName ?? '服务器';
     final meta = [
       t.isTv ? '剧集' : '电影',
       if (t.year != null) '${t.year}',
@@ -116,7 +126,7 @@ class _TmdbDetail extends ConsumerWidget {
         Positioned.fill(
           child: RowFocusScope(
             child: SingleChildScrollView(
-              padding: const EdgeInsets.only(top: 130, bottom: 360),
+              padding: const EdgeInsets.only(top: 130, bottom: 24),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
@@ -165,7 +175,11 @@ class _TmdbDetail extends ConsumerWidget {
                                 const SizedBox(width: 20),
                               ],
                               Text(
-                                copies.isEmpty ? '媒体库暂无资源' : '媒体库有 ${copies.length} 个资源',
+                                searching
+                                    ? '正在各服务器搜索资源…'
+                                    : copies.isEmpty
+                                    ? (servers.isEmpty ? '还没有添加服务器' : '暂未找到资源')
+                                    : '找到 ${copies.length} 个资源 · ${copies.map((c) => serverName(c.serverId)).toSet().join('、')}',
                                 style: TextStyle(
                                   fontSize: 20,
                                   color: copies.isEmpty ? VColors.textTertiary : const Color(0xFF9AF2B8),
@@ -196,27 +210,53 @@ class _TmdbDetail extends ConsumerWidget {
                     padding: const EdgeInsets.symmetric(horizontal: VSpace.safeH),
                     child: FocusButtonRow(
                       rowIndex: 0,
+                      scrollToTop: true,
                       children: [
-                        if (copies.isNotEmpty)
+                        if (copies.isNotEmpty) ...[
                           (node) => PillButton(
                             focusNode: node,
                             large: true,
                             icon: Icons.play_arrow_rounded,
-                            label: '去媒体库播放',
-                            onPressed: () => context.push('/item/${copies.first.serverId}/${copies.first.id}'),
+                            label: t.isTv ? '去选集观看' : '播放',
+                            onPressed: () => playTmdbTitle(context, copies.first),
                           ),
-                        (node) => PillButton(
-                          focusNode: node,
-                          large: copies.isEmpty,
-                          icon: Icons.search_rounded,
-                          label: '在媒体库中搜索',
-                          onPressed: () => context.go('/search?q=${Uri.encodeComponent(t.title)}'),
-                        ),
+                          (node) => PillButton(
+                            focusNode: node,
+                            icon: Icons.video_library_outlined,
+                            label: copies.length > 1 ? '选择资源 · ${copies.length}' : '媒体库详情',
+                            onPressed: () => copies.length == 1
+                                ? context.push('/item/${copies.first.serverId}/${copies.first.id}')
+                                : showContextMenu(
+                                    context,
+                                    title: '选择资源',
+                                    actions: [
+                                      for (final c in copies)
+                                        MenuAction(
+                                          [serverName(c.serverId), c.name, if (c.year != null) '${c.year}'].join(' · '),
+                                          Icons.dns_outlined,
+                                          () => context.push('/item/${c.serverId}/${c.id}'),
+                                        ),
+                                    ],
+                                  ),
+                          ),
+                        ] else
+                          // 没找到资源时也要有一个按钮：遥控器焦点停在这里，页面不会滚到演职员行把标题顶出屏幕；
+                          // 服务器刚恢复在线时可以重新搜一次
+                          (node) => PillButton(
+                            focusNode: node,
+                            large: true,
+                            icon: searching ? Icons.hourglass_top_rounded : Icons.refresh_rounded,
+                            label: searching ? '正在各服务器搜索…' : '暂未找到资源 · 重新搜索',
+                            onPressed: () {
+                              if (!searching) ref.invalidate(tmdbLibrarySearchProvider(searchKeyOf(t)));
+                            },
+                          ),
                       ],
                     ),
                   ),
                   const SizedBox(height: 48),
                   ...tmdbExtraRows(t, firstRow: 1),
+                  const EndOfPage(leading: VSpace.safeH),
                 ],
               ),
             ),

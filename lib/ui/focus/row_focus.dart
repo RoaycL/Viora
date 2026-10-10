@@ -162,7 +162,11 @@ class FocusButtonRow extends StatefulWidget {
     required this.children,
     this.spacing = 18,
     this.autoScroll = true,
+    this.scrollToTop = false,
   });
+
+  /// 获得焦点时把页面滚回最顶部（详情页的第一行按钮：上面的 Logo、标题、简介要完整露出来）
+  final bool scrollToTop;
 
   /// 获得焦点时把按钮行滚到视口约 30% 处；页面顶部的按钮行（如首页引导）不需要
   final bool autoScroll;
@@ -194,7 +198,12 @@ class _FocusButtonRowState extends State<FocusButtonRow> implements FocusRowHand
       node.addListener(() {
         if (node.hasPrimaryFocus) {
           _remembered = i;
-          if (InputMode.shouldAutoScroll && widget.autoScroll) {
+          if (InputMode.shouldAutoScroll && widget.scrollToTop) {
+            final pos = Scrollable.maybeOf(context)?.position;
+            if (pos != null && pos.pixels > 0) {
+              pos.animateTo(0, duration: const Duration(milliseconds: 250), curve: Curves.easeOutCubic);
+            }
+          } else if (InputMode.shouldAutoScroll && widget.autoScroll) {
             Scrollable.ensureVisible(context, alignment: 0.3, duration: const Duration(milliseconds: 250));
           }
         }

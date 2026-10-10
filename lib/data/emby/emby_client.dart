@@ -228,6 +228,11 @@ class EmbyClient {
       'ProductionYear,PremiereDate,ProviderIds,Overview,Genres,CommunityRating,'
       'OfficialRating,DateCreated,ChildCount,UserData,OriginalTitle';
 
+  /// Emby 4.8 起列表接口默认不返回 UserData 里的上次播放时间 / 播放次数，要在 Fields 里明确要求
+  /// （Emby 网页端也是这样请求的）。Jellyfin 默认就返回。
+  String get _userFields =>
+      _server.type == ServerType.emby ? '$_fields,UserDataPlayCount,UserDataLastPlayedDate' : _fields;
+
   /// 聚合索引用的精简字段：不要用户数据（播放进度等），服务器不用逐条查用户状态
   static const indexFields =
       'ProductionYear,PremiereDate,ProviderIds,Overview,Genres,CommunityRating,DateCreated,OriginalTitle';
@@ -275,7 +280,7 @@ class EmbyClient {
         'Limit': '$limit',
         'SortBy': sortBy,
         'SortOrder': sortOrder,
-        'Fields': fields ?? _fields,
+        'Fields': fields ?? _userFields,
         if (!userData) 'EnableUserData': 'false',
         'SearchTerm': ?searchTerm,
         'MinDateLastSaved': ?minDateLastSaved?.toUtc().toIso8601String(),
@@ -291,7 +296,7 @@ class EmbyClient {
     final data = await _request(
       'GET',
       '/Users/${await _userId()}/Items/Latest',
-      query: {'ParentId': ?parentId, 'Limit': '$limit', 'Fields': _fields, ..._imageQuery},
+      query: {'ParentId': ?parentId, 'Limit': '$limit', 'Fields': _userFields, ..._imageQuery},
     );
     return (data as List? ?? const []).cast<Map<String, dynamic>>().map(parseItem).toList();
   }
@@ -300,13 +305,14 @@ class EmbyClient {
     final data = await _request(
       'GET',
       '/Users/${await _userId()}/Items/Resume',
-      query: {'Limit': '$limit', 'MediaTypes': 'Video', 'Fields': _fields, ..._imageQuery},
+      query: {'Limit': '$limit', 'MediaTypes': 'Video', 'Fields': _userFields, ..._imageQuery},
     ) as Map<String, dynamic>;
     return (data['Items'] as List? ?? const []).cast<Map<String, dynamic>>().map(parseItem).toList();
   }
 
   Future<MediaItem> item(String id) async => parseItem(
-    await _request('GET', '/Users/${await _userId()}/Items/$id', query: {'Fields': _fields}) as Map<String, dynamic>,
+    await _request('GET', '/Users/${await _userId()}/Items/$id', query: {'Fields': _userFields})
+        as Map<String, dynamic>,
   );
 
   /// 当前用户的头像（没有头像时服务器返回 404，界面显示首字母）
@@ -359,7 +365,7 @@ class EmbyClient {
     final data = await _request(
       'GET',
       '/Shows/$seriesId/Seasons',
-      query: {'UserId': await _userId(), 'Fields': _fields},
+      query: {'UserId': await _userId(), 'Fields': _userFields},
     ) as Map<String, dynamic>;
     return (data['Items'] as List? ?? const []).cast<Map<String, dynamic>>().map(parseItem).toList();
   }
@@ -368,7 +374,7 @@ class EmbyClient {
     final data = await _request(
       'GET',
       '/Shows/$seriesId/Episodes',
-      query: {'UserId': await _userId(), 'SeasonId': ?seasonId, 'Fields': _fields, ..._imageQuery},
+      query: {'UserId': await _userId(), 'SeasonId': ?seasonId, 'Fields': _userFields, ..._imageQuery},
     ) as Map<String, dynamic>;
     return (data['Items'] as List? ?? const []).cast<Map<String, dynamic>>().map(parseItem).toList();
   }
@@ -378,7 +384,7 @@ class EmbyClient {
     final data = await _request(
       'GET',
       '/Shows/NextUp',
-      query: {'UserId': await _userId(), 'SeriesId': seriesId, 'Fields': _fields},
+      query: {'UserId': await _userId(), 'SeriesId': seriesId, 'Fields': _userFields},
     ) as Map<String, dynamic>;
     final list = (data['Items'] as List? ?? const []).cast<Map<String, dynamic>>();
     return list.isEmpty ? null : parseItem(list.first);

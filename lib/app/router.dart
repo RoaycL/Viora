@@ -16,9 +16,10 @@ import 'shell.dart';
 
 final rootNavigatorKey = GlobalKey<NavigatorState>(debugLabel: 'root');
 
-GoRouter buildRouter() {
+GoRouter buildRouter({List<NavigatorObserver>? observers}) {
   return GoRouter(
     navigatorKey: rootNavigatorKey,
+    observers: observers,
     routes: [
       ShellRoute(
         builder: (context, state, child) => AppShell(location: state.uri.path, child: child),

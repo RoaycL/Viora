@@ -41,6 +41,7 @@ class TmdbImage extends ConsumerWidget {
     this.transparentFallback = false,
     this.color,
     this.fallback,
+    this.errorFallback,
   });
 
   final String? path;
@@ -58,6 +59,9 @@ class TmdbImage extends ConsumerWidget {
 
   /// 自定义的加载中 / 失败占位（例如 Logo 加载不到时显示文字标题）
   final Widget? fallback;
+
+  /// 加载失败时显示（默认同 [fallback]）。Logo 用它：加载中留空，失败才显示文字标题
+  final Widget? errorFallback;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -92,7 +96,7 @@ class TmdbImage extends ConsumerWidget {
                 ),
               ],
             ),
-      errorBuilder: (_, _, _) => fallback,
+      errorBuilder: (_, _, _) => errorFallback ?? fallback,
     );
   }
 }

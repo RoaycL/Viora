@@ -26,43 +26,46 @@ class PageBackdrop extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Stack(
-      fit: StackFit.expand,
-      children: [
-        AnimatedSwitcher(
-          duration: VMotion.backdrop,
-          child: image == null
-              ? ArtView(art, key: ValueKey(art), lightCenter: const Alignment(0.5, -0.4))
-              : Stack(
-                  key: ValueKey(imageKey ?? art),
-                  fit: StackFit.expand,
-                  children: [
-                    ArtView(art, lightCenter: const Alignment(0.5, -0.4)),
-                    image!,
-                  ],
+    // 单独一层：卡片焦点动画、轮播文字变化时不连带重绘整屏背景图（电视 GPU 弱，影响明显）
+    return RepaintBoundary(
+      child: Stack(
+        fit: StackFit.expand,
+        children: [
+          AnimatedSwitcher(
+            duration: VMotion.backdrop,
+            child: image == null
+                ? ArtView(art, key: ValueKey(art), lightCenter: const Alignment(0.5, -0.4))
+                : Stack(
+                    key: ValueKey(imageKey ?? art),
+                    fit: StackFit.expand,
+                    children: [
+                      ArtView(art, lightCenter: const Alignment(0.5, -0.4)),
+                      image!,
+                    ],
+                  ),
+          ),
+          if (dimLeft)
+            const DecoratedBox(
+              decoration: BoxDecoration(
+                gradient: LinearGradient(
+                  // 左侧压暗减轻：背景图延伸到导航栏下方，同时保证 Hero 文字可读
+                  stops: [0, 0.32, 0.65, 1],
+                  colors: [Color(0x9907080B), Color(0x8007080B), Color(0x1F07080B), Color(0x0007080B)],
                 ),
-        ),
-        if (dimLeft)
-          const DecoratedBox(
+              ),
+            ),
+          DecoratedBox(
             decoration: BoxDecoration(
               gradient: LinearGradient(
-                // 左侧压暗减轻：背景图延伸到导航栏下方，同时保证 Hero 文字可读
-                stops: [0, 0.32, 0.65, 1],
-                colors: [Color(0x9907080B), Color(0x8007080B), Color(0x1F07080B), Color(0x0007080B)],
+                begin: Alignment.topCenter,
+                end: Alignment.bottomCenter,
+                stops: [fadeBottomFrom, fadeBottomFrom + 0.26, fadeBottomFrom + 0.42],
+                colors: const [Color(0x0007080B), Color(0xD907080B), VColors.background],
               ),
             ),
           ),
-        DecoratedBox(
-          decoration: BoxDecoration(
-            gradient: LinearGradient(
-              begin: Alignment.topCenter,
-              end: Alignment.bottomCenter,
-              stops: [fadeBottomFrom, fadeBottomFrom + 0.26, fadeBottomFrom + 0.42],
-              colors: const [Color(0x0007080B), Color(0xD907080B), VColors.background],
-            ),
-          ),
-        ),
-      ],
+        ],
+      ),
     );
   }
 }

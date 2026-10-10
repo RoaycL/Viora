@@ -18,11 +18,13 @@ import '../../ui/widgets/form.dart';
 import '../../ui/widgets/toast.dart';
 import '../../player/playback_cache.dart';
 import '../../ui/panels/form_dialog.dart';
+import '../danmaku/danmaku_settings_section.dart';
 import '../segments/segment_settings_section.dart';
+import '../sync/sync_settings_section.dart';
 import '../update/update_controller.dart';
 import '../update/update_dialog.dart';
 
-/// 设置（docs/06-ui-design.md §9）：播放、反向代理（绑定线路）、关于与更新。
+/// 设置（docs/06-ui-design.md §9）：播放、片头片尾、弹幕、元数据、反向代理（绑定线路）、关于与更新。
 class SettingsPage extends ConsumerStatefulWidget {
   const SettingsPage({super.key});
 
@@ -330,6 +332,9 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
       // ───────── 片头片尾 ─────────
       const _Section(title: '片头片尾', children: [SegmentSettingsSection()]),
 
+      // ───────── 弹幕 ─────────
+      const _Section(title: '弹幕', children: [DanmakuSettingsSection()]),
+
       // ───────── 元数据 ─────────
       _Section(
         title: '元数据 · TMDB',
@@ -415,6 +420,9 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
               ],
         ],
       ),
+
+      // ───────── 同步配置 ─────────
+      const _Section(title: '同步配置', children: [SyncSettingsSection()]),
 
       // ───────── 关于与更新 ─────────
       _Section(
@@ -508,8 +516,10 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
 enum _Category {
   playback('播放', Icons.play_circle_outline_rounded),
   segments('片头片尾', Icons.fast_forward_outlined),
+  danmaku('弹幕', Icons.chat_outlined),
   metadata('元数据', Icons.auto_awesome_outlined),
   proxy('反向代理', Icons.shield_outlined),
+  sync('同步配置', Icons.qr_code_2_rounded),
   about('关于与更新', Icons.system_update_alt_rounded);
 
   const _Category(this.label, this.icon);

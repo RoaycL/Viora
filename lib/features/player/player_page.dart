@@ -8,10 +8,14 @@ import 'package:go_router/go_router.dart';
 import '../../app/input/intents.dart';
 import '../../app/platform_profile.dart';
 import '../../app/theme.dart';
+import '../../app/window_frame.dart';
 import '../../data/aggregate/sources.dart';
 import '../../data/config/app_config.dart';
 import '../../data/config/config_store.dart';
+import '../../data/danmaku/danmaku_client.dart';
+import '../../data/danmaku/danmaku_models.dart';
 import '../../data/emby/emby_client.dart';
+import '../../data/history/play_history.dart';
 import '../../data/media/media_models.dart';
 import '../../data/media/server_registry.dart';
 import '../../player/engine.dart';
@@ -24,10 +28,15 @@ import '../../player/segment_skip_controller.dart';
 import '../../domain/models/segment.dart';
 import '../../data/index/media_index.dart';
 import '../segments/segment_service.dart';
+import '../danmaku/danmaku_layer.dart';
+import '../danmaku/danmaku_service.dart';
+import 'mini_player.dart';
+import 'player_osd.dart';
+import '../../ui/widgets/form.dart';
+import '../../ui/panels/form_dialog.dart';
 import '../../ui/glass/glass.dart';
 import '../../ui/scale/design_scale.dart';
 import '../../ui/panels/context_menu.dart';
-import '../../ui/rows/cards.dart';
 import '../../ui/widgets/buttons.dart';
 import '../../ui/widgets/toast.dart';
 import '../browse/media_cards.dart';
@@ -76,9 +85,25 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
   SegmentSkipAction? _skipPrompt;
   List<Segment> _segmentList = const [];
 
+  /// 弹幕（docs/10-danmaku.md）：起播后后台匹配加载，不阻塞播放
+  DanmakuTrack? _danmaku;
+  DanmakuTarget? _danmakuTarget;
+  DanmakuChoice _danmakuChoice = const DanmakuChoice();
+  bool _danmakuVisible = true;
+  bool _danmakuLoading = false;
+  String? _danmakuError;
+
   /// 剧集看到 85% 时预加载的下一集（播完直接跳过去，起播更快）
   MediaItem? _nextEpisode;
   bool _nextPreloading = false;
+
+  /// 控制层底部的面板（播放资源 / 选集）
+  OsdPanel _panel = OsdPanel.none;
+  Future<List<MediaItem>>? _episodes;
+
+  /// 鼠标停在控制栏上（Windows）
+  bool _hoverControls = false;
+  final _playNode = FocusNode(debugLabel: 'osd-play');
 
   /// 累加快进 / 快退（连续按键 0.8 秒后才真正 seek）
   Duration? _pendingSeek;
@@ -213,6 +238,7 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
       _item = await itemFuture;
       if (mounted) setState(() {});
       unawaited(_beginSegments());
+      unawaited(_beginDanmaku());
       ref.read(configProvider.notifier).updateServer(widget.serverId, (s) => s.copyWith(lastAccessAt: DateTime.now()));
     } catch (e) {
       if (mounted) setState(() => _error = e.toString());
@@ -225,6 +251,8 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
     final client = _client, source = _source;
     if (client == null || source == null || _stopped) return;
     final pos = _state.position;
+    // 本机也记一份上次播放时间（部分服务器的继续观看不带 LastPlayedDate）
+    PlayHistory.record(widget.serverId, widget.itemId);
     if (start) {
       client.reportStart(source, pos, _playSessionId);
     } else {
@@ -309,6 +337,220 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
     } catch (e) {
       debugPrint('segments unavailable: $e');
     }
+  }
+
+  // ───────────────────────── 弹幕 ─────────────────────────
+
+  DanmakuClient? get _danmakuClient {
+    final c = ref.read(configProvider).danmaku;
+    return c.activeServers.isEmpty ? null : DanmakuClient(c);
+  }
+
+  /// 起播后自动匹配：记住的手动选择 → 服务器自动匹配 → 按标题搜索
+  Future<void> _beginDanmaku() async {
+    final item = _item;
+    final config = ref.read(configProvider).danmaku;
+    if (item == null || _danmakuTarget != null) return;
+    if (item.kind != MediaKind.movie && item.kind != MediaKind.episode) return;
+    final target = _danmakuTarget = DanmakuTarget.of(item);
+    _danmakuVisible = config.enabled;
+    final choice = await DanmakuChoiceStore.get(target.key);
+    if (choice != null) _danmakuChoice = choice;
+    if (!config.ready) return;
+    await _loadDanmaku(() async => resolveDanmaku(DanmakuClient(config), target, choice: choice));
+  }
+
+  Future<void> _loadDanmaku(Future<DanmakuTrack?> Function() load, {bool announce = false}) async {
+    if (mounted) setState(() => _danmakuLoading = true);
+    try {
+      var track = await load();
+      if (track != null && track.comments.isEmpty) track = null;
+      if (!mounted) return;
+      setState(() {
+        _danmaku = track;
+        _danmakuError = track == null ? '没有匹配到弹幕' : null;
+      });
+      if (track != null && (announce || _danmakuVisible)) {
+        showToast('弹幕：${track.comments.length} 条 · ${track.source}');
+      } else if (track == null && announce) {
+        showToast('没有找到这一集的弹幕');
+      }
+    } catch (e) {
+      debugPrint('danmaku: $e');
+      if (mounted) setState(() => _danmakuError = '$e');
+      if (announce) showToast('加载弹幕失败：$e');
+    } finally {
+      if (mounted) setState(() => _danmakuLoading = false);
+    }
+  }
+
+  void _toggleDanmaku() {
+    if (_danmaku == null && !_danmakuLoading) {
+      _openDanmakuMenu();
+      return;
+    }
+    setState(() => _danmakuVisible = !_danmakuVisible);
+    showToast(_danmakuVisible ? '弹幕：开' : '弹幕：关');
+  }
+
+  Future<void> _setDanmakuShift(int ms) async {
+    final target = _danmakuTarget;
+    setState(() => _danmakuChoice = _danmakuChoice.copyWith(shiftMs: ms));
+    showToast(ms == 0 ? '弹幕时间：不偏移' : '弹幕时间：${ms > 0 ? '延后' : '提前'} ${(ms.abs() / 1000).toStringAsFixed(1)} 秒');
+    if (target != null) await DanmakuChoiceStore.set(target.key, _danmakuChoice);
+  }
+
+  String get _danmakuStatus {
+    if (_danmakuLoading) return '加载中…';
+    if (_danmaku != null) return '${_danmakuVisible ? '开' : '关'} · ${_danmaku!.comments.length} 条';
+    if (ref.read(configProvider).danmaku.activeServers.isEmpty) return '未配置服务器';
+    return _danmakuError == null ? '未加载' : '未匹配';
+  }
+
+  Future<void> _openDanmakuMenu() async {
+    final client = _danmakuClient;
+    final target = _danmakuTarget ?? (_item == null ? null : DanmakuTarget.of(_item!));
+    if (client == null || target == null) {
+      showToast('还没有配置弹幕服务器：设置 → 弹幕');
+      return;
+    }
+    _danmakuTarget ??= target;
+    final shift = _danmakuChoice.shiftMs;
+    await showContextMenu(
+      context,
+      title: _danmaku == null ? '弹幕' : '弹幕 · ${_danmaku!.source}',
+      actions: [
+        if (_danmaku != null)
+          MenuAction(
+            _danmakuVisible ? '隐藏弹幕' : '显示弹幕',
+            _danmakuVisible ? Icons.speaker_notes_off_outlined : Icons.speaker_notes_outlined,
+            _toggleDanmaku,
+          ),
+        MenuAction('搜索「${target.title}」并选择', Icons.manage_search_rounded, () => _searchDanmaku(target.title)),
+        MenuAction('按关键词搜索…', Icons.keyboard_rounded, () => _searchDanmakuByKeyword(target.title)),
+        MenuAction(
+          '时间偏移 · ${shift == 0 ? '无' : '${shift > 0 ? '+' : ''}${(shift / 1000).toStringAsFixed(1)} 秒'}',
+          Icons.schedule_rounded,
+          () => showContextMenu(
+            context,
+            title: '弹幕时间偏移（当前 ${(shift / 1000).toStringAsFixed(1)} 秒）',
+            actions: [
+              for (final d in const [-5000, -1000, -500, 500, 1000, 5000])
+                MenuAction(
+                  '${d > 0 ? '延后' : '提前'} ${(d.abs() / 1000).toStringAsFixed(1)} 秒',
+                  d > 0 ? Icons.fast_forward_rounded : Icons.fast_rewind_rounded,
+                  () => _setDanmakuShift(_danmakuChoice.shiftMs + d),
+                ),
+              MenuAction('重置', Icons.restart_alt_rounded, () => _setDanmakuShift(0)),
+            ],
+          ),
+        ),
+        MenuAction(
+          '重新自动匹配',
+          Icons.refresh_rounded,
+          () => _loadDanmaku(() => resolveDanmaku(client, target, choice: _danmakuChoice), announce: true),
+        ),
+      ],
+    );
+    if (mounted) _focus.requestFocus();
+  }
+
+  Future<void> _searchDanmakuByKeyword(String initial) async {
+    final controller = TextEditingController(text: initial);
+    String? keyword;
+    await showFormDialog(
+      context,
+      title: '搜索弹幕',
+      description: '输入作品名，比如中文名或别名',
+      saveLabel: '搜索',
+      children: [VTextField(label: '关键词', controller: controller, autofocus: true)],
+      onSave: () async {
+        keyword = controller.text.trim();
+        return keyword!.isNotEmpty;
+      },
+    );
+    controller.dispose();
+    if (keyword != null && keyword!.isNotEmpty && mounted) await _searchDanmaku(keyword!);
+    if (mounted) _focus.requestFocus();
+  }
+
+  /// 手动选择：作品列表 → 集列表；选中后记住（同一季后面几集自动用这个作品和集数偏移）
+  Future<void> _searchDanmaku(String keyword) async {
+    final client = _danmakuClient, target = _danmakuTarget;
+    if (client == null || target == null) return;
+    showToast('正在搜索弹幕「$keyword」…');
+    List<DanmakuAnime> animes;
+    try {
+      animes = await client.search(keyword, season: target.season, movie: target.movie);
+    } catch (e) {
+      showToast('搜索弹幕失败：$e');
+      return;
+    }
+    if (!mounted) return;
+    if (animes.isEmpty) {
+      showToast('没有搜到「$keyword」的弹幕');
+      return;
+    }
+    await showContextMenu(
+      context,
+      title: '选择作品 · ${animes.length} 个结果',
+      actions: [
+        for (final a in animes.take(40))
+          MenuAction(
+            '${a.title}${a.episodeCount == null ? '' : ' · ${a.episodeCount} 集'}',
+            Icons.movie_filter_outlined,
+            () => _pickDanmakuEpisode(client, target, a),
+          ),
+      ],
+    );
+    if (mounted) _focus.requestFocus();
+  }
+
+  Future<void> _pickDanmakuEpisode(DanmakuClient client, DanmakuTarget target, DanmakuAnime anime) async {
+    List<DanmakuEpisode> eps;
+    try {
+      eps = await client.episodes(anime);
+    } catch (e) {
+      showToast('获取集列表失败：$e');
+      return;
+    }
+    if (!mounted || eps.isEmpty) {
+      if (eps.isEmpty) showToast('这个作品没有可用的集');
+      return;
+    }
+    final current = target.episode == null ? null : pickEpisode(eps, target.episode! + _danmakuChoice.offset);
+    Future<void> choose(int i) async {
+      final ep = eps[i];
+      final offset = target.episode == null ? 0 : (ep.number ?? i + 1) - target.episode!;
+      _danmakuChoice = DanmakuChoice(
+        server: anime.server,
+        animeId: anime.animeId,
+        animeTitle: anime.title,
+        offset: offset,
+        shiftMs: _danmakuChoice.shiftMs,
+      );
+      await DanmakuChoiceStore.set(target.key, _danmakuChoice);
+      _danmakuVisible = true;
+      await _loadDanmaku(
+        () => client.load(anime.server, ep.episodeId, source: '${anime.title} · ${ep.title}'),
+        announce: true,
+      );
+    }
+
+    if (eps.length == 1) return choose(0);
+    await showContextMenu(
+      context,
+      title: '选择集 · ${anime.title}',
+      actions: [
+        for (var i = 0; i < eps.length; i++)
+          MenuAction(
+            '${eps[i].title}${identical(eps[i], current) ? '  ✓' : ''}',
+            Icons.play_circle_outline_rounded,
+            () => choose(i),
+          ),
+      ],
+    );
+    if (mounted) _focus.requestFocus();
   }
 
   static bool _samePrompt(SegmentSkipAction? a, SegmentSkipAction? b) =>
@@ -406,19 +648,44 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
     _seekTimer?.cancel();
     _segments?.dispose();
     _focus.dispose();
+    _playNode.dispose();
+    // 退出播放时恢复窗口；连播下一集 / 换服务器时保持小窗
+    if (!handoff) MiniPlayerWindow.exit();
     super.dispose();
   }
 
   // ───────────────────────── 操作 ─────────────────────────
 
+  /// 焦点在控制层的按钮上（电视用遥控器移进去的，或 Windows 鼠标悬停）
+  bool get _onControls => !_focus.hasPrimaryFocus && _focus.hasFocus;
+
   void _showOsd({bool sticky = false}) {
     _osdTimer?.cancel();
     if (!_osd && mounted) setState(() => _osd = true);
-    if (!sticky) {
-      _osdTimer = Timer(const Duration(seconds: 5), () {
-        if (mounted && _state.playing) setState(() => _osd = false);
-      });
-    }
+    if (!sticky) _armOsdTimer();
+  }
+
+  void _armOsdTimer() {
+    _osdTimer?.cancel();
+    _osdTimer = Timer(const Duration(seconds: 5), () {
+      if (!mounted) return;
+      // 打开面板、电视焦点在按钮上、鼠标停在控制栏上时不隐藏
+      final busy = _panel != OsdPanel.none || (PlatformProfile.isTv && _onControls) || _hoverControls;
+      if (busy || !_state.playing) {
+        _armOsdTimer();
+        return;
+      }
+      setState(() => _osd = false);
+      if (_onControls) _focus.requestFocus();
+    });
+  }
+
+  /// 电视按 ↓：显示控制层，焦点落在播放 / 暂停按钮上
+  void _focusControls() {
+    _showOsd();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) _playNode.requestFocus();
+    });
   }
 
   void _seekBy(Duration delta) {
@@ -438,29 +705,78 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
     });
   }
 
+  /// 进度条点击 / 拖动（Windows）
+  void _seekTo(Duration to) {
+    _seekTimer?.cancel();
+    setState(() => _pendingSeek = null);
+    _engine?.seek(to);
+    _showOsd();
+    _report();
+  }
+
   void _togglePlay() {
     _engine?.playOrPause();
     _showOsd();
   }
 
-  void _exit() {
+  void _closePanel() {
+    setState(() => _panel = OsdPanel.none);
+    _armOsdTimer();
+    if (PlatformProfile.isTv) _focusControls();
+  }
+
+  /// 返回键：关面板 → 焦点回到画面 → 关媒体信息 → 退出小窗 / 全屏（Windows）→ 隐藏控制层 → 退出播放
+  Future<void> _back() async {
+    if (_panel != OsdPanel.none) {
+      _closePanel();
+      return;
+    }
+    if (PlatformProfile.isTv && _onControls) {
+      _focus.requestFocus();
+      return;
+    }
     if (_info) {
       setState(() => _info = false);
       return;
+    }
+    if (PlatformProfile.isDesktop) {
+      if (MiniPlayerWindow.active.value) return MiniPlayerWindow.exit();
+      if (windowFullScreen.value) return toggleFullScreen();
     }
     if (_osd && _state.playing) {
       setState(() => _osd = false);
       return;
     }
-    context.pop();
+    if (mounted) context.pop();
   }
+
+  static bool _isBack(LogicalKeyboardKey key) =>
+      key == LogicalKeyboardKey.goBack ||
+      key == LogicalKeyboardKey.escape ||
+      key == LogicalKeyboardKey.gameButtonB ||
+      key == LogicalKeyboardKey.backspace;
 
   KeyEventResult _onKey(FocusNode node, KeyEvent event) {
     if (event is KeyUpEvent) return KeyEventResult.ignored;
     final key = event.logicalKey;
-    final step = Duration(seconds: ref.read(configProvider).playback.seekStepSeconds);
     final repeat = event is KeyRepeatEvent;
 
+    if (_isBack(key)) {
+      if (!repeat) _back();
+      return KeyEventResult.handled;
+    }
+    if (_onControls) {
+      if (PlatformProfile.isTv) {
+        // 电视：焦点在按钮 / 面板上时，方向键移动焦点、OK 点击，交给按钮处理
+        _showOsd();
+        return KeyEventResult.ignored;
+      }
+      // Windows：鼠标悬停让按钮拿到了焦点，回车照常点击按钮，其他快捷键仍然作用于播放器
+      if (confirmKeys.contains(key)) return KeyEventResult.ignored;
+      _focus.requestFocus();
+    }
+
+    final step = Duration(seconds: ref.read(configProvider).playback.seekStepSeconds);
     if (key == LogicalKeyboardKey.arrowLeft ||
         key == LogicalKeyboardKey.mediaRewind ||
         key == LogicalKeyboardKey.keyJ) {
@@ -485,27 +801,41 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
       _engine?.pause();
     } else if (key == LogicalKeyboardKey.arrowUp) {
       _showOsd();
-    } else if (key == LogicalKeyboardKey.arrowDown ||
-        key == LogicalKeyboardKey.contextMenu ||
-        key == LogicalKeyboardKey.gameButtonX) {
+    } else if (key == LogicalKeyboardKey.arrowDown) {
+      // 电视：焦点移到底部按钮行；Windows：打开播放设置菜单
+      PlatformProfile.isTv ? _focusControls() : _openMenu();
+    } else if (key == LogicalKeyboardKey.contextMenu || key == LogicalKeyboardKey.gameButtonX) {
       _openMenu();
     } else if (key == LogicalKeyboardKey.keyI || key == LogicalKeyboardKey.info) {
       setState(() => _info = !_info);
+    } else if (key == LogicalKeyboardKey.keyN || key == LogicalKeyboardKey.mediaTrackNext) {
+      _playNext();
+    } else if (key == LogicalKeyboardKey.keyD && PlatformProfile.isDesktop) {
+      // Windows：D 键开关弹幕（电视在控制层 / 菜单里操作）
+      _toggleDanmaku();
+    } else if (key == LogicalKeyboardKey.keyF && PlatformProfile.isDesktop) {
+      toggleFullScreen();
+    } else if (key == LogicalKeyboardKey.keyP && PlatformProfile.isDesktop) {
+      MiniPlayerWindow.toggle();
     } else if (key == LogicalKeyboardKey.keyA) {
       _cycleAudio();
     } else if (key == LogicalKeyboardKey.keyC) {
       _cycleSubtitle();
-    } else if (key == LogicalKeyboardKey.goBack ||
-        key == LogicalKeyboardKey.escape ||
-        key == LogicalKeyboardKey.gameButtonB ||
-        key == LogicalKeyboardKey.backspace) {
-      _exit();
     } else if (key == LogicalKeyboardKey.mediaStop) {
       context.pop();
     } else {
       return KeyEventResult.ignored;
     }
     return KeyEventResult.handled;
+  }
+
+  void _playNext() {
+    final next = _nextEpisode;
+    if (next == null) {
+      if (_item?.kind == MediaKind.episode) showToast('已经是最后一集');
+      return;
+    }
+    _handoffTo('/play/${widget.serverId}/${next.id}?pos=0');
   }
 
   void _cycleAudio() {
@@ -525,64 +855,90 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
     showToast('字幕：${next?.displayName ?? '关闭'}');
   }
 
-  Future<void> _openMenu() async {
+  /// 弹出菜单期间控制层保持显示，关闭后焦点回到原来的位置
+  Future<void> _menu(Future<void> Function() show) async {
+    final restore = FocusManager.instance.primaryFocus;
     _showOsd(sticky: true);
+    await show();
+    if (!mounted) return;
+    (restore != null && restore.context != null && restore.context!.mounted ? restore : _focus).requestFocus();
+    _armOsdTimer();
+  }
+
+  Future<void> _openAudioMenu() => _menu(() {
+    final s = _state;
+    if (s.audioTracks.isEmpty) {
+      showToast('没有可选的音轨');
+      return Future.value();
+    }
+    return showContextMenu(
+      context,
+      title: '音轨',
+      actions: [
+        for (final t in s.audioTracks)
+          MenuAction(
+            '${t.displayName}${t == s.audio ? '  ✓' : ''}',
+            Icons.graphic_eq_rounded,
+            () => _engine?.selectAudio(t),
+          ),
+      ],
+    );
+  });
+
+  Future<void> _openSubtitleMenu() => _menu(() {
+    final s = _state;
+    final external = _source?.subtitles.where((x) => x.isExternal).toList() ?? const <MediaStreamInfo>[];
+    return showContextMenu(
+      context,
+      title: '字幕',
+      actions: [
+        MenuAction(
+          '关闭字幕${s.subtitle == null ? '  ✓' : ''}',
+          Icons.subtitles_off_rounded,
+          () => _engine?.selectSubtitle(null),
+        ),
+        for (final t in s.subtitleTracks)
+          MenuAction(
+            '${t.displayName}${t == s.subtitle ? '  ✓' : ''}',
+            Icons.closed_caption_rounded,
+            () => _engine?.selectSubtitle(t),
+          ),
+        for (final x in external)
+          MenuAction('外挂 · ${x.displayName}', Icons.closed_caption_outlined, () {
+            final req = _client?.subtitle(_source!, x);
+            if (req != null) _engine?.addExternalSubtitle(req.url, title: x.displayName, language: x.language);
+          }),
+      ],
+    );
+  });
+
+  Future<void> _openRateMenu() => _menu(() {
+    final rate = _state.rate;
+    return showContextMenu(
+      context,
+      title: '倍速',
+      actions: [
+        for (final r in const [0.5, 0.75, 1.0, 1.25, 1.5, 2.0, 3.0])
+          MenuAction('${r}x${rate == r ? '  ✓' : ''}', Icons.speed_rounded, () => _engine?.setRate(r)),
+      ],
+    );
+  });
+
+  /// 「更多」：完整的播放设置菜单
+  Future<void> _openMenu() => _menu(() {
     final s = _state;
     final engine = _engine;
-    await showContextMenu(
+    return showContextMenu(
       context,
       title: '播放设置',
       actions: [
-        MenuAction('音轨 · ${s.audioTracks.length} 条', Icons.audiotrack_rounded, () {
-          showContextMenu(
-            context,
-            title: '音轨',
-            actions: [
-              for (final t in s.audioTracks)
-                MenuAction(
-                  '${t.displayName}${t == s.audio ? '  ✓' : ''}',
-                  Icons.graphic_eq_rounded,
-                  () => _engine?.selectAudio(t),
-                ),
-            ],
-          );
-        }),
-        MenuAction('字幕 · ${s.subtitleTracks.length} 条', Icons.subtitles_rounded, () {
-          final external = _source?.subtitles.where((x) => x.isExternal).toList() ?? const <MediaStreamInfo>[];
-          showContextMenu(
-            context,
-            title: '字幕',
-            actions: [
-              MenuAction(
-                '关闭字幕${s.subtitle == null ? '  ✓' : ''}',
-                Icons.subtitles_off_rounded,
-                () => _engine?.selectSubtitle(null),
-              ),
-              for (final t in s.subtitleTracks)
-                MenuAction(
-                  '${t.displayName}${t == s.subtitle ? '  ✓' : ''}',
-                  Icons.closed_caption_rounded,
-                  () => _engine?.selectSubtitle(t),
-                ),
-              for (final x in external)
-                MenuAction('外挂 · ${x.displayName}', Icons.closed_caption_outlined, () {
-                  final req = _client?.subtitle(_source!, x);
-                  if (req != null) _engine?.addExternalSubtitle(req.url, title: x.displayName, language: x.language);
-                }),
-            ],
-          );
-        }),
-        MenuAction('切换资源（所有服务器）', Icons.swap_horiz_rounded, _openSourcesMenu),
-        MenuAction('倍速 · ${s.rate}x', Icons.speed_rounded, () {
-          showContextMenu(
-            context,
-            title: '倍速',
-            actions: [
-              for (final r in const [0.5, 0.75, 1.0, 1.25, 1.5, 2.0])
-                MenuAction('${r}x${s.rate == r ? '  ✓' : ''}', Icons.speed_rounded, () => _engine?.setRate(r)),
-            ],
-          );
-        }),
+        MenuAction('音轨 · ${s.audioTracks.length} 条', Icons.audiotrack_rounded, _openAudioMenu),
+        MenuAction('字幕 · ${s.subtitleTracks.length} 条', Icons.subtitles_rounded, _openSubtitleMenu),
+        MenuAction('弹幕 · $_danmakuStatus', Icons.chat_outlined, _openDanmakuMenu),
+        MenuAction('切换资源（所有服务器）', Icons.swap_horiz_rounded, () => _openPanel(OsdPanel.sources)),
+        if (_item?.kind == MediaKind.episode)
+          MenuAction('选集', Icons.video_library_outlined, () => _openPanel(OsdPanel.episodes)),
+        MenuAction('倍速 · ${s.rate}x', Icons.speed_rounded, _openRateMenu),
         if (ExoEngine.supported && engine != null)
           MenuAction(
             '播放内核 · ${engine.kind.label}（切换到 ${engine.kind == EngineKind.exo ? 'mpv' : 'ExoPlayer'}）',
@@ -592,66 +948,68 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
         MenuAction('媒体信息', Icons.info_outline_rounded, () => setState(() => _info = true)),
       ],
     );
-    if (mounted) _focus.requestFocus();
-    _showOsd();
+  });
+
+  /// 打开「播放资源」/「选集」面板（替换控制层底部的按钮行）
+  void _openPanel(OsdPanel panel) {
+    final item = _item;
+    if (panel == OsdPanel.episodes) {
+      final client = _client;
+      if (item == null || client == null || item.seriesId == null) return;
+      _episodes ??= client.episodes(item.seriesId!, seasonId: item.seasonId);
+    }
+    setState(() => _panel = panel);
+    _showOsd(sticky: true);
   }
 
-  /// 所有服务器上的版本；选其他服务器的版本时换到那台服务器从当前进度继续
-  Future<void> _openSourcesMenu() async {
-    showToast('正在查找各服务器上的资源…');
-    List<SourceOption> options;
-    try {
-      options = await ref.read(sourceOptionsProvider((serverId: widget.serverId, itemId: widget.itemId)).future);
-    } catch (e) {
-      showToast('查找资源失败：$e');
+  /// 切换到另一个版本：同一台服务器同一条目直接换源，其他服务器的版本换到那台服务器从当前进度继续
+  void _switchToOption(SourceOption o) {
+    setState(() => _panel = OsdPanel.none);
+    _armOsdTimer();
+    if (o.serverId == widget.serverId && o.source.id == _source?.id) return;
+    final at = _state.position;
+    if (o.serverId == widget.serverId && o.item.id == widget.itemId) {
+      _reportStopped();
+      _stopped = false;
+      _started = false;
+      _wasPlaying = false;
+      _start(sourceId: o.source.id, at: at);
+      showToast('切换到 ${o.source.resolutionLabel} ${o.source.rangeLabel} · ${o.serverName}');
+    } else {
+      _handoffTo(o.playRoute(position: at));
+    }
+  }
+
+  void _pickEpisode(MediaItem e) {
+    setState(() => _panel = OsdPanel.none);
+    if (e.id == widget.itemId) {
+      _armOsdTimer();
       return;
     }
-    if (!mounted) return;
-    if (options.isEmpty) {
-      showToast('没有其他可用资源');
-      return;
-    }
-    await showContextMenu(
-      context,
-      title: '切换资源 · ${options.length} 个版本',
-      actions: [
-        for (final o in options)
-          MenuAction(
-            '${o.source.resolutionLabel} ${o.source.rangeLabel}'
-            '${o.source.size == null ? '' : ' · ${(o.source.size! / 1073741824).toStringAsFixed(2)} GB'}'
-            ' · ${o.serverName}'
-            '${o.serverId == widget.serverId && o.source.id == _source?.id ? '  ✓' : ''}',
-            Icons.movie_rounded,
-            () {
-              final at = _state.position;
-              if (o.serverId == widget.serverId && o.item.id == widget.itemId) {
-                _reportStopped();
-                _stopped = false;
-                _started = false;
-                _wasPlaying = false;
-                _start(sourceId: o.source.id, at: at);
-              } else {
-                _handoffTo(o.playRoute(position: at));
-              }
-            },
-          ),
-      ],
-    );
-    if (mounted) _focus.requestFocus();
+    _handoffTo('/play/${widget.serverId}/${e.id}?pos=${e.position.inMilliseconds}');
   }
 
   // ───────────────────────── 界面 ─────────────────────────
 
+  String get _title {
+    final item = _item;
+    if (item == null) return '';
+    if (item.kind != MediaKind.episode) return item.year == null ? item.name : '${item.name} (${item.year})';
+    final ep = [
+      if (item.seasonNumber != null && item.seasonNumber! > 1) '第 ${item.seasonNumber} 季',
+      if (item.episodeNumber != null) '第 ${item.episodeNumber} 集',
+    ].join(' ');
+    return [
+      item.seriesName ?? '',
+      ep,
+      if (item.name.isNotEmpty && !item.name.contains('第')) '- ${item.name}',
+    ].where((s) => s.isNotEmpty).join(' ');
+  }
+
   @override
   Widget build(BuildContext context) {
-    final item = _item;
-    final title = item == null
-        ? ''
-        : item.kind == MediaKind.episode
-        ? (item.seriesName ?? item.name)
-        : item.name;
-    final subtitle = item?.kind == MediaKind.episode ? '${item!.episodeLabel ?? ''} · ${item.name}' : null;
     final engine = _engine;
+    final isEpisode = _item?.kind == MediaKind.episode;
 
     return Material(
       color: Colors.black,
@@ -661,14 +1019,34 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
         onKeyEvent: _onKey,
         child: MouseRegion(
           onHover: (_) => _showOsd(),
-          child: GestureDetector(
-            behavior: HitTestBehavior.opaque,
-            onTap: _togglePlay,
-            onDoubleTap: _openMenu,
-            child: Stack(
+          child: ValueListenableBuilder<bool>(
+            valueListenable: MiniPlayerWindow.active,
+            builder: (context, mini, _) => Stack(
               fit: StackFit.expand,
               children: [
                 if (engine != null) KeyedSubtree(key: ObjectKey(engine), child: engine.buildView()),
+                if (engine != null && _danmaku != null && _danmakuVisible && _error == null && !mini)
+                  DanmakuLayer(
+                    comments: _danmaku!.comments,
+                    state: engine.state,
+                    config: ref.watch(configProvider.select((c) => c.danmaku)),
+                    shift: Duration(milliseconds: _danmakuChoice.shiftMs),
+                  ),
+                // 画面：单击暂停 / 播放（打开面板时先关面板）；Windows 双击全屏、右键播放设置
+                Positioned.fill(
+                  child: GestureDetector(
+                    behavior: HitTestBehavior.opaque,
+                    onTap: () {
+                      if (_panel != OsdPanel.none) {
+                        _closePanel();
+                      } else {
+                        _togglePlay();
+                      }
+                    },
+                    onDoubleTap: PlatformProfile.isDesktop && !mini ? toggleFullScreen : null,
+                    onSecondaryTap: mini ? null : _openMenu,
+                  ),
+                ),
                 if (_error != null)
                   _ErrorPanel(
                     message: _error!,
@@ -690,202 +1068,128 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
                 if (engine != null)
                   ValueListenableBuilder<EngineState>(
                     valueListenable: engine.state,
-                    builder: (context, s, _) => Stack(
-                      fit: StackFit.expand,
-                      children: [
-                        if (s.buffering && _error == null)
-                          const Center(
-                            child: SizedBox(
-                              width: 72,
-                              height: 72,
-                              child: CircularProgressIndicator(strokeWidth: 5, color: Colors.white),
-                            ),
-                          ),
-                        if (_pendingSeek != null)
-                          Center(
-                            child: Glass(
-                              radius: VRadius.panel,
-                              padding: const EdgeInsets.symmetric(horizontal: 36, vertical: 20),
-                              child: Text(formatClock(_pendingSeek!), style: VText.h2.copyWith(fontSize: 44)),
-                            ),
-                          ),
-                        IgnorePointer(
-                          ignoring: !_osd,
-                          child: AnimatedOpacity(
-                            opacity: _osd ? 1 : 0,
-                            duration: VMotion.scroll,
-                            child: _Osd(
-                              state: s,
-                              title: title,
-                              subtitle: subtitle,
-                              source: _source,
-                              pendingSeek: _pendingSeek,
-                              onMenu: _openMenu,
-                              onBack: () => context.pop(),
-                            ),
-                          ),
-                        ),
-                        // 跳过按钮：不随 OSD 隐藏；OSD 显示时让出进度条的位置
-                        AnimatedPositioned(
-                          duration: VMotion.scroll,
-                          curve: Curves.easeOutCubic,
-                          right: VSpace.safeH,
-                          bottom: _osd ? 230 : 110,
-                          child: AnimatedSwitcher(
-                            duration: VMotion.focus,
-                            child: _skipPrompt == null
-                                ? const SizedBox.shrink()
-                                : _SkipButton(
-                                    key: ValueKey('${_skipPrompt!.segment.type}${_skipPrompt!.segment.start}'),
-                                    action: _skipPrompt!,
-                                    onPressed: _activateSkip,
+                    builder: (context, s, _) => mini
+                        ? MiniPlayerOverlay(
+                            state: s,
+                            title: _title,
+                            onPlayPause: _togglePlay,
+                            onClose: () => context.pop(),
+                          )
+                        : Stack(
+                            fit: StackFit.expand,
+                            children: [
+                              if (s.buffering && _error == null)
+                                const IgnorePointer(
+                                  child: Center(
+                                    child: SizedBox(
+                                      width: 72,
+                                      height: 72,
+                                      child: CircularProgressIndicator(strokeWidth: 5, color: Colors.white),
+                                    ),
                                   ),
+                                ),
+                              if (_pendingSeek != null)
+                                IgnorePointer(
+                                  child: Center(
+                                    child: Glass(
+                                      radius: VRadius.panel,
+                                      padding: const EdgeInsets.symmetric(horizontal: 36, vertical: 20),
+                                      child: Text(formatClock(_pendingSeek!), style: VText.h2.copyWith(fontSize: 44)),
+                                    ),
+                                  ),
+                                ),
+                              // 控制层隐藏时不能拿焦点（遥控器焦点回到画面上）
+                              ExcludeFocus(
+                                excluding: !_osd,
+                                child: IgnorePointer(
+                                  ignoring: !_osd,
+                                  child: AnimatedOpacity(
+                                    opacity: _osd ? 1 : 0,
+                                    duration: VMotion.scroll,
+                                    child: FocusTraversalGroup(
+                                      child: PlayerOsd(
+                                        state: s,
+                                        title: _title,
+                                        source: _source,
+                                        pendingSeek: _pendingSeek,
+                                        segments: _segmentList,
+                                        danmakuOn: _danmaku != null && _danmakuVisible,
+                                        isEpisode: isEpisode,
+                                        hasNext: _nextEpisode != null,
+                                        panel: _panel,
+                                        panelChild: switch (_panel) {
+                                          OsdPanel.sources => SourcesPanel(
+                                            serverId: widget.serverId,
+                                            itemId: widget.itemId,
+                                            currentSourceId: _source?.id,
+                                            onPick: _switchToOption,
+                                          ),
+                                          OsdPanel.episodes when _episodes != null => EpisodesPanel(
+                                            episodes: _episodes!,
+                                            currentId: widget.itemId,
+                                            onPick: _pickEpisode,
+                                          ),
+                                          _ => null,
+                                        },
+                                        playNode: _playNode,
+                                        onBack: () => context.pop(),
+                                        onPlayPause: _togglePlay,
+                                        onNext: _playNext,
+                                        onSeek: _seekTo,
+                                        onDanmaku: _toggleDanmaku,
+                                        onDanmakuMenu: _openDanmakuMenu,
+                                        onAudio: _openAudioMenu,
+                                        onSubtitle: _openSubtitleMenu,
+                                        onMore: _openMenu,
+                                        onSources: () => _openPanel(OsdPanel.sources),
+                                        onEpisodes: () => _openPanel(OsdPanel.episodes),
+                                        onRate: _openRateMenu,
+                                        onHoverControls: (v) => _hoverControls = v,
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                              ),
+                              // 跳过按钮：不随控制层隐藏；控制层显示时让出底部的位置
+                              AnimatedPositioned(
+                                duration: VMotion.scroll,
+                                curve: Curves.easeOutCubic,
+                                right: VSpace.safeH,
+                                bottom: _osd ? (_panel == OsdPanel.none ? 250 : 420) : 110,
+                                child: AnimatedSwitcher(
+                                  duration: VMotion.focus,
+                                  child: _skipPrompt == null
+                                      ? const SizedBox.shrink()
+                                      : _SkipButton(
+                                          key: ValueKey('${_skipPrompt!.segment.type}${_skipPrompt!.segment.start}'),
+                                          action: _skipPrompt!,
+                                          onPressed: _activateSkip,
+                                        ),
+                                ),
+                              ),
+                              if (_info)
+                                Positioned(
+                                  right: VSpace.safeH,
+                                  top: 150,
+                                  child: _InfoPanel(
+                                    state: s,
+                                    engine: engine.kind,
+                                    source: _source,
+                                    request: _request,
+                                    segments: _segmentList,
+                                    danmaku: _danmaku == null
+                                        ? (_danmakuError ?? (_danmakuLoading ? '加载中…' : null))
+                                        : '${_danmaku!.comments.length} 条 · ${_danmaku!.source}',
+                                  ),
+                                ),
+                            ],
                           ),
-                        ),
-                        if (_info)
-                          Positioned(
-                            right: VSpace.safeH,
-                            top: 150,
-                            child: _InfoPanel(
-                              state: s,
-                              engine: engine.kind,
-                              source: _source,
-                              request: _request,
-                              segments: _segmentList,
-                            ),
-                          ),
-                      ],
-                    ),
                   ),
               ],
             ),
           ),
         ),
       ),
-    );
-  }
-}
-
-class _Osd extends StatelessWidget {
-  const _Osd({
-    required this.state,
-    required this.title,
-    required this.subtitle,
-    required this.source,
-    required this.pendingSeek,
-    required this.onMenu,
-    required this.onBack,
-  });
-
-  final VoidCallback onBack;
-  final EngineState state;
-  final String title;
-  final String? subtitle;
-  final MediaSourceInfo? source;
-  final Duration? pendingSeek;
-  final VoidCallback onMenu;
-
-  @override
-  Widget build(BuildContext context) {
-    final pos = pendingSeek ?? state.position;
-    final dur = state.duration;
-    final hdr = state.video.hdr ?? source?.rangeLabel;
-    return Stack(
-      fit: StackFit.expand,
-      children: [
-        const DecoratedBox(
-          decoration: BoxDecoration(
-            gradient: LinearGradient(
-              begin: Alignment.topCenter,
-              end: Alignment.bottomCenter,
-              stops: [0, 0.22, 0.6, 1],
-              colors: [Color(0xBF000000), Color(0x00000000), Color(0x00000000), Color(0xD9000000)],
-            ),
-          ),
-        ),
-        Positioned(
-          left: VSpace.safeH,
-          right: VSpace.safeH,
-          top: VSpace.safeV,
-          child: Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              // Windows 用鼠标时需要可点击的返回按钮；TV 用遥控器返回键
-              if (PlatformProfile.isDesktop) ...[
-                CircleIconButton(icon: Icons.arrow_back_rounded, tooltip: '返回', onPressed: onBack),
-                const SizedBox(width: 24),
-              ],
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(title, style: const TextStyle(fontSize: 36, fontWeight: FontWeight.w700)),
-                    if (subtitle != null) Text(subtitle!, style: VText.label.copyWith(color: VColors.textSecondary)),
-                  ],
-                ),
-              ),
-              if (source != null)
-                Glass(
-                  radius: 999,
-                  blur: 24,
-                  padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 10),
-                  child: Text(
-                    '${source!.resolutionLabel} ${hdr ?? ''} · ${source!.container.split(',').first.toUpperCase()}',
-                    style: VText.small.copyWith(color: VColors.rating),
-                  ),
-                ),
-            ],
-          ),
-        ),
-        Positioned(
-          left: VSpace.safeH,
-          right: VSpace.safeH,
-          bottom: VSpace.safeV,
-          child: Glass(
-            radius: VRadius.panel,
-            blur: 36,
-            fill: const Color(0x6B14161E),
-            padding: const EdgeInsets.fromLTRB(36, 28, 36, 26),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Row(
-                  children: [
-                    SizedBox(width: 110, child: Text(formatClock(pos), style: VText.label)),
-                    Expanded(
-                      child: ProgressLine(
-                        dur.inMilliseconds == 0 ? 0 : pos.inMilliseconds / dur.inMilliseconds,
-                        height: 10,
-                      ),
-                    ),
-                    SizedBox(
-                      width: 110,
-                      child: Text(
-                        formatClock(dur),
-                        textAlign: TextAlign.right,
-                        style: VText.label.copyWith(color: VColors.textSecondary),
-                      ),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 20),
-                Row(
-                  children: [
-                    Icon(state.playing ? Icons.pause_rounded : Icons.play_arrow_rounded, size: 40),
-                    const SizedBox(width: 20),
-                    Text(
-                      'OK 暂停/播放 · ←→ 快退/快进 · ↓ 或菜单键 音轨/字幕/资源 · 返回 退出',
-                      style: VText.small.copyWith(color: VColors.textTertiary),
-                    ),
-                    const Spacer(),
-                    PillButton(label: '音轨 / 字幕', icon: Icons.tune_rounded, onPressed: onMenu),
-                  ],
-                ),
-              ],
-            ),
-          ),
-        ),
-      ],
     );
   }
 }
@@ -898,9 +1202,11 @@ class _InfoPanel extends StatelessWidget {
     required this.source,
     required this.request,
     this.segments = const [],
+    this.danmaku,
   });
 
   final List<Segment> segments;
+  final String? danmaku;
 
   final EngineState state;
   final EngineKind engine;
@@ -921,6 +1227,7 @@ class _InfoPanel extends StatelessWidget {
       if (source?.bitrate != null) ('码率', '${(source!.bitrate! / 1000000).toStringAsFixed(2)} Mbps'),
       ('缓冲', '${(state.buffered - state.position).inSeconds} 秒'),
       if (request != null) ('播放 UA', request!.userAgent),
+      if (danmaku != null) ('弹幕', danmaku!),
       for (final seg in segments)
         (
           segmentTypeName(seg.type),

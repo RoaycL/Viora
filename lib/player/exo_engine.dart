@@ -70,6 +70,7 @@ class ExoEngine extends PlayerEngine {
             position: _ms(e['position']),
             duration: e['duration'] == null ? s.duration : _ms(e['duration']),
             buffered: _ms(e['buffered']),
+            speed: (e['speed'] as num?)?.toInt(),
           ),
         );
       case 'state':
