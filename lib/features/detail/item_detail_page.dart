@@ -222,20 +222,38 @@ class _ItemDetailPageState extends ConsumerState<ItemDetailPage> {
                           ],
                           const SizedBox(height: 22),
                           Text(meta, style: const TextStyle(fontSize: 22, color: Color(0xD1FFFFFF))),
-                          if (item.rating != null && item.rating! > 0) ...[
+                          if ((item.rating ?? 0) > 0 || (item.criticRating ?? 0) > 0) ...[
                             const SizedBox(height: 14),
                             Row(
                               children: [
-                                const Icon(Icons.star_rounded, color: VColors.rating, size: 26),
-                                const SizedBox(width: 6),
-                                Text(
-                                  item.rating!.toStringAsFixed(1),
-                                  style: const TextStyle(
-                                    fontSize: 24,
-                                    fontWeight: FontWeight.w600,
-                                    color: VColors.rating,
+                                if ((item.rating ?? 0) > 0) ...[
+                                  const Icon(Icons.star_rounded, color: VColors.rating, size: 26),
+                                  const SizedBox(width: 6),
+                                  Text(
+                                    item.rating!.toStringAsFixed(1),
+                                    style: const TextStyle(
+                                      fontSize: 24,
+                                      fontWeight: FontWeight.w600,
+                                      color: VColors.rating,
+                                    ),
                                   ),
-                                ),
+                                  const SizedBox(width: 28),
+                                ],
+                                // 烂番茄新鲜度：≥ 60% 新鲜（红番茄），否则烂番茄（绿）
+                                if ((item.criticRating ?? 0) > 0) ...[
+                                  Text(item.criticRating! >= 60 ? '🍅' : '🤢', style: const TextStyle(fontSize: 22)),
+                                  const SizedBox(width: 6),
+                                  Text(
+                                    '烂番茄 ${item.criticRating!.round()}%',
+                                    style: TextStyle(
+                                      fontSize: 22,
+                                      fontWeight: FontWeight.w600,
+                                      color: item.criticRating! >= 60
+                                          ? const Color(0xFFFF6B5B)
+                                          : const Color(0xFF8BC34A),
+                                    ),
+                                  ),
+                                ],
                               ],
                             ),
                           ],

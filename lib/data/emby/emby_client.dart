@@ -249,7 +249,7 @@ class EmbyClient {
   // 不请求 RecursiveItemCount / PrimaryImageAspectRatio：Emby 要为每部剧递归统计、读取图片尺寸，列表一长 NAS 负载很高
   static const _fields =
       'ProductionYear,PremiereDate,ProviderIds,Overview,Genres,CommunityRating,'
-      'OfficialRating,DateCreated,ChildCount,UserData,OriginalTitle';
+      'OfficialRating,DateCreated,ChildCount,UserData,OriginalTitle,CriticRating';
 
   /// Emby 4.8 起列表接口默认不返回 UserData 里的上次播放时间 / 播放次数，要在 Fields 里明确要求
   /// （Emby 网页端也是这样请求的）。Jellyfin 默认就返回。
@@ -630,6 +630,7 @@ class EmbyClient {
       premiereDate: premiere,
       rating: (j['CommunityRating'] as num?)?.toDouble(),
       officialRating: j['OfficialRating'] as String?,
+      criticRating: (j['CriticRating'] as num?)?.toDouble(),
       genres: [for (final g in (j['Genres'] as List?)?.cast<String>() ?? const <String>[]) translateGenre(g)],
       runtime: j['RunTimeTicks'] == null ? null : ticksToDuration(j['RunTimeTicks'] as num),
       tmdbId: (providers['Tmdb'] ?? providers['tmdb'])?.toString(),

@@ -61,6 +61,7 @@ class MediaItem {
     this.premiereDate,
     this.rating,
     this.officialRating,
+    this.criticRating,
     this.genres = const [],
     this.runtime,
     this.tmdbId,
@@ -94,6 +95,9 @@ class MediaItem {
   final DateTime? premiereDate;
   final double? rating;
   final String? officialRating;
+
+  /// 影评人评分（烂番茄新鲜度 0–100，媒体服务器的元数据提供）
+  final double? criticRating;
   final List<String> genres;
   final Duration? runtime;
   final String? tmdbId;
