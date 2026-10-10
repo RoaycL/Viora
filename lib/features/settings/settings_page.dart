@@ -1,4 +1,5 @@
 import 'package:dio/dio.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -209,6 +210,41 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
                         );
                   },
                 ),
+                if (defaultTargetPlatform == TargetPlatform.android) ...[
+                  const SizedBox(height: 24),
+                  VChoice<EnginePreference>(
+                    label: '播放内核（Android）',
+                    options: const [
+                      (EnginePreference.auto, '自动（ExoPlayer，失败换 mpv）'),
+                      (EnginePreference.exo, 'ExoPlayer'),
+                      (EnginePreference.mpv, 'mpv'),
+                    ],
+                    value: config.playback.engine,
+                    onChanged: (v) => ref
+                        .read(configProvider.notifier)
+                        .update((c) => c.copyWith(playback: c.playback.copyWith(engine: v))),
+                  ),
+                  const SizedBox(height: 16),
+                  VToggle(
+                    label: '自动帧率切换',
+                    subtitle: '按片源帧率切换电视刷新率（如 23.976 / 24 / 25Hz），避免画面卡顿',
+                    value: config.playback.autoFrameRate,
+                    width: 1000,
+                    onChanged: (v) => ref
+                        .read(configProvider.notifier)
+                        .update((c) => c.copyWith(playback: c.playback.copyWith(autoFrameRate: v))),
+                  ),
+                  const SizedBox(height: 12),
+                  VToggle(
+                    label: '隧道播放',
+                    subtitle: 'ExoPlayer 专用，部分电视盒子音画同步更好；出现黑屏或卡顿时请关闭',
+                    value: config.playback.tunneling,
+                    width: 1000,
+                    onChanged: (v) => ref
+                        .read(configProvider.notifier)
+                        .update((c) => c.copyWith(playback: c.playback.copyWith(tunneling: v))),
+                  ),
+                ],
                 const SizedBox(height: 24),
                 PillButton(icon: Icons.save_rounded, label: '保存播放设置', onPressed: _savePlayback),
               ],

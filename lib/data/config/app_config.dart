@@ -190,6 +190,16 @@ class ProxyConfig {
       ProxyConfig(baseUrl: j['baseUrl'] as String? ?? '', scope: ProxyScope.parse(j['scope'] as String?));
 }
 
+/// Android 播放内核偏好
+enum EnginePreference {
+  /// ExoPlayer，失败时自动换 mpv
+  auto,
+  exo,
+  mpv;
+
+  static EnginePreference parse(String? s) => values.firstWhere((e) => e.name == s, orElse: () => auto);
+}
+
 class PlaybackConfig {
   const PlaybackConfig({
     this.userAgent = '',
@@ -197,7 +207,19 @@ class PlaybackConfig {
     this.clientName = 'Viora',
     this.deviceName = '',
     this.seekStepSeconds = 10,
+    this.engine = EnginePreference.auto,
+    this.autoFrameRate = true,
+    this.tunneling = false,
   });
+
+  /// Android 播放内核（Windows 固定 mpv）
+  final EnginePreference engine;
+
+  /// 按片源帧率切换电视刷新率
+  final bool autoFrameRate;
+
+  /// 隧道播放
+  final bool tunneling;
 
   /// 全局播放 UA；空 = 使用默认 UA
   final String userAgent;
@@ -219,12 +241,18 @@ class PlaybackConfig {
     String? clientName,
     String? deviceName,
     int? seekStepSeconds,
+    EnginePreference? engine,
+    bool? autoFrameRate,
+    bool? tunneling,
   }) => PlaybackConfig(
     userAgent: userAgent ?? this.userAgent,
     uaForApi: uaForApi ?? this.uaForApi,
     clientName: clientName ?? this.clientName,
     deviceName: deviceName ?? this.deviceName,
     seekStepSeconds: seekStepSeconds ?? this.seekStepSeconds,
+    engine: engine ?? this.engine,
+    autoFrameRate: autoFrameRate ?? this.autoFrameRate,
+    tunneling: tunneling ?? this.tunneling,
   );
 
   Map<String, dynamic> toJson() => {
@@ -233,6 +261,9 @@ class PlaybackConfig {
     'clientName': clientName,
     'deviceName': deviceName,
     'seekStepSeconds': seekStepSeconds,
+    'engine': engine.name,
+    'autoFrameRate': autoFrameRate,
+    'tunneling': tunneling,
   };
 
   factory PlaybackConfig.fromJson(Map<String, dynamic> j) => PlaybackConfig(
@@ -241,6 +272,9 @@ class PlaybackConfig {
     clientName: (j['clientName'] as String?)?.trim().isNotEmpty == true ? j['clientName'] as String : 'Viora',
     deviceName: j['deviceName'] as String? ?? '',
     seekStepSeconds: j['seekStepSeconds'] as int? ?? 10,
+    engine: EnginePreference.parse(j['engine'] as String?),
+    autoFrameRate: j['autoFrameRate'] as bool? ?? true,
+    tunneling: j['tunneling'] as bool? ?? false,
   );
 }
 

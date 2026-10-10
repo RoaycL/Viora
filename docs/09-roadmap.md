@@ -6,7 +6,7 @@
 | --- | --- | --- |
 | M0 工程骨架 | Flutter 工程（Windows + Android TV）、主题与 1920 缩放、TV 组件库（焦点卡片 / 行 / 导航栏 / 面板）、输入意图映射 | ✅ 已完成：可用遥控器和键鼠浏览的假数据首页、资源库、详情首屏 |
 | M1 Emby 打通 | 网络拦截器链（线路 / 代理 / UA / 鉴权）、Emby 适配器、资源库页、媒体库网格、mpv 播放、进度上报 | ✅ v0.2.0：Emby / Jellyfin 登录、多线路测速与自动切换、反向代理改写、自定义 UA、资源库 → 媒体库 → 详情 → 播放、进度上报；Windows 与 Android 均先用 mpv 播放 |
-| M2 Android TV 播放 | `viora_exoplayer` 插件、PlayerEngine 双实现、HDR / 音频直通 / 自动帧率、播放器 OSD 与面板 | TV 上流畅播放 4K HDR |
+| M2 Android TV 播放 | `viora_exoplayer` 插件、PlayerEngine 双实现、HDR / 音频直通 / 自动帧率、播放器 OSD 与面板 | 🚧 v0.3.0：ExoPlayer 内核、HDR / 音频直通、自动帧率、隧道播放、失败自动回退 mpv、媒体信息叠加层（待真机验证） |
 | M3 聚合 | 聚合索引同步、作品匹配、详情页播放资源面板、多版本选择与播放中切换、聚合搜索 | 多台服务器合并成一个片库 |
 | M4 TMDB 首页 | TMDB 客户端与缓存、首页全部推荐行、动态背景、人物页、平台/公司/分类页 | 与 Rex 对齐的首页与详情页 |
 | M5 片头片尾 | SegmentResolver、服务器 Provider（Emby/Jellyfin/Plex）、第三方 Provider、跳过按钮与自动下一集、手动标记 | 完整的跳过体验 |

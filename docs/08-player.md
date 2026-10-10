@@ -7,6 +7,22 @@
 | Windows | mpv（`media_kit`） | — | — |
 | Android TV | ExoPlayer（Media3） | mpv | ① 用户在设置中改默认；② 按资源手动"用 mpv 播放"；③ ExoPlayer 起播失败（不支持的编码/封装）自动回退一次；④ 资源含 ASS 特效字幕且用户开启"ASS 优先 mpv" |
 
+## 1.1 实现（M2）
+
+| 部分 | 位置 |
+| --- | --- |
+| 内核接口 `PlayerEngine` / `EngineState` / `EngineTrack` | `lib/player/engine.dart` |
+| mpv 内核 | `lib/player/mpv_engine.dart`（media_kit） |
+| ExoPlayer 内核（Dart 侧） | `lib/player/exo_engine.dart`：MethodChannel `viora/exo`、EventChannel `viora/exo/events`、PlatformView `viora/exo-view`（Hybrid Composition） |
+| ExoPlayer 内核（原生） | `android/app/src/main/kotlin/com/viora/viora/exo/`：`ExoController`（播放器、轨道、事件）、`ExoPlugin`（通道、PlayerView、自动帧率） |
+
+- **画面**：PlayerView 使用 SurfaceView，以 Hybrid Composition 嵌入 Flutter，SurfaceView 直接参与系统合成，HDR10 / HLG / 杜比视界可直通到电视；Flutter 的 OSD 叠在上面。PlayerView 设置为不可聚焦，遥控器按键始终由 Flutter 处理。
+- **网络**：`DefaultHttpDataSource` 设置播放 UA、请求头，允许跨协议重定向（https → http 的网盘直链）。
+- **音频直通**：由 ExoPlayer 根据 HDMI 能力（AudioCapabilities）自动选择 AC3 / EAC3 / DTS / TrueHD 直通。
+- **自动帧率**：拿到视频帧率后，在同分辨率的显示模式里选刷新率等于帧率（或整数倍）的一项，设置 `preferredDisplayModeId`；退出播放恢复。开启时关闭 ExoPlayer 自带的 `Surface.setFrameRate`，避免冲突。
+- **回退**：ExoPlayer 报解析 / 解码 / 音频输出类错误（错误码 3xxx、4xxx、5xxx），或所有音轨 / 视频轨都不被设备支持（否则会静音或黑屏继续播）时，"自动"模式下换 mpv 从当前位置重试一次。网络错误不回退。
+- **语言偏好**：音轨优先 zh / chi / zho / cmn / yue，字幕优先中文。
+
 ## 2. PlayerEngine 接口
 
 ```dart
