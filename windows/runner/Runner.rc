@@ -89,13 +89,13 @@ BEGIN
     BEGIN
         BLOCK "040904e4"
         BEGIN
-            VALUE "CompanyName", "com.viora" "\0"
-            VALUE "FileDescription", "viora" "\0"
+            VALUE "CompanyName", "Viora" "\0"
+            VALUE "FileDescription", "Viora" "\0"
             VALUE "FileVersion", VERSION_AS_STRING "\0"
-            VALUE "InternalName", "viora" "\0"
-            VALUE "LegalCopyright", "Copyright (C) 2026 com.viora. All rights reserved." "\0"
-            VALUE "OriginalFilename", "viora.exe" "\0"
-            VALUE "ProductName", "viora" "\0"
+            VALUE "InternalName", "Viora" "\0"
+            VALUE "LegalCopyright", "Copyright (C) 2026 Viora" "\0"
+            VALUE "OriginalFilename", "Viora.exe" "\0"
+            VALUE "ProductName", "Viora" "\0"
             VALUE "ProductVersion", VERSION_AS_STRING "\0"
         END
     END

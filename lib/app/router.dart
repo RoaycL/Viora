@@ -5,6 +5,7 @@ import '../features/common/placeholder_page.dart';
 import '../features/detail/detail_page.dart';
 import '../features/home/home_page.dart';
 import '../features/library/library_page.dart';
+import '../features/settings/settings_page.dart';
 import 'shell.dart';
 
 final rootNavigatorKey = GlobalKey<NavigatorState>(debugLabel: 'root');
@@ -31,14 +32,7 @@ GoRouter buildRouter() {
             '/history',
             const PlaceholderPage(title: '观看记录', milestone: 'M3', description: '本地统一观看记录（按 TMDB ID 聚合），与各服务器进度同步。'),
           ),
-          _tab(
-            '/settings',
-            const PlaceholderPage(
-              title: '设置',
-              milestone: 'M1 / M8',
-              description: '服务器与线路、反向代理（绑定线路）、播放 UA、片头片尾、字幕、元数据、界面。',
-            ),
-          ),
+          _tab('/settings', const SettingsPage()),
         ],
       ),
       GoRoute(

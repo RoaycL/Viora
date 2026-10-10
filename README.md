@@ -40,3 +40,13 @@ flutter analyze
 | `test/` | 遥控器操作的 Widget 测试（行记忆、导航栏进出、返回键、页面跳转） |
 
 操作：方向键移动；OK / Enter 确认，长按 OK 或菜单键 / 右键打开菜单；返回 / Esc 后退；鼠标悬停即聚焦。
+
+## 测试包与更新
+
+- 推送到 `main` 或 `claude/**` 分支时，GitHub Actions（`.github/workflows/release.yml`）会构建 APK 和 Windows 安装包。
+- **发布新测试版**：把 `pubspec.yaml` 的 `version` 改大（如 `0.1.0+1` → `0.1.1+2`）后推送，CI 会自动创建预发布 Release `v0.1.1`。
+- 应用内更新：启动 3 秒后静默检查，或在「设置 → 关于与更新」手动检查。
+  - 更新源默认是本仓库的 GitHub Releases，**仓库需要公开**客户端才能访问；仓库保持私有时可改用自建 `latest.json` 地址（每个 Release 都附带一份）。
+  - Windows：下载安装包后静默覆盖安装，完成后自动重新打开。
+  - Android：下载 APK 后拉起系统安装界面；首次需要允许 Viora「安装未知应用」。
+- Android 测试包用仓库内的测试证书 `android/keystore/viora-test.jks` 签名（保证每次更新签名一致）。正式发布前应换成私有证书，通过 CI 环境变量 `VIORA_KEYSTORE_PATH` 等注入。

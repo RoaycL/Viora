@@ -2,7 +2,11 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
+
+import '../features/update/update_controller.dart';
+import '../features/update/update_dialog.dart';
 
 import '../ui/scale/design_scale.dart';
 import '../ui/widgets/toast.dart';
@@ -12,16 +16,41 @@ import 'router.dart';
 import 'shell.dart';
 import 'theme.dart';
 
-class VioraApp extends StatefulWidget {
+/// 测试环境中关闭启动时的自动检查更新。
+bool autoCheckUpdatesOnLaunch = true;
+
+class VioraApp extends ConsumerStatefulWidget {
   const VioraApp({super.key});
 
   @override
-  State<VioraApp> createState() => _VioraAppState();
+  ConsumerState<VioraApp> createState() => _VioraAppState();
 }
 
-class _VioraAppState extends State<VioraApp> {
+class _VioraAppState extends ConsumerState<VioraApp> {
   late final GoRouter _router = buildRouter();
   DateTime? _lastBackOnHome;
+
+  @override
+  void initState() {
+    super.initState();
+    _autoCheckUpdate();
+  }
+
+  /// 启动后稍等片刻再静默检查更新，有新版本时弹窗。
+  Future<void> _autoCheckUpdate() async {
+    if (!autoCheckUpdatesOnLaunch) return;
+    final controller = ref.read(updateControllerProvider.notifier);
+    try {
+      await controller.loadSettings();
+    } catch (_) {
+      // 设置读取失败时按默认值（自动检查）处理
+    }
+    if (!controller.settings.autoCheck) return;
+    await Future<void>.delayed(const Duration(seconds: 3));
+    final info = await controller.check(silent: true);
+    final context = rootNavigatorKey.currentContext;
+    if (info != null && context != null && context.mounted) await showUpdateDialog(context, info);
+  }
 
   @override
   void dispose() {

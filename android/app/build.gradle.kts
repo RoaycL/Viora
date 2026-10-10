@@ -1,3 +1,5 @@
+import java.io.File
+
 plugins {
     id("com.android.application")
     // The Flutter Gradle Plugin must be applied after the Android and Kotlin Gradle plugins.
@@ -15,7 +17,6 @@ android {
     }
 
     defaultConfig {
-        // TODO: Specify your own unique Application ID (https://developer.android.com/studio/build/application-id.html).
         applicationId = "com.viora.viora"
         // You can update the following values to match your application needs.
         // For more information, see: https://flutter.dev/to/review-gradle-config.
@@ -29,11 +30,24 @@ android {
         versionName = flutter.versionName
     }
 
+    // 签名：CI 可通过环境变量注入正式证书；未设置时使用仓库内的测试证书。
+    // 应用内更新要求新旧版本签名一致，所以测试包必须始终用同一个证书签名。
+    signingConfigs {
+        create("release") {
+            val envStore = System.getenv("VIORA_KEYSTORE_PATH")
+            storeFile = if (envStore.isNullOrBlank()) rootProject.file("keystore/viora-test.jks") else File(envStore)
+            storePassword = System.getenv("VIORA_KEYSTORE_PASSWORD") ?: "viora-test"
+            keyAlias = System.getenv("VIORA_KEY_ALIAS") ?: "viora"
+            keyPassword = System.getenv("VIORA_KEY_PASSWORD") ?: "viora-test"
+        }
+    }
+
     buildTypes {
         release {
-            // TODO: Add your own signing config for the release build.
-            // Signing with the debug keys for now, so `flutter run --release` works.
-            signingConfig = signingConfigs.getByName("debug")
+            signingConfig = signingConfigs.getByName("release")
+        }
+        debug {
+            signingConfig = signingConfigs.getByName("release")
         }
     }
 }
@@ -46,4 +60,8 @@ kotlin {
 
 flutter {
     source = "../.."
+}
+
+dependencies {
+    implementation("androidx.core:core-ktx:1.13.1")
 }

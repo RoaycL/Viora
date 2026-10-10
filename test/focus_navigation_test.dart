@@ -13,6 +13,7 @@ Future<void> press(WidgetTester tester, LogicalKeyboardKey key) async {
 }
 
 Future<void> pumpApp(WidgetTester tester) async {
+  autoCheckUpdatesOnLaunch = false;
   tester.view.physicalSize = const Size(1920, 1080);
   tester.view.devicePixelRatio = 1;
   addTearDown(tester.view.reset);
