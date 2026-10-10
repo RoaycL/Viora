@@ -21,11 +21,13 @@
 
 ## 2. TMDB 接入
 
-- 鉴权：v4 Read Access Token（`Authorization: Bearer`），用户可在设置中填写自己的 Token；内置默认 Token 仅用于首页推荐。
+- 鉴权：v4 Read Access Token（`Authorization: Bearer`）或 v3 API Key，用户可在设置中填写；构建时可用 `--dart-define=VIORA_TMDB_TOKEN=...` 内置一个默认 Token（CI 读取仓库 Secret `TMDB_TOKEN`，Token 不进代码仓库），用户填写的优先。
 - 网络：TMDB 在部分地区访问困难 → API 与图片（`image.tmdb.org`）都可单独配置代理（复用 §03 的代理模板），也可填写自建的 TMDB 反代域名。
 - 缓存：列表接口 6 小时，详情 3 天，图片走磁盘缓存。
 
 ### 2.1 首页各行数据源
+
+> v0.5.0 实现：`lib/data/tmdb/`（客户端、模型、缓存）、`lib/data/aggregate/tmdb_link.dart`（按 TMDB / IMDb ID 在聚合索引里找媒体库副本，用于资源角标和点击跳转：有资源进媒体库详情，没有进 TMDB 详情）。分类浏览、电影公司、行排序 / 隐藏留到后续版本。
 
 | 行（与 Rex 首页一致） | TMDB 接口 |
 | --- | --- |

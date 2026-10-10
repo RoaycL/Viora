@@ -291,7 +291,12 @@ class TmdbConfig {
   /// 通过「反向代理」访问 TMDB
   final bool useProxy;
 
-  bool get enabled => apiKey.trim().isNotEmpty;
+  /// 构建时内置的读取令牌（CI 用 `--dart-define=VIORA_TMDB_TOKEN=...` 注入）；用户填写的优先
+  static const builtinToken = String.fromEnvironment('VIORA_TMDB_TOKEN');
+
+  String get effectiveKey => apiKey.trim().isNotEmpty ? apiKey.trim() : builtinToken;
+
+  bool get enabled => effectiveKey.isNotEmpty;
 
   String get effectiveBaseUrl {
     final b = baseUrl.trim().replaceAll(RegExp(r'/+$'), '');

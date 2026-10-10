@@ -15,6 +15,7 @@ import '../../ui/widgets/buttons.dart';
 import '../../ui/widgets/server_image.dart';
 import '../../ui/widgets/toast.dart';
 import '../browse/media_cards.dart';
+import '../tmdb/tmdb_detail_page.dart';
 
 typedef _Key = ({String serverId, String itemId});
 
@@ -92,6 +93,11 @@ class _ItemDetailPageState extends ConsumerState<ItemDetailPage> {
     final nextUp = isSeries ? ref.watch(_nextUpProvider(_key)).value : null;
 
     final zh = localizedMeta(ref, item);
+    // TMDB 补全：演职员与相似推荐
+    final tmdbId = int.tryParse(item.tmdbId ?? '');
+    final tmdb = tmdbId != null && (isSeries || item.kind == MediaKind.movie)
+        ? ref.watch(tmdbTitleProvider((isTv: isSeries, id: tmdbId))).value
+        : null;
     final favorite = _favorite ?? item.favorite;
     final played = _played ?? item.played;
     final playTarget = isSeries ? (nextUp ?? episodes.firstOrNull) : item;
@@ -342,6 +348,7 @@ class _ItemDetailPageState extends ConsumerState<ItemDetailPage> {
                       ),
                     ),
                   ],
+                  if (tmdb != null) ...[const SizedBox(height: 24), ...tmdbExtraRows(tmdb, firstRow: 5)],
                 ],
               ),
             ),

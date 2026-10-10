@@ -28,7 +28,7 @@ String mediaSubtitle(MediaItem item) {
 }
 
 /// 海报卡（电影 / 剧集）。媒体库不是中文时，用 TMDB 的中文标题。
-Widget mediaPosterCard(BuildContext context, MediaItem item, FocusNode node, {VoidCallback? onMenu}) {
+Widget mediaPosterCard(BuildContext context, MediaItem item, FocusNode node, {VoidCallback? onMenu, int? resources}) {
   return Consumer(
     builder: (context, ref, _) => PosterCard(
       node: node,
@@ -36,6 +36,7 @@ Widget mediaPosterCard(BuildContext context, MediaItem item, FocusNode node, {Vo
       image: ServerImage(serverId: item.serverId, image: item.primary, fallbackSeed: item.id),
       title: localizedMeta(ref, item).title,
       subtitle: mediaSubtitle(item),
+      resources: resources,
       onActivate: () => openMediaItem(context, item),
       onMenu: onMenu,
     ),
@@ -48,6 +49,7 @@ Widget mediaLandscapeCard(
   MediaItem item,
   FocusNode node, {
   String? tag,
+  IconData? tagIcon,
   VoidCallback? onActivate,
   VoidCallback? onMenu,
 }) {
@@ -69,6 +71,7 @@ Widget mediaLandscapeCard(
     title: isEpisode ? (item.seriesName ?? item.name) : item.name,
     subtitle: isEpisode ? item.name : mediaSubtitle(item),
     tag: tag,
+    tagIcon: tagIcon,
     caption: caption.isEmpty ? null : caption,
     progress: item.progress,
     onActivate: onActivate ?? () => playMediaItem(context, item),

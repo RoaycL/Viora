@@ -21,7 +21,10 @@ import '../browse/media_cards.dart';
 /// 聚合搜索（docs/04-aggregation.md §4）：
 /// 本地索引立即出结果（支持拼音首字母 / 全拼），再并发查各服务器补齐，同一部作品合并显示资源数。
 class SearchPage extends ConsumerStatefulWidget {
-  const SearchPage({super.key});
+  const SearchPage({super.key, this.initialQuery = ''});
+
+  /// 从详情页"在媒体库中搜索"进来时预填
+  final String initialQuery;
 
   @override
   ConsumerState<SearchPage> createState() => _SearchPageState();
@@ -38,7 +41,9 @@ class _SearchPageState extends ConsumerState<SearchPage> {
   @override
   void initState() {
     super.initState();
+    _query.text = widget.initialQuery;
     _query.addListener(_onChanged);
+    if (widget.initialQuery.isNotEmpty) WidgetsBinding.instance.addPostFrameCallback((_) => _search());
   }
 
   @override

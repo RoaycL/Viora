@@ -192,6 +192,16 @@ class MediaIndex {
     return rows.map(_row).where((c) => sameTitle(item, c)).toList();
   }
 
+  /// 按 TMDB ID 查找媒体库里的副本（首页推荐标注资源数、点进去直接打开媒体库条目）
+  List<MediaItem> byTmdb(MediaKind kind, String tmdbId, {String? imdbId}) {
+    final rows = _db.select('SELECT * FROM items WHERE kind = ? AND (tmdb = ? OR (imdb IS NOT NULL AND imdb = ?))', [
+      kind.index,
+      tmdbId,
+      _blankToNull(imdbId),
+    ]);
+    return rows.map(_row).toList();
+  }
+
   /// 按服务器分组的最近入库
   List<MediaItem> latest({int limit = 40}) =>
       _db.select('SELECT * FROM items ORDER BY created DESC LIMIT ?', [limit]).map(_row).toList();

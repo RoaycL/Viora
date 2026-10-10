@@ -6,7 +6,6 @@ import '../../app/platform_profile.dart';
 import '../../app/theme.dart';
 import '../../data/config/app_config.dart';
 import '../../data/config/config_store.dart';
-import '../../data/media/media_models.dart';
 import '../../data/media/server_registry.dart';
 import '../../data/net/request_composer.dart';
 import '../../data/tmdb/tmdb_client.dart';
@@ -119,9 +118,11 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
     }
     setState(() => _tmdbTesting = true);
     try {
-      final meta = await TmdbClient(config.tmdb, config.proxy).details(MediaKind.movie, '550');
-      showToast('TMDB 连接成功：${meta?.title ?? ''}');
+      final j = await TmdbClient(config.tmdb, config.proxy).get('/movie/550');
+      showToast('TMDB 连接成功：${j['title'] ?? ''}');
       ref.invalidate(zhMetaProvider);
+      ref.invalidate(tmdbRowProvider);
+      ref.invalidate(tmdbPeopleProvider);
     } catch (e) {
       showToast('TMDB 连接失败：${e is DioException ? (e.response?.statusCode ?? e.message) : e}');
     } finally {
@@ -242,7 +243,9 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
         title: '元数据 · TMDB',
         children: [
           Text(
-            '媒体库里的标题、简介、类型不是中文时，用 TMDB 的简体中文数据补全；之后首页推荐也会用到。',
+            TmdbConfig.builtinToken.isEmpty
+                ? '首页推荐、详情页演职员 / 相似推荐，以及媒体库不是中文时的标题简介补全，都来自 TMDB。'
+                : '已内置 TMDB 读取令牌，可直接使用；填写自己的令牌后优先使用你的。',
             style: VText.caption.copyWith(color: VColors.textSecondary),
           ),
           const SizedBox(height: 20),
@@ -257,7 +260,7 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
           const SizedBox(height: 20),
           VToggle(
             label: '通过反向代理访问 TMDB',
-            subtitle: '国内网络直连 TMDB 不稳定时打开（需先填写反向代理的完整地址）',
+            subtitle: 'API 与图片（image.tmdb.org）都走反向代理；国内直连 TMDB 不稳定时打开',
             value: config.tmdb.useProxy,
             onChanged: (v) =>
                 ref.read(configProvider.notifier).update((c) => c.copyWith(tmdb: c.tmdb.copyWith(useProxy: v))),

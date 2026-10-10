@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:viora/app/app.dart';
 import 'package:viora/app/input/intents.dart';
+import 'package:viora/data/tmdb/tmdb_client.dart';
 
 String? get focused => FocusManager.instance.primaryFocus?.debugLabel;
 
@@ -17,7 +18,7 @@ Future<void> pumpApp(WidgetTester tester) async {
   tester.view.physicalSize = const Size(1920, 1080);
   tester.view.devicePixelRatio = 1;
   addTearDown(tester.view.reset);
-  await tester.pumpWidget(const ProviderScope(child: VioraApp()));
+  await tester.pumpWidget(ProviderScope(overrides: tmdbFixtures, child: const VioraApp()));
   await tester.pumpAndSettle();
 }
 
@@ -26,6 +27,23 @@ Future<void> unmount(WidgetTester tester) async {
   await tester.pumpWidget(const SizedBox());
   await tester.pump(const Duration(seconds: 1));
 }
+
+/// 测试用的 TMDB 数据（不联网）：每行 6 部
+TmdbTitle fixtureTitle(int id, String title) =>
+    TmdbTitle(id: id, isTv: true, title: title, backdropPath: '/b$id.jpg', posterPath: '/p$id.jpg', rating: 8.5);
+
+final tmdbFixtures = [
+  tmdbRowProvider.overrideWith(
+    (ref, row) async => [
+      fixtureTitle(row.index * 100 + 1, row == TmdbRow.trendingDay ? '时光代理人' : '${row.name}-1'),
+      for (var i = 2; i <= 6; i++) fixtureTitle(row.index * 100 + i, '${row.name}-$i'),
+    ],
+  ),
+  tmdbPeopleProvider.overrideWith((ref) async => const <TmdbPerson>[]),
+  tmdbTitleProvider.overrideWith(
+    (ref, key) async => TmdbTitle(id: key.id, isTv: key.isTv, title: '作品$key', overview: '简介'),
+  ),
+];
 
 void main() {
   test('遥控器返回键、Esc、手柄 B 都映射为返回意图', () {
@@ -49,17 +67,17 @@ void main() {
     await pumpApp(tester);
 
     await press(tester, LogicalKeyboardKey.arrowDown);
-    expect(focused, 'row1#0');
+    expect(focused, 'row3#0');
 
     await press(tester, LogicalKeyboardKey.arrowRight);
     await press(tester, LogicalKeyboardKey.arrowRight);
-    expect(focused, 'row1#2');
+    expect(focused, 'row3#2');
 
     await press(tester, LogicalKeyboardKey.arrowDown);
-    expect(focused, 'row2#0');
+    expect(focused, 'row4#0');
 
     await press(tester, LogicalKeyboardKey.arrowUp);
-    expect(focused, 'row1#2');
+    expect(focused, 'row3#2');
 
     await press(tester, LogicalKeyboardKey.arrowUp);
     expect(focused, 'hero#0');
@@ -73,7 +91,7 @@ void main() {
       await tester.sendKeyEvent(LogicalKeyboardKey.arrowRight);
     }
     await tester.pumpAndSettle();
-    expect(focused, 'row1#5');
+    expect(focused, 'row3#5');
     await unmount(tester);
   });
 
@@ -81,14 +99,14 @@ void main() {
     await pumpApp(tester);
     await press(tester, LogicalKeyboardKey.arrowDown);
     await press(tester, LogicalKeyboardKey.arrowRight);
-    expect(focused, 'row1#1');
+    expect(focused, 'row3#1');
 
     await press(tester, LogicalKeyboardKey.arrowLeft);
     await press(tester, LogicalKeyboardKey.arrowLeft);
     expect(focused, 'nav:/');
 
     await press(tester, LogicalKeyboardKey.arrowRight);
-    expect(focused, 'row1#0');
+    expect(focused, 'row3#0');
     await unmount(tester);
   });
 
@@ -96,7 +114,7 @@ void main() {
     await pumpApp(tester);
     await press(tester, LogicalKeyboardKey.arrowDown);
     await press(tester, LogicalKeyboardKey.arrowDown);
-    expect(focused, 'row2#0');
+    expect(focused, 'row4#0');
 
     await press(tester, LogicalKeyboardKey.escape);
     expect(focused, 'hero#0');
@@ -127,7 +145,7 @@ void main() {
     await press(tester, LogicalKeyboardKey.escape);
     expect(find.text('还没有媒体服务器'), findsOneWidget);
     await press(tester, LogicalKeyboardKey.escape);
-    expect(find.text('继续观看'), findsOneWidget);
+    expect(find.text('时光代理人'), findsWidgets);
     await unmount(tester);
   });
 
@@ -143,11 +161,28 @@ void main() {
     await press(tester, LogicalKeyboardKey.arrowDown);
     await press(tester, LogicalKeyboardKey.arrowDown);
     await press(tester, LogicalKeyboardKey.select);
-    expect(find.text('按返回键回到上一页'), findsOneWidget);
+    expect(find.text('在媒体库中搜索'), findsOneWidget);
+    expect(find.text('媒体库暂无资源'), findsOneWidget);
 
     await press(tester, LogicalKeyboardKey.escape);
-    expect(find.text('按返回键回到上一页'), findsNothing);
-    expect(focused, 'row2#0');
+    expect(find.text('在媒体库中搜索'), findsNothing);
+    expect(focused, 'row4#0');
+    await unmount(tester);
+  });
+
+  testWidgets('导航栏：焦点不在导航栏 3 秒后自动隐藏，按 ← 进入时重新出现', (tester) async {
+    await pumpApp(tester);
+    Offset railOffset() => tester.widget<AnimatedSlide>(find.byType(AnimatedSlide).first).offset;
+    expect(railOffset(), Offset.zero);
+
+    await tester.pump(const Duration(seconds: 4));
+    await tester.pumpAndSettle();
+    expect(railOffset(), isNot(Offset.zero));
+
+    await press(tester, LogicalKeyboardKey.arrowLeft);
+    await press(tester, LogicalKeyboardKey.arrowLeft);
+    expect(focused, 'nav:/');
+    expect(railOffset(), Offset.zero);
     await unmount(tester);
   });
 }

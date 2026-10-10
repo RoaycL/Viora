@@ -43,7 +43,10 @@ final resumeProvider = FutureProvider<List<MediaItem>>((ref) async {
       }
     }),
   );
-  return [for (final list in results) ...list];
+  // 各服务器按上次播放时间合并
+  final all = [for (final list in results) ...list];
+  all.sort((a, b) => (b.lastPlayed ?? DateTime(1970)).compareTo(a.lastPlayed ?? DateTime(1970)));
+  return all;
 });
 
 final librariesProvider = FutureProvider.family<List<Library>, String>((ref, serverId) async {

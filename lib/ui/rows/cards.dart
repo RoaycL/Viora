@@ -18,6 +18,7 @@ class LandscapeCard extends StatelessWidget {
     this.image,
     this.subtitle,
     this.tag,
+    this.tagIcon,
     this.caption,
     this.progress,
     this.onActivate,
@@ -36,6 +37,9 @@ class LandscapeCard extends StatelessWidget {
   final String title;
   final String? subtitle;
   final String? tag;
+
+  /// 角标前的小图标（继续观看用服务器图标标注来源）
+  final IconData? tagIcon;
   final String? caption;
   final double? progress;
   final VoidCallback? onActivate;
@@ -79,7 +83,24 @@ class LandscapeCard extends StatelessWidget {
                         fill: const Color(0x59000000),
                         border: const Color(0x00000000),
                         padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-                        child: Text(tag!, style: const TextStyle(fontSize: 16, color: Color(0xE6FFFFFF))),
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            if (tagIcon != null) ...[
+                              Icon(tagIcon, size: 16, color: const Color(0xE6FFFFFF)),
+                              const SizedBox(width: 6),
+                            ],
+                            ConstrainedBox(
+                              constraints: const BoxConstraints(maxWidth: 260),
+                              child: Text(
+                                tag!,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: const TextStyle(fontSize: 16, color: Color(0xE6FFFFFF)),
+                              ),
+                            ),
+                          ],
+                        ),
                       ),
                     ),
                   if (caption != null)
@@ -140,7 +161,7 @@ class PosterCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    // 无资源时半透明；聚焦时恢复不透明，保证焦点框清晰。
+    // 无资源时压暗（用遮罩而不是透明度，避免背景图透过海报）；聚焦时恢复。
     final dimmed = resources == 0 ? 0.55 : 1.0;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -150,37 +171,40 @@ class PosterCard extends StatelessWidget {
           onActivate: onActivate,
           onMenu: onMenu,
           onFocusChange: onFocusChange,
-          builder: (context, focused) => AnimatedOpacity(
-            opacity: focused ? 1 : dimmed,
-            duration: VMotion.focus,
-            child: ClipRRect(
-              borderRadius: BorderRadius.circular(VRadius.card),
-              child: SizedBox(
-                width: width,
-                height: imageHeight,
-                child: Stack(
-                  fit: StackFit.expand,
-                  children: [
-                    image ?? ArtView(art),
-                    if (image == null)
-                      Positioned(
-                        left: 14,
-                        right: 14,
-                        bottom: 14,
-                        child: Text(
-                          title,
-                          maxLines: 2,
-                          style: const TextStyle(
-                            fontSize: 24,
-                            fontWeight: FontWeight.w900,
-                            letterSpacing: 1,
-                            shadows: [Shadow(color: Color(0x99000000), blurRadius: 12)],
-                          ),
+          builder: (context, focused) => ClipRRect(
+            borderRadius: BorderRadius.circular(VRadius.card),
+            child: SizedBox(
+              width: width,
+              height: imageHeight,
+              child: Stack(
+                fit: StackFit.expand,
+                children: [
+                  image ?? ArtView(art),
+                  if (image == null)
+                    Positioned(
+                      left: 14,
+                      right: 14,
+                      bottom: 14,
+                      child: Text(
+                        title,
+                        maxLines: 2,
+                        style: const TextStyle(
+                          fontSize: 24,
+                          fontWeight: FontWeight.w900,
+                          letterSpacing: 1,
+                          shadows: [Shadow(color: Color(0x99000000), blurRadius: 12)],
                         ),
                       ),
-                    if (resources != null) Positioned(left: 12, top: 12, child: _ResourceBadge(resources!)),
-                  ],
-                ),
+                    ),
+                  IgnorePointer(
+                    child: AnimatedOpacity(
+                      opacity: focused || resources != 0 ? 0 : 0.5,
+                      duration: VMotion.focus,
+                      child: const ColoredBox(color: VColors.background),
+                    ),
+                  ),
+                  if (resources != null) Positioned(left: 12, top: 12, child: _ResourceBadge(resources!)),
+                ],
               ),
             ),
           ),
@@ -230,7 +254,15 @@ class _ResourceBadge extends StatelessWidget {
 
 /// 人物圆形卡 160。
 class PersonCard extends StatelessWidget {
-  const PersonCard({super.key, required this.node, required this.art, required this.name, this.role, this.onActivate});
+  const PersonCard({
+    super.key,
+    required this.node,
+    required this.art,
+    required this.name,
+    this.image,
+    this.role,
+    this.onActivate,
+  });
 
   static const size = 160.0;
   static const height = size + 12 + 56;
@@ -238,6 +270,7 @@ class PersonCard extends StatelessWidget {
   final FocusNode node;
   final ArtSpec art;
   final String name;
+  final Widget? image;
   final String? role;
   final VoidCallback? onActivate;
 
@@ -250,20 +283,39 @@ class PersonCard extends StatelessWidget {
           radius: size / 2,
           onActivate: onActivate,
           builder: (context, focused) => ClipOval(
-            child: SizedBox(width: size, height: size, child: ArtView(art)),
+            child: SizedBox(width: size, height: size, child: image ?? ArtView(art)),
           ),
         ),
         const SizedBox(height: 12),
-        Text(name, style: const TextStyle(fontSize: 20), maxLines: 1),
-        if (role != null) Text(role!, style: const TextStyle(fontSize: 16, color: VColors.textTertiary)),
+        SizedBox(
+          width: size + 20,
+          child: Text(
+            name,
+            style: const TextStyle(fontSize: 20),
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            textAlign: TextAlign.center,
+          ),
+        ),
+        if (role != null)
+          SizedBox(
+            width: size + 20,
+            child: Text(
+              role!,
+              style: const TextStyle(fontSize: 16, color: VColors.textTertiary),
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              textAlign: TextAlign.center,
+            ),
+          ),
       ],
     );
   }
 }
 
-/// 播出平台 / 电影公司 Logo 卡 300×170（Logo 暂用文字代替）。
+/// 播出平台 / 电影公司 Logo 卡 300×170（没有 Logo 时显示文字）。
 class BrandCard extends StatelessWidget {
-  const BrandCard({super.key, required this.node, required this.art, required this.name, this.onActivate});
+  const BrandCard({super.key, required this.node, required this.art, required this.name, this.logo, this.onActivate});
 
   static const width = 300.0;
   static const height = 170.0;
@@ -271,6 +323,7 @@ class BrandCard extends StatelessWidget {
   final FocusNode node;
   final ArtSpec art;
   final String name;
+  final Widget? logo;
   final VoidCallback? onActivate;
 
   @override
@@ -288,9 +341,15 @@ class BrandCard extends StatelessWidget {
             fit: StackFit.expand,
             children: [
               ArtView(art, lightCenter: const Alignment(0, 0.2)),
-              Center(
-                child: Text(name, style: const TextStyle(fontSize: 36, fontWeight: FontWeight.w900, letterSpacing: 1)),
-              ),
+              if (logo != null)
+                Padding(padding: const EdgeInsets.symmetric(horizontal: 56, vertical: 48), child: logo)
+              else
+                Center(
+                  child: Text(
+                    name,
+                    style: const TextStyle(fontSize: 36, fontWeight: FontWeight.w900, letterSpacing: 1),
+                  ),
+                ),
             ],
           ),
         ),

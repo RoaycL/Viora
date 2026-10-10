@@ -6,6 +6,8 @@ import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
+import '../data/config/config_store.dart';
+import '../data/media/server_registry.dart';
 import '../data/index/index_sync.dart';
 import '../features/update/update_controller.dart';
 import '../features/update/update_dialog.dart';
@@ -51,8 +53,17 @@ class _VioraAppState extends ConsumerState<VioraApp> {
     _router.routerDelegate.addListener(_updateCanGoBack);
     _autoCheckUpdate();
     if (autoCheckUpdatesOnLaunch) {
-      // 稍后在后台同步聚合索引（docs/04-aggregation.md §2），不影响启动速度
-      Future<void>.delayed(const Duration(seconds: 2), () => ref.read(indexSyncProvider.notifier).syncAll());
+      // 稍后在后台：各服务器线路测速（选最快线路、更新在线状态），再同步聚合索引（docs/04-aggregation.md §2）
+      Future<void>.delayed(const Duration(seconds: 1), () async {
+        await Future.wait(
+          ref.read(configProvider).servers.map((s) async {
+            try {
+              await ref.read(serverClientProvider(s.id))?.probeAll().timeout(const Duration(seconds: 10));
+            } catch (_) {}
+          }),
+        );
+        await ref.read(indexSyncProvider.notifier).syncAll();
+      });
     }
   }
 

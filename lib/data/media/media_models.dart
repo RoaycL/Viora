@@ -81,6 +81,7 @@ class MediaItem {
     this.position = Duration.zero,
     this.playedPercentage,
     this.dateCreated,
+    this.lastPlayed,
   });
 
   final String serverId;
@@ -115,6 +116,9 @@ class MediaItem {
   final Duration position;
   final double? playedPercentage;
   final DateTime? dateCreated;
+
+  /// 上次播放时间（继续观看跨服务器排序）
+  final DateTime? lastPlayed;
 
   bool get playable => kind == MediaKind.movie || kind == MediaKind.episode || kind == MediaKind.other;
 

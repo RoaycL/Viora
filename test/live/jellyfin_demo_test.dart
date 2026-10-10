@@ -105,4 +105,49 @@ void main() {
     expect(index.matches(hits.first).first.id, hits.first.id);
     index.close();
   }, skip: live ? false : '需要 VIORA_LIVE=1');
+
+  test('经反向代理（emby-reverse-proxy-go）访问：登录、播放信息、直链 Range、图片', () async {
+    final proxyBase = Platform.environment['VIORA_PROXY'] ?? 'https://embyproxy.roayc.com/proxy/';
+    var server = const ServerConfig(
+      id: 'demo-proxy',
+      type: ServerType.jellyfin,
+      name: 'Jellyfin Demo（反代）',
+      username: 'demo',
+      lines: [ServerLine(id: 'p', name: '反代线路', url: 'https://demo.jellyfin.org/stable', proxied: true)],
+    );
+    final client = EmbyClient(
+      config: AppConfig(
+        deviceId: 'viora-test',
+        proxy: ProxyConfig(baseUrl: proxyBase),
+      ),
+      server: server,
+      appVersion: '0.5.0',
+      onServerChanged: (s) => server = s,
+    );
+    await client.login();
+    expect(server.token, isNotNull);
+    final libs = await client.libraries();
+    final movies = libs.firstWhere((l) => l.collectionType == 'movies', orElse: () => libs.first);
+    final page = await client.items(parentId: movies.id, limit: 5);
+    final movie = page.items.firstWhere((i) => i.kind == MediaKind.movie, orElse: () => page.items.first);
+    final info = await client.playbackInfo(movie.id);
+    final req = client.stream(info.sources.first, playSessionId: info.playSessionId);
+    expect(req.url.toString(), startsWith(proxyBase));
+    final r = await Dio().getUri<dynamic>(
+      req.url,
+      options: Options(
+        headers: {...req.headers, 'Range': 'bytes=0-1023'},
+        responseType: ResponseType.bytes,
+        validateStatus: (_) => true,
+      ),
+    );
+    expect(r.statusCode, anyOf(200, 206));
+    final img = client.image(movie.primary!);
+    expect(img.url.toString(), startsWith(proxyBase));
+    final ir = await Dio().getUri<dynamic>(
+      img.url,
+      options: Options(headers: img.headers, responseType: ResponseType.bytes, validateStatus: (_) => true),
+    );
+    expect(ir.statusCode, 200);
+  }, skip: live ? false : '需要 VIORA_LIVE=1');
 }

@@ -501,6 +501,7 @@ class EmbyClient {
       position: ticksToDuration(user['PlaybackPositionTicks'] as num?),
       playedPercentage: (user['PlayedPercentage'] as num?)?.toDouble(),
       dateCreated: DateTime.tryParse(j['DateCreated'] as String? ?? ''),
+      lastPlayed: DateTime.tryParse(user['LastPlayedDate'] as String? ?? ''),
     );
   }
 
