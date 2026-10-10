@@ -19,7 +19,10 @@ import androidx.media3.common.Tracks
 import androidx.media3.common.VideoSize
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.datasource.DefaultDataSource
+import androidx.media3.datasource.DataSource
+import androidx.media3.datasource.DataSpec
 import androidx.media3.datasource.DefaultHttpDataSource
+import androidx.media3.datasource.TransferListener
 import androidx.media3.exoplayer.DecoderReuseEvaluation
 import androidx.media3.exoplayer.DefaultLoadControl
 import androidx.media3.exoplayer.DefaultRenderersFactory
@@ -27,6 +30,7 @@ import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.analytics.AnalyticsListener
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.exoplayer.trackselection.DefaultTrackSelector
+import java.util.concurrent.atomic.AtomicLong
 
 /**
  * 一个 ExoPlayer 实例：负责打开媒体、轨道选择，并把状态以事件推给 Dart（docs/08-player.md）。
@@ -73,6 +77,31 @@ class ExoController(
             .build()
     }
 
+    /** 网络下载的字节数（加载线程累加），每秒换算一次下载速度 */
+    private val downloaded = AtomicLong(0)
+    private var speedSince = System.nanoTime()
+    private var speedBytes = 0L
+    private var speed = 0L
+
+    private val transfer = object : TransferListener {
+        override fun onTransferInitializing(source: DataSource, dataSpec: DataSpec, isNetwork: Boolean) {}
+        override fun onTransferStart(source: DataSource, dataSpec: DataSpec, isNetwork: Boolean) {}
+        override fun onTransferEnd(source: DataSource, dataSpec: DataSpec, isNetwork: Boolean) {}
+        override fun onBytesTransferred(source: DataSource, dataSpec: DataSpec, isNetwork: Boolean, bytesTransferred: Int) {
+            if (isNetwork) downloaded.addAndGet(bytesTransferred.toLong())
+        }
+    }
+
+    private fun updateSpeed() {
+        val now = System.nanoTime()
+        val elapsed = now - speedSince
+        if (elapsed < 1_000_000_000L) return
+        val total = downloaded.get()
+        speed = (total - speedBytes) * 1_000_000_000L / elapsed
+        speedBytes = total
+        speedSince = now
+    }
+
     private val ticker = object : Runnable {
         override fun run() {
             sendProgress()
@@ -96,6 +125,7 @@ class ExoController(
             .setAllowCrossProtocolRedirects(true)
             .setConnectTimeoutMs(20_000)
             .setReadTimeoutMs(30_000)
+            .setTransferListener(transfer)
         val sources = DefaultMediaSourceFactory(DefaultDataSource.Factory(context, http))
         player.setMediaSources(emptyList())
         trackSelector.parameters = trackSelector.buildUponParameters().setTunnelingEnabled(tunneling).build()
@@ -181,12 +211,14 @@ class ExoController(
     // ───────────────────────── 事件 ─────────────────────────
 
     private fun sendProgress() {
+        updateSpeed()
         emit(
             mapOf(
                 "event" to "progress",
                 "position" to player.currentPosition,
                 "duration" to player.duration.takeIf { it != C.TIME_UNSET },
                 "buffered" to player.bufferedPosition,
+                "speed" to speed,
             )
         )
     }

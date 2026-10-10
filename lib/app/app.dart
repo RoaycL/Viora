@@ -37,7 +37,7 @@ class VioraApp extends ConsumerStatefulWidget {
 }
 
 class _VioraAppState extends ConsumerState<VioraApp> {
-  late final GoRouter _router = buildRouter();
+  late final GoRouter _router = buildRouter(observers: [_BackObserver(_updateCanGoBackAfterFrame)]);
   DateTime? _lastBackOnHome;
 
   /// Windows 标题栏的返回按钮是否显示：不在顶层页面（首页 / 资源库 / 搜索 / 收藏 / 记录 / 设置）时显示
@@ -50,11 +50,23 @@ class _VioraAppState extends ConsumerState<VioraApp> {
     _canGoBack.value = _router.canPop() || !_tabRoots.contains(_router.routerDelegate.currentConfiguration.uri.path);
   }
 
+  /// 路由通知时导航器还没把新页面压进去（canPop 仍是 false），等这一帧建完再算
+  void _scheduleCanGoBack() {
+    _updateCanGoBack();
+    _updateCanGoBackAfterFrame();
+  }
+
+  void _updateCanGoBackAfterFrame() {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) _updateCanGoBack();
+    });
+  }
+
   @override
   void initState() {
     super.initState();
     InputMode.install();
-    _router.routerDelegate.addListener(_updateCanGoBack);
+    _router.routerDelegate.addListener(_scheduleCanGoBack);
     _autoCheckUpdate();
     // 上次异常退出时残留的播放缓存
     if (ref.read(configProvider).playback.clearCacheOnExit) PlaybackCache.clear();
@@ -94,7 +106,7 @@ class _VioraAppState extends ConsumerState<VioraApp> {
 
   @override
   void dispose() {
-    _router.routerDelegate.removeListener(_updateCanGoBack);
+    _router.routerDelegate.removeListener(_scheduleCanGoBack);
     _canGoBack.dispose();
     _router.dispose();
     super.dispose();
@@ -219,4 +231,23 @@ class _WithTitleBar extends StatelessWidget {
       ),
     );
   }
+}
+
+/// 压栈 / 出栈（详情页、播放页）时刷新标题栏的返回按钮
+class _BackObserver extends NavigatorObserver {
+  _BackObserver(this.onChange);
+
+  final VoidCallback onChange;
+
+  @override
+  void didPush(Route<dynamic> route, Route<dynamic>? previousRoute) => onChange();
+
+  @override
+  void didPop(Route<dynamic> route, Route<dynamic>? previousRoute) => onChange();
+
+  @override
+  void didRemove(Route<dynamic> route, Route<dynamic>? previousRoute) => onChange();
+
+  @override
+  void didReplace({Route<dynamic>? newRoute, Route<dynamic>? oldRoute}) => onChange();
 }

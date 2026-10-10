@@ -69,7 +69,11 @@ class EngineState {
     this.audio,
     this.subtitle,
     this.video = const EngineVideoInfo(),
+    this.speed,
   });
+
+  /// 当前下载速度（字节 / 秒）；null = 内核不提供
+  final int? speed;
 
   final Duration position;
   final Duration duration;
@@ -98,6 +102,7 @@ class EngineState {
     EngineTrack? subtitle,
     bool clearSubtitle = false,
     EngineVideoInfo? video,
+    int? speed,
   }) => EngineState(
     position: position ?? this.position,
     duration: duration ?? this.duration,
@@ -110,6 +115,7 @@ class EngineState {
     audio: audio ?? this.audio,
     subtitle: clearSubtitle ? null : (subtitle ?? this.subtitle),
     video: video ?? this.video,
+    speed: speed ?? this.speed,
   );
 }
 

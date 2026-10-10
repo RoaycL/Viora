@@ -55,6 +55,7 @@ class _Live {
 class DanmakuLayerState extends State<DanmakuLayer> with SingleTickerProviderStateMixin {
   late final Ticker _ticker = createTicker(_tick);
   final _repaint = _Repaint();
+
   /// 帧时钟（Ticker 启动以来的时间）：和画面刷新同步
   Duration _elapsed = Duration.zero;
   final _live = <_Live>[];

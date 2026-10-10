@@ -63,6 +63,20 @@ class MpvEngine extends PlayerEngine {
       }),
       s.error.listen((e) => _errors.add(EngineError(e, canFallback: false))),
     ]);
+    // 下载速度：mpv 的 cache-speed（字节 / 秒），每秒读一次
+    _speedTimer = Timer.periodic(const Duration(seconds: 1), (_) => _pollSpeed());
+  }
+
+  Timer? _speedTimer;
+  bool _disposed = false;
+
+  Future<void> _pollSpeed() async {
+    final native = _player.platform;
+    if (kIsWeb || native is! NativePlayer || _state.value.duration == Duration.zero) return;
+    try {
+      final v = int.tryParse((await native.getProperty('cache-speed')).split('.').first);
+      if (v != null && !_disposed) _set((x) => x.copyWith(speed: v));
+    } catch (_) {}
   }
 
   final EngineOptions options;
@@ -168,6 +182,8 @@ class MpvEngine extends PlayerEngine {
 
   @override
   Future<void> dispose() async {
+    _disposed = true;
+    _speedTimer?.cancel();
     for (final s in _subs) {
       await s.cancel();
     }
