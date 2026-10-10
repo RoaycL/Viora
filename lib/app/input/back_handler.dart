@@ -4,7 +4,7 @@ import 'package:flutter/widgets.dart';
 ///
 /// 页面通过 [BackHandler] 注册回调；按下返回时从最后注册（最内层）的开始调用，
 /// 返回 true 表示已处理（例如"先回到行首"、"先关闭面板"），否则交给外层，
-/// 最终由应用壳做路由级处理（出栈 / 回首页 / 再按一次退出）。
+/// 最终由应用壳做路由级处理（出栈 / 回首页）。
 class BackDispatcher {
   final List<bool Function()> _handlers = <bool Function()>[];
 

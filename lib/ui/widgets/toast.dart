@@ -8,7 +8,7 @@ import '../glass/glass.dart';
 final _toast = ValueNotifier<String?>(null);
 Timer? _toastTimer;
 
-/// 屏幕底部的轻提示（如"再按一次返回键退出"）。
+/// 屏幕底部的轻提示（如"长按返回键 3 秒可以退出 Viora"）。
 void showToast(String message, {Duration duration = const Duration(seconds: 2)}) {
   _toast.value = message;
   _toastTimer?.cancel();
