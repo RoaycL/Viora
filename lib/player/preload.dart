@@ -19,14 +19,12 @@ class PlaybackPreloader {
   static const infoTtl = Duration(minutes: 3);
   static const warmTtl = Duration(minutes: 5);
 
-  /// 片头读取量（容器头部 + 第一个关键帧附近）
-  static const headBytes = 1024 * 1024;
+  /// 预热总量（字节，来自设置）：片头 40%、续播位置 40%、片尾 20%（片尾至少 256KB 放索引）
+  static int warmBytes = 2 * 1024 * 1024;
 
-  /// 片尾读取量（MKV Cues / MP4 moov 可能在文件末尾）
-  static const tailBytes = 256 * 1024;
-
-  /// 续播位置附近读取量
-  static const resumeBytes = 1024 * 1024;
+  static int get headBytes => (warmBytes * 0.4).round().clamp(256 * 1024, 1 << 30);
+  static int get resumeBytes => headBytes;
+  static int get tailBytes => (warmBytes * 0.2).round().clamp(256 * 1024, 1 << 30);
 
   static bool enabled = true;
 
@@ -96,11 +94,14 @@ class PlaybackPreloader {
 
     final req = client.stream(source, playSessionId: playSessionId);
     final size = source.size;
-    final ranges = <(int, int)>[(0, headBytes - 1)];
-    if (size != null && size > headBytes * 4) {
+    final duration = source.duration;
+    final resume = position > const Duration(seconds: 30) && duration != null && duration > Duration.zero;
+    // 从头播放时，续播位置那一份也给片头
+    final head = resume ? headBytes : headBytes + resumeBytes;
+    final ranges = <(int, int)>[(0, head - 1)];
+    if (size != null && size > head * 4) {
       ranges.add((size - tailBytes, size - 1));
-      final duration = source.duration;
-      if (position > const Duration(seconds: 30) && duration != null && duration > Duration.zero) {
+      if (resume) {
         final at = (size * (position.inMilliseconds / duration.inMilliseconds)).floor().clamp(0, size - resumeBytes);
         ranges.add((at, at + resumeBytes - 1));
       }
@@ -146,7 +147,7 @@ class PlaybackPreloader {
     await done.future;
   }
 
-  @visibleForTesting
+  /// 清除预加载的播放信息与预热记录
   static void reset() {
     _info.clear();
     _pending.clear();

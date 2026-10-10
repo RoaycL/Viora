@@ -138,7 +138,18 @@ class EngineMedia {
 
 /// 引擎选项（来自设置）
 class EngineOptions {
-  const EngineOptions({this.autoFrameRate = true, this.tunneling = false});
+  const EngineOptions({
+    this.autoFrameRate = true,
+    this.tunneling = false,
+    this.bufferBytes = 256 * 1024 * 1024,
+    this.cacheDir,
+  });
+
+  /// 预读缓冲上限（字节）
+  final int bufferBytes;
+
+  /// 磁盘缓存目录（mpv 缓冲超过内存上限时使用）
+  final String? cacheDir;
 
   /// 按片源帧率切换显示刷新率（Android TV）
   final bool autoFrameRate;

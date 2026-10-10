@@ -8,6 +8,7 @@ import 'package:go_router/go_router.dart';
 
 import '../data/config/config_store.dart';
 import '../data/media/server_registry.dart';
+import '../player/playback_cache.dart';
 import '../player/preload.dart';
 import '../data/index/index_sync.dart';
 import '../features/update/update_controller.dart';
@@ -53,6 +54,8 @@ class _VioraAppState extends ConsumerState<VioraApp> {
     InputMode.install();
     _router.routerDelegate.addListener(_updateCanGoBack);
     _autoCheckUpdate();
+    // 上次异常退出时残留的播放缓存
+    if (ref.read(configProvider).playback.clearCacheOnExit) PlaybackCache.clear();
     if (autoCheckUpdatesOnLaunch) {
       // 稍后在后台：各服务器线路测速（选最快线路、更新在线状态），再同步聚合索引（docs/04-aggregation.md §2）
       Future<void>.delayed(const Duration(seconds: 1), () async {
@@ -128,7 +131,9 @@ class _VioraAppState extends ConsumerState<VioraApp> {
 
   @override
   Widget build(BuildContext context) {
-    PlaybackPreloader.enabled = ref.watch(configProvider.select((c) => c.playback.preload));
+    final playback = ref.watch(configProvider.select((c) => c.playback));
+    PlaybackPreloader.enabled = playback.preload;
+    PlaybackPreloader.warmBytes = playback.warmMb * 1024 * 1024;
     return MaterialApp.router(
       title: 'Viora',
       // 固定简体中文：系统控件显示中文，且汉字使用简体字形（避免部分设备显示成日文字形）

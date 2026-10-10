@@ -54,9 +54,11 @@ class ExoPlugin(private val activity: Activity, engine: FlutterEngine) {
                 when (call.method) {
                     "create" -> {
                         val newId = nextId++
+                        val bufferBytes = (call.argument<Number>("bufferBytes") ?: 256L * 1024 * 1024).toLong()
                         players[newId] = ExoController(
                             activity,
                             newId,
+                            bufferBytes = bufferBytes,
                             emit = { e -> sink?.success(e + ("id" to newId)) },
                             onVideoFrameRate = { fps -> if (frameRateSwitch) switchDisplayMode(fps) },
                         )

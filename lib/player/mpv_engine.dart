@@ -6,10 +6,11 @@ import 'package:media_kit/media_kit.dart';
 import 'package:media_kit_video/media_kit_video.dart';
 
 import 'engine.dart';
+import 'playback_cache.dart';
 
 /// mpv 内核（media_kit）。Windows 默认；Android 作为 ExoPlayer 的备用。
 class MpvEngine extends PlayerEngine {
-  MpvEngine() {
+  MpvEngine({this.options = const EngineOptions()}) {
     final s = _player.stream;
     _subs.addAll([
       s.position.listen((v) => _set((x) => x.copyWith(position: v))),
@@ -64,6 +65,8 @@ class MpvEngine extends PlayerEngine {
     ]);
   }
 
+  final EngineOptions options;
+
   final Player _player = Player(
     configuration: const PlayerConfiguration(title: 'Viora', bufferSize: 64 * 1024 * 1024),
   );
@@ -105,10 +108,26 @@ class MpvEngine extends PlayerEngine {
   Future<void> open(EngineMedia media) async {
     final native = _player.platform;
     if (!kIsWeb && native is NativePlayer) {
+      // 单个属性设置失败（旧版 libmpv 不支持等）不影响播放
+      Future<void> set(String name, String value) async {
+        try {
+          await (native as dynamic).setProperty(name, value);
+        } catch (e) {
+          debugPrint('mpv $name=$value failed: $e');
+        }
+      }
+
       // 自定义播放 UA（docs/03-media-servers.md §6），其余请求头由 httpHeaders 传入
-      await (native as dynamic).setProperty('user-agent', media.userAgent);
-      await (native as dynamic).setProperty('network-timeout', '20');
-      await (native as dynamic).setProperty('demuxer-max-back-bytes', '${32 * 1024 * 1024}');
+      await set('user-agent', media.userAgent);
+      await set('network-timeout', '20');
+      // 预读缓冲上限（设置 → 播放 → 播放缓冲上限）；超过内存上限时写到磁盘缓存，关闭播放器后清除
+      final buffer = options.bufferBytes;
+      final onDisk = buffer > PlaybackCache.memoryLimitBytes && options.cacheDir != null;
+      await set('cache', 'yes');
+      await set('demuxer-max-bytes', '$buffer');
+      await set('demuxer-max-back-bytes', '${(buffer ~/ 4).clamp(16 << 20, 128 << 20)}');
+      if (onDisk) await set('cache-dir', options.cacheDir!);
+      await set('cache-on-disk', onDisk ? 'yes' : 'no');
     }
     await _player.open(
       Media(media.url.toString(), httpHeaders: media.headers, start: media.start > Duration.zero ? media.start : null),

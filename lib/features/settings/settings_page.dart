@@ -16,6 +16,7 @@ import '../../ui/glass/glass.dart';
 import '../../ui/widgets/buttons.dart';
 import '../../ui/widgets/form.dart';
 import '../../ui/widgets/toast.dart';
+import '../../player/playback_cache.dart';
 import '../update/update_controller.dart';
 import '../update/update_dialog.dart';
 
@@ -44,6 +45,7 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
   void initState() {
     super.initState();
     final c = ref.read(configProvider);
+    _refreshCacheSize();
     _ua.text = c.playback.userAgent;
     _client.text = c.playback.clientName;
     _device.text = c.playback.deviceName;
@@ -103,6 +105,28 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
         );
     showToast(url.isEmpty ? '已关闭反向代理' : '反向代理地址已保存');
   }
+
+  int? _cacheSize;
+
+  void _updatePlayback(PlaybackConfig Function(PlaybackConfig) f) =>
+      ref.read(configProvider.notifier).update((c) => c.copyWith(playback: f(c.playback)));
+
+  Future<void> _refreshCacheSize() async {
+    final size = await PlaybackCache.size();
+    if (mounted) setState(() => _cacheSize = size);
+  }
+
+  Future<void> _clearCache() async {
+    await PlaybackCache.clear();
+    await _refreshCacheSize();
+    showToast('播放缓存已清除');
+  }
+
+  static String _formatBytes(int b) => b >= 1 << 30
+      ? '${(b / (1 << 30)).toStringAsFixed(1)} GB'
+      : b >= 1 << 20
+      ? '${(b / (1 << 20)).toStringAsFixed(0)} MB'
+      : '${(b / 1024).toStringAsFixed(0)} KB';
 
   Future<void> _saveTmdb() async {
     final store = ref.read(configProvider.notifier);
@@ -193,6 +217,37 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
             value: config.playback.preload,
             onChanged: (v) =>
                 ref.read(configProvider.notifier).update((c) => c.copyWith(playback: c.playback.copyWith(preload: v))),
+          ),
+          if (config.playback.preload) ...[
+            const SizedBox(height: 20),
+            VChoice<int>(
+              label: '起播预热量（按下播放前提前读取的数据：片头、续播位置、片尾索引）',
+              options: [for (final mb in PlaybackConfig.warmChoices) (mb, '$mb MB')],
+              value: config.playback.warmMb,
+              onChanged: (v) => _updatePlayback((p) => p.copyWith(warmMb: v)),
+            ),
+          ],
+          const SizedBox(height: 20),
+          VChoice<int>(
+            label: PlatformProfile.isTv
+                ? '播放缓冲上限（边播边预读的最大数据量；电视内存有限，实际最多使用可用内存的 40%）'
+                : '播放缓冲上限（边播边预读的最大数据量；超过 256 MB 时写入磁盘缓存，不占内存）',
+            options: [for (final mb in PlaybackConfig.bufferChoices) (mb, mb >= 1024 ? '${mb ~/ 1024} GB' : '$mb MB')],
+            value: config.playback.bufferMb,
+            onChanged: (v) => _updatePlayback((p) => p.copyWith(bufferMb: v)),
+          ),
+          const SizedBox(height: 20),
+          VToggle(
+            label: '关闭播放器后清除播放缓存',
+            subtitle: '退出播放时删除磁盘缓存文件和预加载的数据（连播下一集时保留）',
+            value: config.playback.clearCacheOnExit,
+            onChanged: (v) => _updatePlayback((p) => p.copyWith(clearCacheOnExit: v)),
+          ),
+          const SizedBox(height: 16),
+          PillButton(
+            icon: Icons.cleaning_services_outlined,
+            label: _cacheSize == null ? '立即清除播放缓存' : '立即清除播放缓存（当前 ${_formatBytes(_cacheSize!)}）',
+            onPressed: _clearCache,
           ),
           const SizedBox(height: 12),
           VToggle(

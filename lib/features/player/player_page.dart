@@ -17,6 +17,7 @@ import '../../data/media/server_registry.dart';
 import '../../player/engine.dart';
 import '../../player/exo_engine.dart';
 import '../../player/mpv_engine.dart';
+import '../../player/playback_cache.dart';
 import '../../player/preload.dart';
 import '../../ui/glass/glass.dart';
 import '../../ui/panels/context_menu.dart';
@@ -86,15 +87,26 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
 
   // ───────────────────────── 内核 ─────────────────────────
 
+  /// 磁盘缓存目录（进入播放页时准备好）
+  String? _cacheDir;
+
+  /// 播放器直接切到下一集 / 其他服务器的版本（关闭时保留预加载数据）
+  bool _handoff = false;
+
   EngineOptions get _options {
     final p = ref.read(configProvider).playback;
-    return EngineOptions(autoFrameRate: p.autoFrameRate, tunneling: p.tunneling);
+    return EngineOptions(
+      autoFrameRate: p.autoFrameRate,
+      tunneling: p.tunneling,
+      bufferBytes: p.bufferMb * 1024 * 1024,
+      cacheDir: _cacheDir,
+    );
   }
 
   PlayerEngine _createEngine({bool forceMpv = false, bool forceExo = false}) {
     final p = ref.read(configProvider).playback;
     final useExo = ExoEngine.supported && (forceExo || (!forceMpv && p.engine != EnginePreference.mpv));
-    return useExo ? ExoEngine(options: _options) : MpvEngine();
+    return useExo ? ExoEngine(options: _options) : MpvEngine(options: _options);
   }
 
   Future<void> _attachEngine(PlayerEngine engine) async {
@@ -167,6 +179,7 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
       if (client == null) throw const MediaServerException('服务器不存在');
       _client = client;
       // 并行：创建播放内核、取条目信息、取播放信息（详情页 / 首页已预加载时直接命中缓存）
+      _cacheDir ??= await PlaybackCache.dir();
       final engineReady = _engine == null ? _attachEngine(_createEngine()) : Future<void>.value();
       final itemFuture = _item == null ? client.item(widget.itemId) : Future.value(_item!);
       itemFuture.ignore();
@@ -215,6 +228,11 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
     }
   }
 
+  void _handoffTo(String route) {
+    _handoff = true;
+    context.pushReplacement(route);
+  }
+
   Future<void> _preloadNext() async {
     _nextPreloading = true;
     final item = _item, client = _client;
@@ -234,7 +252,7 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
     if (item == null || client == null || !mounted) return;
     // 剧集自动播放下一集
     if (_nextEpisode != null) {
-      context.pushReplacement('/play/${widget.serverId}/${_nextEpisode!.id}?pos=0');
+      _handoffTo('/play/${widget.serverId}/${_nextEpisode!.id}?pos=0');
       return;
     }
     if (item.kind == MediaKind.episode && item.seriesId != null) {
@@ -242,7 +260,7 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
         final eps = await client.episodes(item.seriesId!, seasonId: item.seasonId);
         final i = eps.indexWhere((e) => e.id == item.id);
         if (i >= 0 && i + 1 < eps.length && mounted) {
-          context.pushReplacement('/play/${widget.serverId}/${eps[i + 1].id}?pos=0');
+          _handoffTo('/play/${widget.serverId}/${eps[i + 1].id}?pos=0');
           return;
         }
       } catch (_) {}
@@ -262,7 +280,13 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
     _seekTimer?.cancel();
     _focus.dispose();
     _engine?.state.removeListener(_onEngineState);
-    _engine?.dispose();
+    final engine = _engine;
+    final clear = ref.read(configProvider).playback.clearCacheOnExit;
+    // 先关播放器（释放缓存文件），再清除播放缓存
+    Future(() async {
+      await engine?.dispose();
+      if (clear) await PlaybackCache.clear(keepPreload: _handoff);
+    });
     super.dispose();
   }
 
@@ -485,7 +509,7 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
                 _wasPlaying = false;
                 _start(sourceId: o.source.id, at: at);
               } else {
-                context.pushReplacement(o.playRoute(position: at));
+                _handoffTo(o.playRoute(position: at));
               }
             },
           ),

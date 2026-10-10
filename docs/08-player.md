@@ -35,6 +35,16 @@
 
 设置 → 播放 →「播放预加载」可关闭（会多用少量流量）。实现：`lib/player/preload.dart`。
 
+v0.7.0 起可调（设置 → 播放）：
+
+| 设置 | 选项 | 说明 |
+| --- | --- | --- |
+| 起播预热量 | 2 / 8 / 32 / 128 MB | 片头 40%、续播位置 40%、片尾 20%（至少 256KB）；从头播放时续播那份并入片头 |
+| 播放缓冲上限 | 64 / 256 / 512 MB / 1 / 2 GB（默认 256 MB） | mpv：`demuxer-max-bytes`，超过 256 MB 时 `cache-on-disk` 写到系统临时目录 `viora_play_cache`；ExoPlayer：`targetBufferBytes`，最多用可用内存的 40% |
+| 关闭播放器后清除播放缓存 | 开（默认）/ 关 | 退出播放时删除磁盘缓存文件与预加载数据；连播下一集 / 切换版本时保留预加载数据；启动时清理上次残留 |
+
+实现：`lib/player/playback_cache.dart`。
+
 ## 2. PlayerEngine 接口
 
 ```dart

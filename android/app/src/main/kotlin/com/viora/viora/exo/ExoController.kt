@@ -34,6 +34,7 @@ import androidx.media3.exoplayer.trackselection.DefaultTrackSelector
 class ExoController(
     private val context: Context,
     val id: Int,
+    bufferBytes: Long,
     private val emit: (Map<String, Any?>) -> Unit,
     private val onVideoFrameRate: (Float) -> Unit,
 ) {
@@ -55,10 +56,16 @@ class ExoController(
             .setPreferredTextLanguages("zh", "chi", "zho", "chs", "cht")
             .setSelectUndeterminedTextLanguage(true)
             .build()
-        // 起播只需缓冲 1 秒（默认 2.5 秒），卡顿后重新缓冲 2.5 秒（默认 5 秒），加快起播与拖动后的恢复
+        // 起播只需缓冲 1 秒（默认 2.5 秒），卡顿后重新缓冲 2.5 秒（默认 5 秒），加快起播与拖动后的恢复。
+        // 预读上限按设置的字节数（ExoPlayer 缓冲在内存里，最多用可用内存的 40%，避免电视盒子内存不足）
+        val target = bufferBytes
+            .coerceAtMost((Runtime.getRuntime().maxMemory() * 0.4).toLong())
+            .coerceIn(32L * 1024 * 1024, Int.MAX_VALUE.toLong())
+            .toInt()
         val loadControl = DefaultLoadControl.Builder()
-            .setBufferDurationsMs(15_000, 50_000, 1_000, 2_500)
-            .setPrioritizeTimeOverSizeThresholds(true)
+            .setBufferDurationsMs(15_000, 60 * 60_000, 1_000, 2_500)
+            .setTargetBufferBytes(target)
+            .setPrioritizeTimeOverSizeThresholds(false)
             .build()
         player = ExoPlayer.Builder(context, renderers)
             .setTrackSelector(trackSelector)

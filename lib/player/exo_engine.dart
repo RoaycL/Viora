@@ -36,7 +36,7 @@ class ExoEngine extends PlayerEngine {
     _sub = _eventStream!.listen((e) {
       if (e['id'] == _id) _onEvent(e);
     });
-    final id = await _channel.invokeMethod<int>('create');
+    final id = await _channel.invokeMethod<int>('create', {'bufferBytes': options.bufferBytes});
     _id = id;
     _idReady.complete(id!);
     return id;
