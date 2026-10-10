@@ -7,7 +7,9 @@ import 'package:dio/dio.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:viora/data/config/app_config.dart';
 import 'package:viora/data/emby/emby_client.dart';
+import 'package:viora/data/index/media_index.dart';
 import 'package:viora/data/media/media_models.dart';
+import 'package:viora/player/preload.dart';
 
 void main() {
   final live = Platform.environment['VIORA_LIVE'] == '1';
@@ -68,4 +70,137 @@ void main() {
     );
     expect(ir.statusCode, 200);
   }, skip: live ? false : '需要 VIORA_LIVE=1');
+
+  test('Jellyfin 演示服：同步索引（分页 + 增量参数）并搜索', () async {
+    var server = const ServerConfig(
+      id: 'demo',
+      type: ServerType.jellyfin,
+      name: 'Jellyfin Demo',
+      username: 'demo',
+      lines: [ServerLine(id: 'ok', name: '主线路', url: 'https://demo.jellyfin.org/stable')],
+    );
+    final client = EmbyClient(
+      config: const AppConfig(deviceId: 'viora-test'),
+      server: server,
+      appVersion: '0.4.0',
+      onServerChanged: (s) => server = s,
+    );
+    final index = (await MediaIndex.open(path: ':memory:'))!;
+    final gen = index.beginFull('demo');
+    var start = 0;
+    while (true) {
+      final page = await client.items(start: start, limit: 50, sortBy: 'DateCreated,SortName', sortOrder: 'Ascending');
+      index.upsert('demo', page.items, gen: gen);
+      start += page.items.length;
+      if (page.items.isEmpty || start >= page.total) break;
+    }
+    index.finishFull('demo', gen);
+    expect(index.count('demo'), greaterThan(5));
+
+    // 增量：只取最近修改过的（参数被服务器接受即可）
+    final incr = await client.items(limit: 10, minDateLastSaved: DateTime.now().subtract(const Duration(days: 3650)));
+    expect(incr.total, greaterThanOrEqualTo(0));
+
+    final hits = index.search('sahara');
+    expect(hits, isNotEmpty);
+    expect(index.matches(hits.first).first.id, hits.first.id);
+    index.close();
+  }, skip: live ? false : '需要 VIORA_LIVE=1');
+
+  test('经反向代理（emby-reverse-proxy-go）访问：登录、播放信息、直链 Range、图片', () async {
+    final proxyBase = Platform.environment['VIORA_PROXY'] ?? 'https://embyproxy.roayc.com/proxy/';
+    var server = const ServerConfig(
+      id: 'demo-proxy',
+      type: ServerType.jellyfin,
+      name: 'Jellyfin Demo（反代）',
+      username: 'demo',
+      lines: [ServerLine(id: 'p', name: '反代线路', url: 'https://demo.jellyfin.org/stable', proxied: true)],
+    );
+    final client = EmbyClient(
+      config: AppConfig(
+        deviceId: 'viora-test',
+        proxy: ProxyConfig(baseUrl: proxyBase),
+      ),
+      server: server,
+      appVersion: '0.5.0',
+      onServerChanged: (s) => server = s,
+    );
+    await client.login();
+    expect(server.token, isNotNull);
+    final libs = await client.libraries();
+    final movies = libs.firstWhere((l) => l.collectionType == 'movies', orElse: () => libs.first);
+    final page = await client.items(parentId: movies.id, limit: 5);
+    final movie = page.items.firstWhere((i) => i.kind == MediaKind.movie, orElse: () => page.items.first);
+    final info = await client.playbackInfo(movie.id);
+    final req = client.stream(info.sources.first, playSessionId: info.playSessionId);
+    expect(req.url.toString(), startsWith(proxyBase));
+    final r = await Dio().getUri<dynamic>(
+      req.url,
+      options: Options(
+        headers: {...req.headers, 'Range': 'bytes=0-1023'},
+        responseType: ResponseType.bytes,
+        validateStatus: (_) => true,
+      ),
+    );
+    expect(r.statusCode, anyOf(200, 206));
+    final img = client.image(movie.primary!);
+    expect(img.url.toString(), startsWith(proxyBase));
+    final ir = await Dio().getUri<dynamic>(
+      img.url,
+      options: Options(headers: img.headers, responseType: ResponseType.bytes, validateStatus: (_) => true),
+    );
+    expect(ir.statusCode, 200);
+  }, skip: live ? false : '需要 VIORA_LIVE=1');
+
+  test(
+    '播放预加载：播放信息缓存 + 视频预热（经反向代理）',
+    () async {
+      final proxyBase = Platform.environment['VIORA_PROXY'] ?? 'https://embyproxy.roayc.com/proxy/';
+      var server = const ServerConfig(
+        id: 'demo-preload',
+        type: ServerType.jellyfin,
+        name: 'Jellyfin Demo（反代）',
+        username: 'demo',
+        lines: [ServerLine(id: 'p', name: '反代线路', url: 'https://demo.jellyfin.org/stable', proxied: true)],
+      );
+      final client = EmbyClient(
+        config: AppConfig(
+          deviceId: 'viora-test',
+          proxy: ProxyConfig(baseUrl: proxyBase),
+        ),
+        server: server,
+        appVersion: '0.6.0',
+        onServerChanged: (s) => server = s,
+      );
+      final libs = await client.libraries();
+      final movies = libs.firstWhere((l) => l.collectionType == 'movies', orElse: () => libs.first);
+      final page = await client.items(parentId: movies.id, limit: 5);
+      final movie = page.items.firstWhere((i) => i.kind == MediaKind.movie, orElse: () => page.items.first);
+      PlaybackPreloader.reset();
+
+      final sw = Stopwatch()..start();
+      await PlaybackPreloader.preload(client, movie);
+      final preloadMs = sw.elapsedMilliseconds;
+      expect(PlaybackPreloader.cached(server.id, movie.id), isNotNull);
+
+      sw.reset();
+      final info = await PlaybackPreloader.info(client, server.id, movie.id);
+      final cachedMs = sw.elapsedMilliseconds;
+      expect(info.sources, isNotEmpty);
+      expect(cachedMs, lessThan(50));
+
+      // 预热后再读片头（模拟播放器打开）
+      final req = client.stream(info.sources.first, playSessionId: info.playSessionId);
+      sw.reset();
+      final r = await Dio().getUri<dynamic>(
+        req.url,
+        options: Options(headers: {...req.headers, 'Range': 'bytes=0-65535'}, responseType: ResponseType.bytes),
+      );
+      expect(r.statusCode, anyOf(200, 206));
+      // ignore: avoid_print
+      print('预加载（播放信息 + 预热）${preloadMs}ms；之后取播放信息 ${cachedMs}ms，读片头 ${sw.elapsedMilliseconds}ms');
+    },
+    skip: live ? false : '需要 VIORA_LIVE=1',
+    timeout: const Timeout(Duration(minutes: 2)),
+  );
 }

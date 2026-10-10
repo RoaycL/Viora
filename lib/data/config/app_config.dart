@@ -190,6 +190,16 @@ class ProxyConfig {
       ProxyConfig(baseUrl: j['baseUrl'] as String? ?? '', scope: ProxyScope.parse(j['scope'] as String?));
 }
 
+/// Android 播放内核偏好
+enum EnginePreference {
+  /// ExoPlayer，失败时自动换 mpv
+  auto,
+  exo,
+  mpv;
+
+  static EnginePreference parse(String? s) => values.firstWhere((e) => e.name == s, orElse: () => auto);
+}
+
 class PlaybackConfig {
   const PlaybackConfig({
     this.userAgent = '',
@@ -197,7 +207,39 @@ class PlaybackConfig {
     this.clientName = 'Viora',
     this.deviceName = '',
     this.seekStepSeconds = 10,
+    this.engine = EnginePreference.auto,
+    this.autoFrameRate = true,
+    this.tunneling = false,
+    this.preload = true,
+    this.warmMb = 2,
+    this.bufferMb = 256,
+    this.clearCacheOnExit = true,
   });
+
+  /// 起播预热量（MB）：片头 / 续播位置 / 片尾合计大约读取这么多
+  final int warmMb;
+
+  /// 播放时的预读缓冲上限（MB）。Windows 超过 256MB 时缓存写到磁盘；
+  /// Android TV 受内存限制，实际最多使用可用内存的 40%
+  final int bufferMb;
+
+  /// 关闭播放器后清除播放缓存（磁盘缓存文件与预加载的数据）
+  final bool clearCacheOnExit;
+
+  static const warmChoices = [2, 8, 32, 128];
+  static const bufferChoices = [64, 256, 512, 1024, 2048];
+
+  /// 播放预加载：提前取播放信息并预热视频流（会多用少量流量）
+  final bool preload;
+
+  /// Android 播放内核（Windows 固定 mpv）
+  final EnginePreference engine;
+
+  /// 按片源帧率切换电视刷新率
+  final bool autoFrameRate;
+
+  /// 隧道播放
+  final bool tunneling;
 
   /// 全局播放 UA；空 = 使用默认 UA
   final String userAgent;
@@ -219,12 +261,26 @@ class PlaybackConfig {
     String? clientName,
     String? deviceName,
     int? seekStepSeconds,
+    EnginePreference? engine,
+    bool? autoFrameRate,
+    bool? tunneling,
+    bool? preload,
+    int? warmMb,
+    int? bufferMb,
+    bool? clearCacheOnExit,
   }) => PlaybackConfig(
     userAgent: userAgent ?? this.userAgent,
     uaForApi: uaForApi ?? this.uaForApi,
     clientName: clientName ?? this.clientName,
     deviceName: deviceName ?? this.deviceName,
     seekStepSeconds: seekStepSeconds ?? this.seekStepSeconds,
+    engine: engine ?? this.engine,
+    autoFrameRate: autoFrameRate ?? this.autoFrameRate,
+    tunneling: tunneling ?? this.tunneling,
+    preload: preload ?? this.preload,
+    warmMb: warmMb ?? this.warmMb,
+    bufferMb: bufferMb ?? this.bufferMb,
+    clearCacheOnExit: clearCacheOnExit ?? this.clearCacheOnExit,
   );
 
   Map<String, dynamic> toJson() => {
@@ -233,6 +289,13 @@ class PlaybackConfig {
     'clientName': clientName,
     'deviceName': deviceName,
     'seekStepSeconds': seekStepSeconds,
+    'engine': engine.name,
+    'autoFrameRate': autoFrameRate,
+    'tunneling': tunneling,
+    'preload': preload,
+    'warmMb': warmMb,
+    'bufferMb': bufferMb,
+    'clearCacheOnExit': clearCacheOnExit,
   };
 
   factory PlaybackConfig.fromJson(Map<String, dynamic> j) => PlaybackConfig(
@@ -241,6 +304,13 @@ class PlaybackConfig {
     clientName: (j['clientName'] as String?)?.trim().isNotEmpty == true ? j['clientName'] as String : 'Viora',
     deviceName: j['deviceName'] as String? ?? '',
     seekStepSeconds: j['seekStepSeconds'] as int? ?? 10,
+    engine: EnginePreference.parse(j['engine'] as String?),
+    autoFrameRate: j['autoFrameRate'] as bool? ?? true,
+    tunneling: j['tunneling'] as bool? ?? false,
+    preload: j['preload'] as bool? ?? true,
+    warmMb: j['warmMb'] as int? ?? 2,
+    bufferMb: j['bufferMb'] as int? ?? 256,
+    clearCacheOnExit: j['clearCacheOnExit'] as bool? ?? true,
   );
 }
 
@@ -257,7 +327,12 @@ class TmdbConfig {
   /// 通过「反向代理」访问 TMDB
   final bool useProxy;
 
-  bool get enabled => apiKey.trim().isNotEmpty;
+  /// 构建时内置的读取令牌（CI 用 `--dart-define=VIORA_TMDB_TOKEN=...` 注入）；用户填写的优先
+  static const builtinToken = String.fromEnvironment('VIORA_TMDB_TOKEN');
+
+  String get effectiveKey => apiKey.trim().isNotEmpty ? apiKey.trim() : builtinToken;
+
+  bool get enabled => effectiveKey.isNotEmpty;
 
   String get effectiveBaseUrl {
     final b = baseUrl.trim().replaceAll(RegExp(r'/+$'), '');

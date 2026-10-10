@@ -2,14 +2,16 @@ import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 
 import '../features/browse/server_page.dart';
-import '../features/common/placeholder_page.dart';
-import '../features/detail/detail_page.dart';
+import '../features/collections/collections_pages.dart';
 import '../features/detail/item_detail_page.dart';
 import '../features/home/home_page.dart';
 import '../features/library/library_page.dart';
 import '../features/library/server_edit_page.dart';
 import '../features/player/player_page.dart';
+import '../features/search/search_page.dart';
 import '../features/settings/settings_page.dart';
+import '../features/tmdb/tmdb_detail_page.dart';
+import '../features/tmdb/tmdb_grid_page.dart';
 import 'shell.dart';
 
 final rootNavigatorKey = GlobalKey<NavigatorState>(debugLabel: 'root');
@@ -52,19 +54,18 @@ GoRouter buildRouter() {
               ),
             ),
           ),
-          _tab(
-            '/search',
-            const PlaceholderPage(
-              title: '搜索',
-              milestone: 'M3',
-              description: '聚合搜索：本地索引 + TMDB + 各服务器实时搜索，拼音首字母键盘与语音输入。',
-            ),
+          GoRoute(
+            path: '/search',
+            pageBuilder: (context, state) {
+              final q = state.uri.queryParameters['q'] ?? '';
+              return NoTransitionPage<void>(
+                key: state.pageKey,
+                child: SearchPage(key: ValueKey(q), initialQuery: q),
+              );
+            },
           ),
-          _tab('/favorites', const PlaceholderPage(title: '收藏', milestone: 'M3', description: '跨服务器的统一收藏，按作品聚合。')),
-          _tab(
-            '/history',
-            const PlaceholderPage(title: '观看记录', milestone: 'M3', description: '本地统一观看记录（按 TMDB ID 聚合），与各服务器进度同步。'),
-          ),
+          _tab('/favorites', const FavoritesPage()),
+          _tab('/history', const HistoryPage()),
           _tab('/settings', const SettingsPage()),
         ],
       ),
@@ -90,12 +91,20 @@ GoRouter buildRouter() {
         ),
       ),
       GoRoute(
-        path: '/detail/:id',
-        pageBuilder: (context, state) => CustomTransitionPage<void>(
-          key: state.pageKey,
-          child: DetailPage(id: state.pathParameters['id']!),
-          transitionsBuilder: (context, animation, _, child) => FadeTransition(opacity: animation, child: child),
-        ),
+        path: '/tmdb/:type/:id',
+        pageBuilder: (context, state) {
+          final type = state.pathParameters['type']!;
+          final id = int.tryParse(state.pathParameters['id']!) ?? 0;
+          return CustomTransitionPage<void>(
+            key: state.pageKey,
+            child: switch (type) {
+              'person' => TmdbPersonPage(id: id),
+              'network' => TmdbNetworkPage(id: id, name: state.uri.queryParameters['name'] ?? '播出平台'),
+              _ => TmdbDetailPage(isTv: type == 'tv', id: id),
+            },
+            transitionsBuilder: (context, animation, _, child) => FadeTransition(opacity: animation, child: child),
+          );
+        },
       ),
     ],
   );

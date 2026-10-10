@@ -6,6 +6,7 @@ import '../../app/theme.dart';
 import '../../data/config/app_config.dart';
 import '../../data/config/config_store.dart';
 import '../../data/emby/emby_client.dart';
+import '../../data/index/index_sync.dart';
 import '../../data/media/server_registry.dart';
 import '../../ui/focus/focus_auto_scroll.dart';
 import '../../ui/glass/glass.dart';
@@ -121,6 +122,12 @@ class _ServerEditPageState extends ConsumerState<ServerEditPage> {
         server = server.copyWith(movieCount: c.movies, seriesCount: c.series);
       } catch (_) {}
       await ref.read(configProvider.notifier).upsertServer(server);
+      // 新服务器 / 修改后重建这台服务器的聚合索引（后台进行）
+      final id = server.id;
+      Future<void>.delayed(
+        const Duration(milliseconds: 500),
+        () => ref.read(indexSyncProvider.notifier).syncServer(id, forceFull: true),
+      );
       showToast('已保存「${server.name}」');
       if (mounted) context.go('/library');
     } catch (e) {
@@ -142,7 +149,6 @@ class _ServerEditPageState extends ConsumerState<ServerEditPage> {
             Text(editing ? '编辑服务器' : '添加服务器', style: VText.h1),
             const SizedBox(height: 32),
             Glass(
-              width: 1100,
               padding: const EdgeInsets.all(44),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
@@ -160,23 +166,30 @@ class _ServerEditPageState extends ConsumerState<ServerEditPage> {
                     autofocus: !editing,
                     hint: 'https://emby.example.com:8920',
                     keyboardType: TextInputType.url,
-                    width: 1000,
                     helper: 'Emby 会自动补 /emby 路径；没写协议时默认 http://',
                   ),
                   const SizedBox(height: 24),
                   Row(
                     children: [
-                      VTextField(label: '用户名', controller: _user, width: 488),
+                      Expanded(
+                        child: VTextField(label: '用户名', controller: _user),
+                      ),
                       const SizedBox(width: 24),
-                      VTextField(label: '密码', controller: _pass, obscure: true, width: 488),
+                      Expanded(
+                        child: VTextField(label: '密码', controller: _pass, obscure: true),
+                      ),
                     ],
                   ),
                   const SizedBox(height: 24),
                   Row(
                     children: [
-                      VTextField(label: '显示名称（可留空，自动读取服务器名）', controller: _name, width: 488),
+                      Expanded(
+                        child: VTextField(label: '显示名称（可留空，自动读取服务器名）', controller: _name),
+                      ),
                       const SizedBox(width: 24),
-                      VTextField(label: '播放 UA（留空使用全局设置）', controller: _ua, width: 488),
+                      Expanded(
+                        child: VTextField(label: '播放 UA（留空使用全局设置）', controller: _ua),
+                      ),
                     ],
                   ),
                   const SizedBox(height: 28),
@@ -184,11 +197,10 @@ class _ServerEditPageState extends ConsumerState<ServerEditPage> {
                     label: '线路走反向代理',
                     subtitle: '需要先在「设置 → 反向代理」填写完整地址',
                     value: _proxied,
-                    width: 1000,
                     onChanged: (v) => setState(() => _proxied = v),
                   ),
                   const SizedBox(height: 12),
-                  VToggle(label: '成人内容（R18）', value: _adult, width: 1000, onChanged: (v) => setState(() => _adult = v)),
+                  VToggle(label: '成人内容（R18）', value: _adult, onChanged: (v) => setState(() => _adult = v)),
                   const SizedBox(height: 32),
                   if (_error != null) ...[
                     Text(_error!, style: VText.label.copyWith(color: VColors.bad)),

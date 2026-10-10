@@ -3,9 +3,11 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../app/theme.dart';
+import '../../data/aggregate/sources.dart';
 import '../../data/media/media_models.dart';
 import '../../data/media/server_registry.dart';
 import '../../data/tmdb/tmdb_client.dart';
+import '../../player/preload.dart';
 import '../../ui/focus/focusable.dart';
 import '../../ui/focus/row_focus.dart';
 import '../../ui/rows/cards.dart';
@@ -14,6 +16,7 @@ import '../../ui/widgets/buttons.dart';
 import '../../ui/widgets/server_image.dart';
 import '../../ui/widgets/toast.dart';
 import '../browse/media_cards.dart';
+import '../tmdb/tmdb_detail_page.dart';
 
 typedef _Key = ({String serverId, String itemId});
 
@@ -34,12 +37,6 @@ final _nextUpProvider = FutureProvider.family<MediaItem?, _Key>((ref, k) async {
   return c?.nextUp(k.itemId);
 });
 
-final _sourcesProvider = FutureProvider.family<List<MediaSourceInfo>, _Key>((ref, k) async {
-  final c = ref.watch(serverClientProvider(k.serverId));
-  if (c == null) return const [];
-  return (await c.playbackInfo(k.itemId)).sources;
-});
-
 /// 媒体服务器条目的详情页（效果图：详情页 · 首屏 / 下滑）。
 class ItemDetailPage extends ConsumerStatefulWidget {
   const ItemDetailPage({super.key, required this.serverId, required this.itemId});
@@ -53,8 +50,29 @@ class ItemDetailPage extends ConsumerStatefulWidget {
 
 class _ItemDetailPageState extends ConsumerState<ItemDetailPage> {
   String? _seasonId;
+  String? _group;
   bool? _favorite;
   bool? _played;
+
+  /// 已预热的默认版本（同一版本只预热一次）
+  String? _warmedKey;
+
+  /// 播放资源出来后预热默认版本：按下播放时服务器 / 反代 / 网盘直链都已就绪
+  void _warmDefault(SourceOption o) {
+    final key = '${o.serverId}/${o.item.id}/${o.source.id}';
+    if (_warmedKey == key) return;
+    _warmedKey = key;
+    final client = ref.read(serverClientProvider(o.serverId));
+    if (client == null) return;
+    WidgetsBinding.instance.addPostFrameCallback(
+      (_) => PlaybackPreloader.warm(
+        client,
+        o.source,
+        playSessionId: PlaybackPreloader.cached(o.serverId, o.item.id)?.playSessionId,
+        position: o.item.position,
+      ),
+    );
+  }
 
   _Key get _key => (serverId: widget.serverId, itemId: widget.itemId);
 
@@ -94,13 +112,41 @@ class _ItemDetailPageState extends ConsumerState<ItemDetailPage> {
               const <MediaItem>[]
         : const <MediaItem>[];
     final nextUp = isSeries ? ref.watch(_nextUpProvider(_key)).value : null;
-    final sources = item.playable ? ref.watch(_sourcesProvider(_key)).value ?? const <MediaSourceInfo>[] : const [];
 
     final zh = localizedMeta(ref, item);
+    // TMDB 补全：演职员与相似推荐
+    final tmdbId = int.tryParse(item.tmdbId ?? '');
+    final tmdb = tmdbId != null && (isSeries || item.kind == MediaKind.movie)
+        ? ref.watch(tmdbTitleProvider((isTv: isSeries, id: tmdbId))).value
+        : null;
     final favorite = _favorite ?? item.favorite;
     final played = _played ?? item.played;
     final playTarget = isSeries ? (nextUp ?? episodes.firstOrNull) : item;
     final resumeAt = playTarget?.position ?? Duration.zero;
+    // 所有服务器上的可播放版本（已按偏好服务器 / 分辨率 / 延迟 / 码率排序）
+    final optionsAsync = playTarget == null
+        ? null
+        : ref.watch(sourceOptionsProvider((serverId: playTarget.serverId, itemId: playTarget.id)));
+    final options = optionsAsync?.value ?? const <SourceOption>[];
+    if (options.isNotEmpty) _warmDefault(options.first);
+    final groups = [
+      for (final g in const ['4K', '1080P', '其他'])
+        if (options.any((o) => o.group == g)) g,
+    ];
+    final group = groups.contains(_group) ? _group! : groups.firstOrNull;
+    final shown = options.where((o) => o.group == group).toList();
+    final serverCount = options.map((o) => o.serverId).toSet().length;
+    void play(SourceOption? o, {bool fromStart = false}) {
+      final target = playTarget;
+      if (target == null) return;
+      if (o == null) {
+        playMediaItem(context, target, fromStart: fromStart);
+        return;
+      }
+      rememberSource(item, o.serverId);
+      context.push(o.playRoute(position: fromStart ? Duration.zero : o.item.position));
+    }
+
     final playLabel = switch (playTarget) {
       null => '暂无可播放内容',
       final t when resumeAt > Duration.zero =>
@@ -123,7 +169,7 @@ class _ItemDetailPageState extends ConsumerState<ItemDetailPage> {
           child: ServerImage(
             serverId: widget.serverId,
             image: item.backdrop ?? item.primary,
-            maxWidth: 1920,
+            width: 1920,
             fallbackSeed: item.id,
             alignment: Alignment.topRight,
           ),
@@ -216,14 +262,14 @@ class _ItemDetailPageState extends ConsumerState<ItemDetailPage> {
                           large: true,
                           icon: Icons.play_arrow_rounded,
                           label: playLabel,
-                          onPressed: playTarget == null ? null : () => playMediaItem(context, playTarget),
+                          onPressed: playTarget == null ? null : () => play(options.firstOrNull),
                         ),
                         if (resumeAt > Duration.zero)
                           (node) => PillButton(
                             focusNode: node,
                             icon: Icons.replay_rounded,
                             label: '从头播放',
-                            onPressed: () => playMediaItem(context, playTarget!, fromStart: true),
+                            onPressed: () => play(options.firstOrNull, fromStart: true),
                           ),
                         (node) => CircleIconButton(
                           focusNode: node,
@@ -273,22 +319,58 @@ class _ItemDetailPageState extends ConsumerState<ItemDetailPage> {
                         onMenu: () => openMediaItem(context, episodes[i]),
                       ),
                     ),
-                  if (sources.isNotEmpty)
-                    FocusRow(
-                      rowIndex: 3,
-                      leading: VSpace.safeH,
-                      title: '播放资源 · ${sources.length} 个版本',
-                      itemCount: sources.length,
-                      itemExtent: 400,
-                      height: 200,
-                      itemBuilder: (context, i, node) => _SourceCard(
-                        node: node,
-                        source: sources[i],
-                        onTap: () => context.push(
-                          '/play/${widget.serverId}/${item.id}?pos=${item.position.inMilliseconds}&source=${sources[i].id}',
-                        ),
+                  if (optionsAsync != null && optionsAsync.isLoading && options.isEmpty)
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(VSpace.safeH, 24, VSpace.safeH, 0),
+                      child: Text('正在查找各服务器上的资源…', style: VText.label.copyWith(color: VColors.textTertiary)),
+                    ),
+                  if (options.isNotEmpty) ...[
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(VSpace.safeH, 24, VSpace.safeH, 16),
+                      child: Row(
+                        crossAxisAlignment: CrossAxisAlignment.center,
+                        children: [
+                          Text('播放资源', style: VText.rowTitle.copyWith(color: const Color(0xEBFFFFFF))),
+                          const SizedBox(width: 16),
+                          Text(
+                            '${options.length} 个版本 · $serverCount 台服务器'
+                            '${playTarget?.episodeLabel == null ? '' : ' · ${playTarget!.episodeLabel}'}',
+                            style: VText.caption.copyWith(color: VColors.textTertiary),
+                          ),
+                        ],
                       ),
                     ),
+                    Padding(
+                      padding: const EdgeInsets.only(left: VSpace.safeH),
+                      child: FocusButtonRow(
+                        rowIndex: 3,
+                        spacing: 12,
+                        children: [
+                          for (final g in groups)
+                            (node) => _SeasonChip(
+                              node: node,
+                              label: '$g · ${options.where((o) => o.group == g).length}',
+                              selected: g == group,
+                              onTap: () => setState(() => _group = g),
+                            ),
+                        ],
+                      ),
+                    ),
+                    FocusRow(
+                      rowIndex: 4,
+                      leading: VSpace.safeH,
+                      itemCount: shown.length,
+                      itemExtent: 420,
+                      height: 220,
+                      itemBuilder: (context, i, node) => _SourceCard(
+                        node: node,
+                        option: shown[i],
+                        isDefault: identical(shown[i], options.first),
+                        onTap: () => play(shown[i]),
+                      ),
+                    ),
+                  ],
+                  if (tmdb != null) ...[const SizedBox(height: 24), ...tmdbExtraRows(tmdb, firstRow: 5)],
                 ],
               ),
             ),
@@ -345,7 +427,7 @@ class _Title extends StatelessWidget {
       child: ServerImage(
         serverId: serverId,
         image: item.logo,
-        maxWidth: 800,
+        width: 640,
         fit: BoxFit.contain,
         alignment: Alignment.centerLeft,
         fallbackSeed: item.id,
@@ -392,16 +474,18 @@ class _SeasonChip extends StatelessWidget {
   }
 }
 
-/// 播放资源卡片（效果图：详情页 · 下滑）
+/// 播放资源卡片（效果图：详情页 · 下滑）：版本参数 + 所在服务器与线路延迟
 class _SourceCard extends StatelessWidget {
-  const _SourceCard({required this.node, required this.source, required this.onTap});
+  const _SourceCard({required this.node, required this.option, required this.onTap, this.isDefault = false});
 
   final FocusNode node;
-  final MediaSourceInfo source;
+  final SourceOption option;
   final VoidCallback onTap;
+  final bool isDefault;
 
   @override
   Widget build(BuildContext context) {
+    final source = option.source;
     final v = source.video;
     final a = source.audio.firstOrNull;
     final rangeColor = switch (v?.range) {
@@ -417,6 +501,7 @@ class _SourceCard extends StatelessWidget {
         '${a.codec?.toUpperCase() ?? ''} ${a.channels == null ? '' : (a.channels! >= 6 ? '${a.channels! - 1}.1' : '${a.channels}.0')}'
             .trim(),
     ].join(' · ');
+    final latency = option.latencyMs;
     return VFocusable(
       focusNode: node,
       radius: 22,
@@ -424,8 +509,8 @@ class _SourceCard extends StatelessWidget {
       onActivate: onTap,
       builder: (context, focused) => AnimatedContainer(
         duration: VMotion.focus,
-        width: 400,
-        height: 200,
+        width: 420,
+        height: 220,
         padding: const EdgeInsets.all(24),
         decoration: BoxDecoration(
           color: focused ? const Color(0x29FFFFFF) : const Color(0x12FFFFFF),
@@ -442,10 +527,17 @@ class _SourceCard extends StatelessWidget {
                   style: TextStyle(fontSize: 26, fontWeight: FontWeight.w700, color: rangeColor),
                 ),
                 const Spacer(),
-                Text(
-                  source.container.split(',').first.toUpperCase(),
-                  style: VText.small.copyWith(color: VColors.textTertiary),
-                ),
+                if (isDefault)
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 3),
+                    decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(999)),
+                    child: const Text('默认', style: TextStyle(fontSize: 15, color: Color(0xFF0B0C10))),
+                  )
+                else
+                  Text(
+                    source.container.split(',').first.toUpperCase(),
+                    style: VText.small.copyWith(color: VColors.textTertiary),
+                  ),
               ],
             ),
             const SizedBox(height: 12),
@@ -464,11 +556,21 @@ class _SourceCard extends StatelessWidget {
               overflow: TextOverflow.ellipsis,
             ),
             const Spacer(),
-            Text(
-              source.name ?? '',
-              style: VText.small.copyWith(color: VColors.textSecondary),
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
+            Container(height: 1, color: const Color(0x1AFFFFFF)),
+            const SizedBox(height: 12),
+            Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    option.serverName,
+                    style: VText.small.copyWith(fontWeight: FontWeight.w600),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
+                if (latency != null)
+                  Text('$latency ms', style: VText.small.copyWith(color: latency < 150 ? VColors.ok : VColors.warn)),
+              ],
             ),
           ],
         ),

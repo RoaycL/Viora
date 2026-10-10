@@ -29,6 +29,13 @@ class ImageRef {
   final ImageKind kind;
   final String? tag;
   final int index;
+
+  List<Object?> toJson() => [itemId, kind.index, tag];
+
+  static ImageRef? fromJson(Object? j) {
+    if (j is! List || j.length < 2) return null;
+    return ImageRef(j[0] as String, ImageKind.values[j[1] as int], tag: j.length > 2 ? j[2] as String? : null);
+  }
 }
 
 class Library {
@@ -58,6 +65,7 @@ class MediaItem {
     this.runtime,
     this.tmdbId,
     this.imdbId,
+    this.tvdbId,
     this.primary,
     this.backdrop,
     this.thumb,
@@ -73,6 +81,7 @@ class MediaItem {
     this.position = Duration.zero,
     this.playedPercentage,
     this.dateCreated,
+    this.lastPlayed,
   });
 
   final String serverId;
@@ -89,6 +98,7 @@ class MediaItem {
   final Duration? runtime;
   final String? tmdbId;
   final String? imdbId;
+  final String? tvdbId;
   final ImageRef? primary;
   final ImageRef? backdrop;
   final ImageRef? thumb;
@@ -107,6 +117,9 @@ class MediaItem {
   final double? playedPercentage;
   final DateTime? dateCreated;
 
+  /// 上次播放时间（继续观看跨服务器排序）
+  final DateTime? lastPlayed;
+
   bool get playable => kind == MediaKind.movie || kind == MediaKind.episode || kind == MediaKind.other;
 
   /// 进度 0~1；没有进度时为 null
@@ -116,6 +129,45 @@ class MediaItem {
     if (position > Duration.zero && total > 0) return (position.inMilliseconds / total).clamp(0, 1);
     return null;
   }
+
+  /// 聚合索引里保存的字段（只用于电影 / 剧集卡片与匹配）
+  Map<String, Object?> toIndexJson() => {
+    'k': kind.index,
+    'n': name,
+    'o': originalTitle,
+    'y': year,
+    'r': rating,
+    'g': genres,
+    't': tmdbId,
+    'i': imdbId,
+    'v': tvdbId,
+    'p': primary?.toJson(),
+    'b': backdrop?.toJson(),
+    'l': logo?.toJson(),
+    'c': childCount,
+    'd': dateCreated?.millisecondsSinceEpoch,
+    'ov': overview,
+  };
+
+  static MediaItem fromIndexJson(String serverId, String id, Map<String, Object?> j) => MediaItem(
+    serverId: serverId,
+    id: id,
+    kind: MediaKind.values[j['k'] as int? ?? MediaKind.other.index],
+    name: j['n'] as String? ?? '',
+    originalTitle: j['o'] as String?,
+    year: j['y'] as int?,
+    rating: (j['r'] as num?)?.toDouble(),
+    genres: (j['g'] as List?)?.cast<String>() ?? const [],
+    tmdbId: j['t'] as String?,
+    imdbId: j['i'] as String?,
+    tvdbId: j['v'] as String?,
+    primary: ImageRef.fromJson(j['p']),
+    backdrop: ImageRef.fromJson(j['b']),
+    logo: ImageRef.fromJson(j['l']),
+    childCount: j['c'] as int?,
+    dateCreated: j['d'] == null ? null : DateTime.fromMillisecondsSinceEpoch(j['d'] as int),
+    overview: j['ov'] as String?,
+  );
 
   /// `S1E3` 这样的集号
   String? get episodeLabel => seasonNumber != null && episodeNumber != null ? 'S${seasonNumber}E$episodeNumber' : null;

@@ -4,24 +4,38 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
-import 'package:media_kit/media_kit.dart';
-import 'package:media_kit_video/media_kit_video.dart';
 
 import '../../app/input/intents.dart';
+import '../../app/platform_profile.dart';
 import '../../app/theme.dart';
+import '../../data/aggregate/sources.dart';
+import '../../data/config/app_config.dart';
 import '../../data/config/config_store.dart';
 import '../../data/emby/emby_client.dart';
 import '../../data/media/media_models.dart';
 import '../../data/media/server_registry.dart';
+import '../../player/engine.dart';
+import '../../player/exo_engine.dart';
+import '../../player/mpv_engine.dart';
+import '../../player/playback_cache.dart';
+import '../../player/preload.dart';
+import '../../player/segment_playback_session.dart';
+import '../../player/segment_skip_controller.dart';
+import '../../domain/models/segment.dart';
+import '../../data/index/media_index.dart';
+import '../segments/segment_service.dart';
 import '../../ui/glass/glass.dart';
+import '../../ui/scale/design_scale.dart';
 import '../../ui/panels/context_menu.dart';
 import '../../ui/rows/cards.dart';
 import '../../ui/widgets/buttons.dart';
+import '../../ui/widgets/toast.dart';
 import '../browse/media_cards.dart';
 
 /// 播放页（docs/08-player.md、docs/07-input-control.md §3）。
 ///
-/// M1：mpv（media_kit）内核，Windows 与 Android 通用；Android 的 ExoPlayer 内核在 M2 加入。
+/// 内核：Windows 用 mpv；Android 默认 ExoPlayer（HDR / 音频直通、自动帧率），
+/// ExoPlayer 解码或格式不支持时自动换 mpv 重试。
 class PlayerPage extends ConsumerStatefulWidget {
   const PlayerPage({super.key, required this.serverId, required this.itemId, this.startMs = 0, this.sourceId});
 
@@ -35,104 +49,186 @@ class PlayerPage extends ConsumerStatefulWidget {
 }
 
 class _PlayerPageState extends ConsumerState<PlayerPage> {
-  late final Player _player = Player(
-    configuration: const PlayerConfiguration(title: 'Viora', bufferSize: 64 * 1024 * 1024),
-  );
-  late final VideoController _video = VideoController(_player);
   final _focus = FocusNode(debugLabel: 'player');
-  final _subs = <StreamSubscription<Object?>>[];
+  final _engineSubs = <StreamSubscription<Object?>>[];
 
+  PlayerEngine? _engine;
   EmbyClient? _client;
   MediaItem? _item;
   MediaSourceInfo? _source;
-  List<MediaSourceInfo> _sources = const [];
   String? _playSessionId;
+  PlaybackRequest? _request;
   String? _error;
-  String? _userAgent;
+
+  /// 本次播放已经从 ExoPlayer 回退过 mpv
+  bool _fellBack = false;
 
   bool _osd = true;
+  bool _info = false;
   Timer? _osdTimer;
   Timer? _progressTimer;
   bool _started = false;
   bool _stopped = false;
+  bool _wasPlaying = false;
+
+  /// 片头片尾（docs/05 §3）：起播后后台解析，不阻塞播放
+  SegmentPlaybackSession? _segments;
+  SegmentSkipAction? _skipPrompt;
+  List<Segment> _segmentList = const [];
+
+  /// 剧集看到 85% 时预加载的下一集（播完直接跳过去，起播更快）
+  MediaItem? _nextEpisode;
+  bool _nextPreloading = false;
 
   /// 累加快进 / 快退（连续按键 0.8 秒后才真正 seek）
   Duration? _pendingSeek;
   Timer? _seekTimer;
 
+  EngineState get _state => _engine?.state.value ?? const EngineState();
+
   @override
   void initState() {
     super.initState();
     SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
-    _subs.addAll([
-      _player.stream.playing.listen((playing) {
-        if (!_started && playing) {
-          _started = true;
-          _report(start: true);
-        } else if (_started) {
-          _report(event: playing ? 'Unpause' : 'Pause');
-        }
-        _showOsd();
-      }),
-      _player.stream.completed.listen((done) {
-        if (done) _onCompleted();
-      }),
-      _player.stream.error.listen((e) {
-        if (!_started && mounted) setState(() => _error = e);
-      }),
-    ]);
+    // 视频画面要实时更新：播放时调整窗口大小不用界面快照
+    DesignScale.snapshotAllowed.value = false;
     _progressTimer = Timer.periodic(const Duration(seconds: 10), (_) {
-      if (_started && _player.state.playing) _report();
+      if (_started && _state.playing) _report();
     });
-    _open();
+    _start();
   }
 
-  Future<void> _open({String? sourceId, Duration? at}) async {
+  // ───────────────────────── 内核 ─────────────────────────
+
+  /// 磁盘缓存目录（进入播放页时准备好）
+  String? _cacheDir;
+
+  /// 播放器直接切到下一集 / 其他服务器的版本（关闭时保留预加载数据）
+  bool _handoff = false;
+
+  EngineOptions get _options {
+    final p = ref.read(configProvider).playback;
+    return EngineOptions(
+      autoFrameRate: p.autoFrameRate,
+      tunneling: p.tunneling,
+      bufferBytes: p.bufferMb * 1024 * 1024,
+      cacheDir: _cacheDir,
+    );
+  }
+
+  PlayerEngine _createEngine({bool forceMpv = false, bool forceExo = false}) {
+    final p = ref.read(configProvider).playback;
+    final useExo = ExoEngine.supported && (forceExo || (!forceMpv && p.engine != EnginePreference.mpv));
+    return useExo ? ExoEngine(options: _options) : MpvEngine(options: _options);
+  }
+
+  Future<void> _attachEngine(PlayerEngine engine) async {
+    for (final s in _engineSubs) {
+      await s.cancel();
+    }
+    _engineSubs.clear();
+    final old = _engine;
+    if (old != null) {
+      old.state.removeListener(_onEngineState);
+      setState(() => _engine = null);
+      await old.dispose();
+    }
+    _engine = engine;
+    engine.state.addListener(_onEngineState);
+    _engineSubs.addAll([engine.completed.listen((_) => _onCompleted()), engine.errors.listen(_onEngineError)]);
+    if (mounted) setState(() {});
+  }
+
+  void _onEngineState() {
+    final s = _state;
+    _segments?.onPosition(s.position);
+    if (!_nextPreloading &&
+        s.duration > Duration.zero &&
+        s.position.inMilliseconds > s.duration.inMilliseconds * 0.85) {
+      _preloadNext();
+    }
+    if (s.playing != _wasPlaying) {
+      _wasPlaying = s.playing;
+      if (!_started && s.playing) {
+        _started = true;
+        _report(start: true);
+      } else if (_started) {
+        _report(event: s.playing ? 'Unpause' : 'Pause');
+      }
+      _showOsd();
+    }
+  }
+
+  Future<void> _onEngineError(EngineError e) async {
+    final engine = _engine;
+    final auto = ref.read(configProvider).playback.engine == EnginePreference.auto;
+    if (engine is ExoEngine && e.canFallback && auto && !_fellBack) {
+      _fellBack = true;
+      showToast('ExoPlayer 无法播放（${e.message}），已切换到 mpv');
+      await _switchEngine(forceMpv: true);
+      return;
+    }
+    if (!_started && mounted) setState(() => _error = e.message);
+  }
+
+  Future<void> _switchEngine({bool forceMpv = false, bool forceExo = false}) async {
+    final at = _state.position > Duration.zero ? _state.position : Duration(milliseconds: widget.startMs);
+    await _attachEngine(_createEngine(forceMpv: forceMpv, forceExo: forceExo));
+    await _openCurrent(at);
+  }
+
+  Future<void> _openCurrent(Duration at) async {
+    final req = _request;
+    final engine = _engine;
+    if (req == null || engine == null) return;
+    final headers = {...req.headers}..remove('User-Agent');
+    await engine.open(EngineMedia(url: req.url, headers: headers, userAgent: req.userAgent, start: at));
+  }
+
+  // ───────────────────────── 打开媒体 ─────────────────────────
+
+  Future<void> _start({String? sourceId, Duration? at}) async {
     try {
       final client = ref.read(serverClientProvider(widget.serverId));
       if (client == null) throw const MediaServerException('服务器不存在');
       _client = client;
-      _item ??= await client.item(widget.itemId);
-      final info = await client.playbackInfo(widget.itemId);
+      // 并行：创建播放内核、取条目信息、取播放信息（详情页 / 首页已预加载时直接命中缓存）
+      _cacheDir ??= await PlaybackCache.dir();
+      final engineReady = _engine == null ? _attachEngine(_createEngine()) : Future<void>.value();
+      final itemFuture = _item == null ? client.item(widget.itemId) : Future.value(_item!);
+      itemFuture.ignore();
+      final info = await PlaybackPreloader.info(client, widget.serverId, widget.itemId);
       if (info.sources.isEmpty) throw const MediaServerException('没有可播放的资源');
       final wanted = sourceId ?? widget.sourceId;
       final source = info.sources.where((s) => s.id == wanted).firstOrNull ?? info.sources.first;
-      final req = client.stream(source, playSessionId: info.playSessionId);
-
-      final native = _player.platform;
-      if (native is NativePlayer) {
-        // 自定义播放 UA（docs/03-media-servers.md §6），其余请求头由 httpHeaders 传入
-        await native.setProperty('user-agent', req.userAgent);
-        await native.setProperty('network-timeout', '20');
-        await native.setProperty('demuxer-max-back-bytes', '${32 * 1024 * 1024}');
-      }
-      final headers = {...req.headers}..remove('User-Agent');
-      final start = at ?? Duration(milliseconds: widget.startMs);
-      await _player.open(Media(req.url.toString(), httpHeaders: headers, start: start > Duration.zero ? start : null));
-
-      // 外挂字幕（服务器提供）在 mpv 内封轨道之外单独列出，见 _openTrackMenu
+      _request = client.stream(source, playSessionId: info.playSessionId);
       if (!mounted) return;
       setState(() {
-        _sources = info.sources;
         _source = source;
         _playSessionId = info.playSessionId ?? newPlaySessionId();
-        _userAgent = req.userAgent;
         _error = null;
       });
+      await engineReady;
+      await _openCurrent(at ?? Duration(milliseconds: widget.startMs));
+      _item = await itemFuture;
+      if (mounted) setState(() {});
+      unawaited(_beginSegments());
       ref.read(configProvider.notifier).updateServer(widget.serverId, (s) => s.copyWith(lastAccessAt: DateTime.now()));
     } catch (e) {
       if (mounted) setState(() => _error = e.toString());
     }
   }
 
+  // ───────────────────────── 进度上报 ─────────────────────────
+
   void _report({bool start = false, String event = 'TimeUpdate'}) {
     final client = _client, source = _source;
     if (client == null || source == null || _stopped) return;
-    final pos = _player.state.position;
+    final pos = _state.position;
     if (start) {
       client.reportStart(source, pos, _playSessionId);
     } else {
-      client.reportProgress(source, pos, _playSessionId, paused: !_player.state.playing, event: event);
+      client.reportProgress(source, pos, _playSessionId, paused: !_state.playing, event: event);
     }
   }
 
@@ -141,10 +237,112 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
     _stopped = true;
     final client = _client, source = _source;
     if (client != null && source != null && _started) {
-      client.reportStopped(source, _player.state.position, _playSessionId);
+      client.reportStopped(source, _state.position, _playSessionId);
       ref.invalidate(resumeProvider);
       ref.invalidate(itemProvider((serverId: widget.serverId, itemId: widget.itemId)));
     }
+  }
+
+  // ───────────────────────── 片头片尾 ─────────────────────────
+
+  Future<void> _beginSegments() async {
+    final item = _item, client = _client, source = _source;
+    if (item == null || client == null || source == null) return;
+    if (item.kind != MediaKind.movie && item.kind != MediaKind.episode) return;
+    try {
+      final settings = await ref.read(segmentSettingsProvider.future);
+      // 剧集的 TMDB / IMDb ID 在剧上（第三方数据库按"剧 ID + 季 + 集"查询）
+      var title = item;
+      var hasNext = false;
+      if (item.kind == MediaKind.episode && item.seriesId != null) {
+        final results = await Future.wait([
+          client.item(item.seriesId!).then<Object?>((v) => v, onError: (_) => null),
+          client.episodes(item.seriesId!, seasonId: item.seasonId).then<Object?>((v) => v, onError: (_) => null),
+        ]);
+        if (results[0] is MediaItem) title = results[0]! as MediaItem;
+        if (results[1] is List<MediaItem>) {
+          final eps = results[1]! as List<MediaItem>;
+          final i = eps.indexWhere((e) => e.id == item.id);
+          if (i >= 0 && i + 1 < eps.length) {
+            hasNext = true;
+            _nextEpisode ??= eps[i + 1];
+          }
+        }
+      }
+      final duration = source.duration ?? item.runtime ?? _state.duration;
+      if (duration <= Duration.zero || !mounted) return;
+      final query = SegmentQuery(
+        titleKey: titleKeyOf(title),
+        kind: item.kind == MediaKind.movie ? SegmentMediaKind.movie : SegmentMediaKind.episode,
+        duration: duration,
+        tmdbId: int.tryParse(title.tmdbId ?? ''),
+        imdbId: title.imdbId,
+        season: item.seasonNumber,
+        episode: item.episodeNumber,
+        sourceKey: '${widget.serverId}/${source.id}',
+      );
+      final resolver = await playbackSegmentResolver(ref, client, item.id);
+      if (!mounted || _source?.id != source.id) return;
+      _segments?.dispose();
+      _segments = SegmentPlaybackSession(
+        resolver: resolver,
+        seek: (to) async => _engine?.seek(to),
+        nextEpisode: () async {
+          final next = _nextEpisode;
+          if (next != null && mounted) _handoffTo('/play/${widget.serverId}/${next.id}?pos=0');
+        },
+        onPrompt: (action) {
+          if (!mounted || _samePrompt(action, _skipPrompt)) return;
+          setState(() => _skipPrompt = action);
+        },
+        onResolution: (r) {
+          if (mounted) setState(() => _segmentList = r.segments);
+        },
+        onAutoSkip: (action) => showToast(_autoSkipText(action)),
+        onActionError: (e) => debugPrint('segments: $e'),
+      )..begin(query, settings, hasNextEpisode: hasNext);
+    } catch (e) {
+      debugPrint('segments unavailable: $e');
+    }
+  }
+
+  static bool _samePrompt(SegmentSkipAction? a, SegmentSkipAction? b) =>
+      identical(a, b) ||
+      (a != null &&
+          b != null &&
+          a.segment.start == b.segment.start &&
+          a.segment.type == b.segment.type &&
+          a.kind == b.kind);
+
+  static String _autoSkipText(SegmentSkipAction a) => switch (a.segment.type) {
+    _ when a.kind == SegmentSkipActionKind.nextEpisode => '片尾：已自动播放下一集',
+    SegmentType.intro => '已自动跳过片头',
+    SegmentType.recap => '已自动跳过前情提要',
+    SegmentType.credits => '已自动跳过片尾',
+    SegmentType.preview => '已自动跳过预告',
+  };
+
+  void _activateSkip() {
+    final action = _skipPrompt;
+    if (action != null) _segments?.activate(action);
+  }
+
+  void _handoffTo(String route) {
+    _handoff = true;
+    context.pushReplacement(route);
+  }
+
+  Future<void> _preloadNext() async {
+    _nextPreloading = true;
+    final item = _item, client = _client;
+    if (item == null || client == null || item.kind != MediaKind.episode || item.seriesId == null) return;
+    try {
+      final eps = await client.episodes(item.seriesId!, seasonId: item.seasonId);
+      final i = eps.indexWhere((e) => e.id == item.id);
+      if (i < 0 || i + 1 >= eps.length) return;
+      _nextEpisode = eps[i + 1];
+      await PlaybackPreloader.preload(client, eps[i + 1], position: Duration.zero);
+    } catch (_) {}
   }
 
   Future<void> _onCompleted() async {
@@ -152,12 +350,16 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
     final item = _item, client = _client;
     if (item == null || client == null || !mounted) return;
     // 剧集自动播放下一集
+    if (_nextEpisode != null) {
+      _handoffTo('/play/${widget.serverId}/${_nextEpisode!.id}?pos=0');
+      return;
+    }
     if (item.kind == MediaKind.episode && item.seriesId != null) {
       try {
         final eps = await client.episodes(item.seriesId!, seasonId: item.seasonId);
         final i = eps.indexWhere((e) => e.id == item.id);
         if (i >= 0 && i + 1 < eps.length && mounted) {
-          context.pushReplacement('/play/${widget.serverId}/${eps[i + 1].id}?pos=0');
+          _handoffTo('/play/${widget.serverId}/${eps[i + 1].id}?pos=0');
           return;
         }
       } catch (_) {}
@@ -169,14 +371,23 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
   void dispose() {
     _reportStopped();
     SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
-    for (final s in _subs) {
+    DesignScale.snapshotAllowed.value = true;
+    for (final s in _engineSubs) {
       s.cancel();
     }
     _osdTimer?.cancel();
     _progressTimer?.cancel();
     _seekTimer?.cancel();
+    _segments?.dispose();
     _focus.dispose();
-    _player.dispose();
+    _engine?.state.removeListener(_onEngineState);
+    final engine = _engine;
+    final clear = ref.read(configProvider).playback.clearCacheOnExit;
+    // 先关播放器（释放缓存文件），再清除播放缓存
+    Future(() async {
+      await engine?.dispose();
+      if (clear) await PlaybackCache.clear(keepPreload: _handoff);
+    });
     super.dispose();
   }
 
@@ -187,14 +398,14 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
     if (!_osd && mounted) setState(() => _osd = true);
     if (!sticky) {
       _osdTimer = Timer(const Duration(seconds: 5), () {
-        if (mounted && _player.state.playing) setState(() => _osd = false);
+        if (mounted && _state.playing) setState(() => _osd = false);
       });
     }
   }
 
   void _seekBy(Duration delta) {
-    final duration = _player.state.duration;
-    final base = _pendingSeek ?? _player.state.position;
+    final duration = _state.duration;
+    final base = _pendingSeek ?? _state.position;
     var target = base + delta;
     if (target < Duration.zero) target = Duration.zero;
     if (duration > Duration.zero && target > duration) target = duration - const Duration(seconds: 1);
@@ -203,14 +414,23 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
     _seekTimer?.cancel();
     _seekTimer = Timer(const Duration(milliseconds: 800), () {
       final t = _pendingSeek;
-      if (t != null) _player.seek(t);
+      if (t != null) _engine?.seek(t);
       if (mounted) setState(() => _pendingSeek = null);
-      _report(event: 'TimeUpdate');
+      _report();
     });
   }
 
+  void _togglePlay() {
+    _engine?.playOrPause();
+    _showOsd();
+  }
+
   void _exit() {
-    if (_osd && _player.state.playing) {
+    if (_info) {
+      setState(() => _info = false);
+      return;
+    }
+    if (_osd && _state.playing) {
       setState(() => _osd = false);
       return;
     }
@@ -233,22 +453,26 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
       _seekBy(repeat ? step * 3 : step);
     } else if (repeat) {
       return KeyEventResult.handled;
+    } else if (confirmKeys.contains(key) && _skipPrompt != null) {
+      // 出现"跳过片头 / 下一集"按钮时，OK 键执行跳过（空格仍是暂停）
+      _activateSkip();
     } else if (confirmKeys.contains(key) ||
         key == LogicalKeyboardKey.space ||
         key == LogicalKeyboardKey.keyK ||
         key == LogicalKeyboardKey.mediaPlayPause) {
-      _player.playOrPause();
-      _showOsd();
+      _togglePlay();
     } else if (key == LogicalKeyboardKey.mediaPlay) {
-      _player.play();
+      _engine?.play();
     } else if (key == LogicalKeyboardKey.mediaPause) {
-      _player.pause();
+      _engine?.pause();
     } else if (key == LogicalKeyboardKey.arrowUp) {
       _showOsd();
     } else if (key == LogicalKeyboardKey.arrowDown ||
         key == LogicalKeyboardKey.contextMenu ||
         key == LogicalKeyboardKey.gameButtonX) {
-      _openTrackMenu();
+      _openMenu();
+    } else if (key == LogicalKeyboardKey.keyI || key == LogicalKeyboardKey.info) {
+      setState(() => _info = !_info);
     } else if (key == LogicalKeyboardKey.keyA) {
       _cycleAudio();
     } else if (key == LogicalKeyboardKey.keyC) {
@@ -266,121 +490,136 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
     return KeyEventResult.handled;
   }
 
-  List<AudioTrack> get _audioTracks => _player.state.tracks.audio.where((t) => t.id != 'auto' && t.id != 'no').toList();
-
-  List<SubtitleTrack> get _subtitleTracks =>
-      _player.state.tracks.subtitle.where((t) => t.id != 'auto' && t.id != 'no').toList();
-
   void _cycleAudio() {
-    final tracks = _audioTracks;
+    final tracks = _state.audioTracks;
     if (tracks.isEmpty) return;
-    final i = tracks.indexWhere((t) => t.id == _player.state.track.audio.id);
-    _player.setAudioTrack(tracks[(i + 1) % tracks.length]);
-    _showOsd();
+    final i = tracks.indexOf(_state.audio ?? tracks.first);
+    final next = tracks[(i + 1) % tracks.length];
+    _engine?.selectAudio(next);
+    showToast('音轨：${next.displayName}');
   }
 
   void _cycleSubtitle() {
-    final tracks = [SubtitleTrack.no(), ..._subtitleTracks];
-    final i = tracks.indexWhere((t) => t.id == _player.state.track.subtitle.id);
-    _player.setSubtitleTrack(tracks[(i + 1) % tracks.length]);
-    _showOsd();
+    final tracks = <EngineTrack?>[null, ..._state.subtitleTracks];
+    final i = tracks.indexOf(_state.subtitle);
+    final next = tracks[(i + 1) % tracks.length];
+    _engine?.selectSubtitle(next);
+    showToast('字幕：${next?.displayName ?? '关闭'}');
   }
 
-  String _trackName(String id, String? title, String? language, String? codec) {
-    final parts = [?title, ?language, if (codec != null) codec.toUpperCase()];
-    return parts.isEmpty ? '轨道 $id' : parts.join(' · ');
-  }
-
-  Future<void> _openTrackMenu() async {
+  Future<void> _openMenu() async {
     _showOsd(sticky: true);
+    final s = _state;
+    final engine = _engine;
     await showContextMenu(
       context,
       title: '播放设置',
       actions: [
-        MenuAction('音轨 · ${_audioTracks.length} 条', Icons.audiotrack_rounded, () {
-          final current = _player.state.track.audio.id;
+        MenuAction('音轨 · ${s.audioTracks.length} 条', Icons.audiotrack_rounded, () {
           showContextMenu(
             context,
             title: '音轨',
             actions: [
-              for (final t in _audioTracks)
+              for (final t in s.audioTracks)
                 MenuAction(
-                  '${_trackName(t.id, t.title, t.language, t.codec)}${t.id == current ? '  ✓' : ''}',
+                  '${t.displayName}${t == s.audio ? '  ✓' : ''}',
                   Icons.graphic_eq_rounded,
-                  () => _player.setAudioTrack(t),
+                  () => _engine?.selectAudio(t),
                 ),
             ],
           );
         }),
-        MenuAction('字幕 · ${_subtitleTracks.length} 条', Icons.subtitles_rounded, () {
-          final current = _player.state.track.subtitle.id;
-          final external = _source?.subtitles.where((s) => s.isExternal).toList() ?? const <MediaStreamInfo>[];
+        MenuAction('字幕 · ${s.subtitleTracks.length} 条', Icons.subtitles_rounded, () {
+          final external = _source?.subtitles.where((x) => x.isExternal).toList() ?? const <MediaStreamInfo>[];
           showContextMenu(
             context,
             title: '字幕',
             actions: [
-              MenuAction('关闭字幕${current == 'no' ? '  ✓' : ''}', Icons.subtitles_off_rounded, () {
-                _player.setSubtitleTrack(SubtitleTrack.no());
-              }),
-              for (final t in _subtitleTracks)
+              MenuAction(
+                '关闭字幕${s.subtitle == null ? '  ✓' : ''}',
+                Icons.subtitles_off_rounded,
+                () => _engine?.selectSubtitle(null),
+              ),
+              for (final t in s.subtitleTracks)
                 MenuAction(
-                  '${_trackName(t.id, t.title, t.language, t.codec)}${t.id == current ? '  ✓' : ''}',
+                  '${t.displayName}${t == s.subtitle ? '  ✓' : ''}',
                   Icons.closed_caption_rounded,
-                  () => _player.setSubtitleTrack(t),
+                  () => _engine?.selectSubtitle(t),
                 ),
-              for (final s in external)
-                MenuAction('外挂 · ${s.displayName}', Icons.closed_caption_outlined, () {
-                  final req = _client?.subtitle(_source!, s);
-                  if (req != null) {
-                    _player.setSubtitleTrack(
-                      SubtitleTrack.uri(req.url.toString(), title: s.displayName, language: s.language),
-                    );
-                  }
+              for (final x in external)
+                MenuAction('外挂 · ${x.displayName}', Icons.closed_caption_outlined, () {
+                  final req = _client?.subtitle(_source!, x);
+                  if (req != null) _engine?.addExternalSubtitle(req.url, title: x.displayName, language: x.language);
                 }),
             ],
           );
         }),
-        if (_sources.length > 1)
-          MenuAction('切换资源 · ${_sources.length} 个版本', Icons.swap_horiz_rounded, () {
-            showContextMenu(
-              context,
-              title: '切换资源',
-              actions: [
-                for (final s in _sources)
-                  MenuAction(
-                    '${s.resolutionLabel} ${s.rangeLabel}'
-                    '${s.size == null ? '' : ' · ${(s.size! / 1073741824).toStringAsFixed(2)} GB'}'
-                    '${s.id == _source?.id ? '  ✓' : ''}',
-                    Icons.movie_rounded,
-                    () {
-                      final at = _player.state.position;
-                      _reportStopped();
-                      _stopped = false;
-                      _started = false;
-                      _open(sourceId: s.id, at: at);
-                    },
-                  ),
-              ],
-            );
-          }),
-        MenuAction('倍速 · ${_player.state.rate}x', Icons.speed_rounded, () {
+        MenuAction('切换资源（所有服务器）', Icons.swap_horiz_rounded, _openSourcesMenu),
+        MenuAction('倍速 · ${s.rate}x', Icons.speed_rounded, () {
           showContextMenu(
             context,
             title: '倍速',
             actions: [
               for (final r in const [0.5, 0.75, 1.0, 1.25, 1.5, 2.0])
-                MenuAction(
-                  '${r}x${_player.state.rate == r ? '  ✓' : ''}',
-                  Icons.speed_rounded,
-                  () => _player.setRate(r),
-                ),
+                MenuAction('${r}x${s.rate == r ? '  ✓' : ''}', Icons.speed_rounded, () => _engine?.setRate(r)),
             ],
           );
         }),
+        if (ExoEngine.supported && engine != null)
+          MenuAction(
+            '播放内核 · ${engine.kind.label}（切换到 ${engine.kind == EngineKind.exo ? 'mpv' : 'ExoPlayer'}）',
+            Icons.memory_rounded,
+            () => _switchEngine(forceMpv: engine.kind == EngineKind.exo, forceExo: engine.kind == EngineKind.mpv),
+          ),
+        MenuAction('媒体信息', Icons.info_outline_rounded, () => setState(() => _info = true)),
       ],
     );
     if (mounted) _focus.requestFocus();
     _showOsd();
+  }
+
+  /// 所有服务器上的版本；选其他服务器的版本时换到那台服务器从当前进度继续
+  Future<void> _openSourcesMenu() async {
+    showToast('正在查找各服务器上的资源…');
+    List<SourceOption> options;
+    try {
+      options = await ref.read(sourceOptionsProvider((serverId: widget.serverId, itemId: widget.itemId)).future);
+    } catch (e) {
+      showToast('查找资源失败：$e');
+      return;
+    }
+    if (!mounted) return;
+    if (options.isEmpty) {
+      showToast('没有其他可用资源');
+      return;
+    }
+    await showContextMenu(
+      context,
+      title: '切换资源 · ${options.length} 个版本',
+      actions: [
+        for (final o in options)
+          MenuAction(
+            '${o.source.resolutionLabel} ${o.source.rangeLabel}'
+            '${o.source.size == null ? '' : ' · ${(o.source.size! / 1073741824).toStringAsFixed(2)} GB'}'
+            ' · ${o.serverName}'
+            '${o.serverId == widget.serverId && o.source.id == _source?.id ? '  ✓' : ''}',
+            Icons.movie_rounded,
+            () {
+              final at = _state.position;
+              if (o.serverId == widget.serverId && o.item.id == widget.itemId) {
+                _reportStopped();
+                _stopped = false;
+                _started = false;
+                _wasPlaying = false;
+                _start(sourceId: o.source.id, at: at);
+              } else {
+                _handoffTo(o.playRoute(position: at));
+              }
+            },
+          ),
+      ],
+    );
+    if (mounted) _focus.requestFocus();
   }
 
   // ───────────────────────── 界面 ─────────────────────────
@@ -394,6 +633,7 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
         ? (item.seriesName ?? item.name)
         : item.name;
     final subtitle = item?.kind == MediaKind.episode ? '${item!.episodeLabel ?? ''} · ${item.name}' : null;
+    final engine = _engine;
 
     return Material(
       color: Colors.black,
@@ -405,60 +645,100 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
           onHover: (_) => _showOsd(),
           child: GestureDetector(
             behavior: HitTestBehavior.opaque,
-            onTap: () {
-              _player.playOrPause();
-              _showOsd();
-            },
-            onDoubleTap: _openTrackMenu,
+            onTap: _togglePlay,
+            onDoubleTap: _openMenu,
             child: Stack(
               fit: StackFit.expand,
               children: [
-                Video(controller: _video, controls: NoVideoControls, fill: Colors.black),
+                if (engine != null) KeyedSubtree(key: ObjectKey(engine), child: engine.buildView()),
                 if (_error != null)
                   _ErrorPanel(
                     message: _error!,
-                    userAgent: _userAgent,
+                    userAgent: _request?.userAgent,
                     onRetry: () {
                       setState(() => _error = null);
-                      _open(sourceId: _source?.id);
+                      _start(sourceId: _source?.id);
                     },
+                    onSwitchEngine: ExoEngine.supported && engine != null
+                        ? () {
+                            setState(() => _error = null);
+                            _switchEngine(
+                              forceMpv: engine.kind == EngineKind.exo,
+                              forceExo: engine.kind == EngineKind.mpv,
+                            );
+                          }
+                        : null,
                   ),
-                // 缓冲指示
-                StreamBuilder<bool>(
-                  stream: _player.stream.buffering,
-                  builder: (context, snap) => snap.data == true && _error == null
-                      ? const Center(
-                          child: SizedBox(
-                            width: 72,
-                            height: 72,
-                            child: CircularProgressIndicator(strokeWidth: 5, color: Colors.white),
+                if (engine != null)
+                  ValueListenableBuilder<EngineState>(
+                    valueListenable: engine.state,
+                    builder: (context, s, _) => Stack(
+                      fit: StackFit.expand,
+                      children: [
+                        if (s.buffering && _error == null)
+                          const Center(
+                            child: SizedBox(
+                              width: 72,
+                              height: 72,
+                              child: CircularProgressIndicator(strokeWidth: 5, color: Colors.white),
+                            ),
                           ),
-                        )
-                      : const SizedBox.shrink(),
-                ),
-                if (_pendingSeek != null)
-                  Center(
-                    child: Glass(
-                      radius: 24,
-                      padding: const EdgeInsets.symmetric(horizontal: 36, vertical: 20),
-                      child: Text(formatClock(_pendingSeek!), style: VText.h2.copyWith(fontSize: 44)),
+                        if (_pendingSeek != null)
+                          Center(
+                            child: Glass(
+                              radius: 24,
+                              padding: const EdgeInsets.symmetric(horizontal: 36, vertical: 20),
+                              child: Text(formatClock(_pendingSeek!), style: VText.h2.copyWith(fontSize: 44)),
+                            ),
+                          ),
+                        IgnorePointer(
+                          ignoring: !_osd,
+                          child: AnimatedOpacity(
+                            opacity: _osd ? 1 : 0,
+                            duration: VMotion.scroll,
+                            child: _Osd(
+                              state: s,
+                              title: title,
+                              subtitle: subtitle,
+                              source: _source,
+                              pendingSeek: _pendingSeek,
+                              onMenu: _openMenu,
+                              onBack: () => context.pop(),
+                            ),
+                          ),
+                        ),
+                        // 跳过按钮：不随 OSD 隐藏；OSD 显示时让出进度条的位置
+                        AnimatedPositioned(
+                          duration: VMotion.scroll,
+                          curve: Curves.easeOutCubic,
+                          right: VSpace.safeH,
+                          bottom: _osd ? 230 : 110,
+                          child: AnimatedSwitcher(
+                            duration: VMotion.focus,
+                            child: _skipPrompt == null
+                                ? const SizedBox.shrink()
+                                : _SkipButton(
+                                    key: ValueKey('${_skipPrompt!.segment.type}${_skipPrompt!.segment.start}'),
+                                    action: _skipPrompt!,
+                                    onPressed: _activateSkip,
+                                  ),
+                          ),
+                        ),
+                        if (_info)
+                          Positioned(
+                            right: VSpace.safeH,
+                            top: 150,
+                            child: _InfoPanel(
+                              state: s,
+                              engine: engine.kind,
+                              source: _source,
+                              request: _request,
+                              segments: _segmentList,
+                            ),
+                          ),
+                      ],
                     ),
                   ),
-                IgnorePointer(
-                  ignoring: !_osd,
-                  child: AnimatedOpacity(
-                    opacity: _osd ? 1 : 0,
-                    duration: VMotion.scroll,
-                    child: _Osd(
-                      player: _player,
-                      title: title,
-                      subtitle: subtitle,
-                      source: _source,
-                      pendingSeek: _pendingSeek,
-                      onMenu: _openTrackMenu,
-                    ),
-                  ),
-                ),
               ],
             ),
           ),
@@ -470,15 +750,17 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
 
 class _Osd extends StatelessWidget {
   const _Osd({
-    required this.player,
+    required this.state,
     required this.title,
     required this.subtitle,
     required this.source,
     required this.pendingSeek,
     required this.onMenu,
+    required this.onBack,
   });
 
-  final Player player;
+  final VoidCallback onBack;
+  final EngineState state;
   final String title;
   final String? subtitle;
   final MediaSourceInfo? source;
@@ -487,6 +769,9 @@ class _Osd extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final pos = pendingSeek ?? state.position;
+    final dur = state.duration;
+    final hdr = state.video.hdr ?? source?.rangeLabel;
     return Stack(
       fit: StackFit.expand,
       children: [
@@ -507,6 +792,11 @@ class _Osd extends StatelessWidget {
           child: Row(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
+              // Windows 用鼠标时需要可点击的返回按钮；TV 用遥控器返回键
+              if (PlatformProfile.isDesktop) ...[
+                CircleIconButton(icon: Icons.arrow_back_rounded, tooltip: '返回', onPressed: onBack),
+                const SizedBox(width: 24),
+              ],
               Expanded(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
@@ -522,7 +812,7 @@ class _Osd extends StatelessWidget {
                   blur: 24,
                   padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 10),
                   child: Text(
-                    '${source!.resolutionLabel} ${source!.rangeLabel} · ${source!.container.split(',').first.toUpperCase()}',
+                    '${source!.resolutionLabel} ${hdr ?? ''} · ${source!.container.split(',').first.toUpperCase()}',
                     style: VText.small.copyWith(color: VColors.rating),
                   ),
                 ),
@@ -538,50 +828,42 @@ class _Osd extends StatelessWidget {
             blur: 36,
             fill: const Color(0x6B14161E),
             padding: const EdgeInsets.fromLTRB(36, 28, 36, 26),
-            child: StreamBuilder<Duration>(
-              stream: player.stream.position,
-              builder: (context, _) {
-                final pos = pendingSeek ?? player.state.position;
-                final dur = player.state.duration;
-                final playing = player.state.playing;
-                return Column(
-                  mainAxisSize: MainAxisSize.min,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Row(
                   children: [
-                    Row(
-                      children: [
-                        SizedBox(width: 110, child: Text(formatClock(pos), style: VText.label)),
-                        Expanded(
-                          child: ProgressLine(
-                            dur.inMilliseconds == 0 ? 0 : pos.inMilliseconds / dur.inMilliseconds,
-                            height: 10,
-                          ),
-                        ),
-                        SizedBox(
-                          width: 110,
-                          child: Text(
-                            formatClock(dur),
-                            textAlign: TextAlign.right,
-                            style: VText.label.copyWith(color: VColors.textSecondary),
-                          ),
-                        ),
-                      ],
+                    SizedBox(width: 110, child: Text(formatClock(pos), style: VText.label)),
+                    Expanded(
+                      child: ProgressLine(
+                        dur.inMilliseconds == 0 ? 0 : pos.inMilliseconds / dur.inMilliseconds,
+                        height: 10,
+                      ),
                     ),
-                    const SizedBox(height: 20),
-                    Row(
-                      children: [
-                        Icon(playing ? Icons.pause_rounded : Icons.play_arrow_rounded, size: 40),
-                        const SizedBox(width: 20),
-                        Text(
-                          'OK 暂停/播放 · ←→ 快退/快进 · ↓ 或菜单键 音轨/字幕/资源 · 返回 退出',
-                          style: VText.small.copyWith(color: VColors.textTertiary),
-                        ),
-                        const Spacer(),
-                        PillButton(label: '音轨 / 字幕', icon: Icons.tune_rounded, onPressed: onMenu),
-                      ],
+                    SizedBox(
+                      width: 110,
+                      child: Text(
+                        formatClock(dur),
+                        textAlign: TextAlign.right,
+                        style: VText.label.copyWith(color: VColors.textSecondary),
+                      ),
                     ),
                   ],
-                );
-              },
+                ),
+                const SizedBox(height: 20),
+                Row(
+                  children: [
+                    Icon(state.playing ? Icons.pause_rounded : Icons.play_arrow_rounded, size: 40),
+                    const SizedBox(width: 20),
+                    Text(
+                      'OK 暂停/播放 · ←→ 快退/快进 · ↓ 或菜单键 音轨/字幕/资源 · 返回 退出',
+                      style: VText.small.copyWith(color: VColors.textTertiary),
+                    ),
+                    const Spacer(),
+                    PillButton(label: '音轨 / 字幕', icon: Icons.tune_rounded, onPressed: onMenu),
+                  ],
+                ),
+              ],
             ),
           ),
         ),
@@ -590,12 +872,81 @@ class _Osd extends StatelessWidget {
   }
 }
 
+/// 媒体信息叠加层（I 键 / 菜单 → 媒体信息）
+class _InfoPanel extends StatelessWidget {
+  const _InfoPanel({
+    required this.state,
+    required this.engine,
+    required this.source,
+    required this.request,
+    this.segments = const [],
+  });
+
+  final List<Segment> segments;
+
+  final EngineState state;
+  final EngineKind engine;
+  final MediaSourceInfo? source;
+  final PlaybackRequest? request;
+
+  @override
+  Widget build(BuildContext context) {
+    final v = state.video;
+    final rows = <(String, String)>[
+      ('播放内核', engine.label),
+      if (v.decoder != null) ('解码器', v.decoder!),
+      if (v.width != null) ('分辨率', '${v.width} × ${v.height}'),
+      if (v.frameRate != null) ('帧率', '${v.frameRate!.toStringAsFixed(3)} fps'),
+      ('动态范围', v.hdr ?? source?.rangeLabel ?? 'SDR'),
+      if (v.codec != null) ('视频编码', v.codec!),
+      if (state.audio != null) ('音轨', state.audio!.displayName),
+      if (source?.bitrate != null) ('码率', '${(source!.bitrate! / 1000000).toStringAsFixed(2)} Mbps'),
+      ('缓冲', '${(state.buffered - state.position).inSeconds} 秒'),
+      if (request != null) ('播放 UA', request!.userAgent),
+      for (final seg in segments)
+        (
+          segmentTypeName(seg.type),
+          '${formatClock(seg.start)} – ${formatClock(seg.end)} · ${segmentProviderName(seg.provider)}',
+        ),
+    ];
+    return Glass(
+      width: 620,
+      radius: 24,
+      fill: const Color(0x9914161E),
+      padding: const EdgeInsets.all(28),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          const Text('媒体信息', style: VText.rowTitle),
+          const SizedBox(height: 16),
+          for (final (k, val) in rows)
+            Padding(
+              padding: const EdgeInsets.only(bottom: 8),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  SizedBox(
+                    width: 130,
+                    child: Text(k, style: VText.small.copyWith(color: VColors.textTertiary)),
+                  ),
+                  Expanded(child: Text(val, style: VText.small)),
+                ],
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+}
+
 class _ErrorPanel extends StatelessWidget {
-  const _ErrorPanel({required this.message, required this.userAgent, required this.onRetry});
+  const _ErrorPanel({required this.message, required this.userAgent, required this.onRetry, this.onSwitchEngine});
 
   final String message;
   final String? userAgent;
   final VoidCallback onRetry;
+  final VoidCallback? onSwitchEngine;
 
   @override
   Widget build(BuildContext context) {
@@ -614,7 +965,9 @@ class _ErrorPanel extends StatelessWidget {
             Text(message, style: VText.label.copyWith(color: VColors.bad)),
             const SizedBox(height: 16),
             Text(
-              forbidden ? '服务器拒绝了播放请求：检查「设置 → 播放」里的播放 UA / 客户端名称，或重新登录。' : '可能是线路不通或格式不受支持：在资源库里对这台服务器测速 / 切换线路后重试。',
+              forbidden
+                  ? '服务器拒绝了播放请求：检查「设置 → 播放」里的播放 UA / 客户端名称，或重新登录。'
+                  : '可能是线路不通或格式不受支持：可以换一个播放内核，或在资源库里对这台服务器测速 / 切换线路后重试。',
               style: VText.caption.copyWith(color: VColors.textSecondary),
             ),
             if (userAgent != null) ...[
@@ -625,11 +978,70 @@ class _ErrorPanel extends StatelessWidget {
             Row(
               children: [
                 PillButton(autofocus: true, icon: Icons.refresh_rounded, label: '重试', onPressed: onRetry),
+                if (onSwitchEngine != null) ...[
+                  const SizedBox(width: 24),
+                  PillButton(icon: Icons.memory_rounded, label: '换个内核', onPressed: onSwitchEngine),
+                ],
                 const SizedBox(width: 24),
                 PillButton(label: '返回', onPressed: () => context.pop()),
               ],
             ),
           ],
+        ),
+      ),
+    );
+  }
+}
+
+/// 跳过片头 / 前情提要 / 片尾、下一集（电视上按 OK，电脑上点击或按回车）
+class _SkipButton extends StatelessWidget {
+  const _SkipButton({super.key, required this.action, required this.onPressed});
+
+  final SegmentSkipAction action;
+  final VoidCallback onPressed;
+
+  @override
+  Widget build(BuildContext context) {
+    final next = action.kind == SegmentSkipActionKind.nextEpisode;
+    final label = next ? '下一集' : '跳过${segmentTypeName(action.segment.type)}';
+    return GestureDetector(
+      onTap: onPressed,
+      child: MouseRegion(
+        cursor: SystemMouseCursors.click,
+        child: Container(
+          padding: const EdgeInsets.fromLTRB(30, 16, 22, 16),
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(999),
+            boxShadow: const [BoxShadow(color: Color(0x66000000), blurRadius: 30, offset: Offset(0, 8))],
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(
+                label,
+                style: const TextStyle(fontSize: 26, fontWeight: FontWeight.w700, color: Color(0xFF0B0C10)),
+              ),
+              const SizedBox(width: 8),
+              Icon(
+                next ? Icons.skip_next_rounded : Icons.fast_forward_rounded,
+                size: 30,
+                color: const Color(0xFF0B0C10),
+              ),
+              const SizedBox(width: 14),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 2),
+                decoration: BoxDecoration(
+                  border: Border.all(color: const Color(0x590B0C10)),
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: Text(
+                  PlatformProfile.isTv ? 'OK' : 'Enter',
+                  style: const TextStyle(fontSize: 16, color: Color(0xA60B0C10), fontWeight: FontWeight.w600),
+                ),
+              ),
+            ],
+          ),
         ),
       ),
     );

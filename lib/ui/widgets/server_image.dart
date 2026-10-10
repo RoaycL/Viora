@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../data/media/media_models.dart';
 import '../../data/media/server_registry.dart';
 import 'art.dart';
+import 'image_sizing.dart';
 
 /// 媒体服务器上的图片：地址经过线路 / 代理改写，请求带 UA。
 /// 没有图或加载失败时显示占位渐变。
@@ -12,7 +13,7 @@ class ServerImage extends ConsumerWidget {
     super.key,
     required this.serverId,
     required this.image,
-    this.maxWidth = 440,
+    this.width = 220,
     this.fit = BoxFit.cover,
     this.fallbackSeed = '',
     this.alignment = Alignment.center,
@@ -21,7 +22,9 @@ class ServerImage extends ConsumerWidget {
 
   final String serverId;
   final ImageRef? image;
-  final int maxWidth;
+
+  /// 图片在设计稿上的显示宽度（实际请求 / 解码尺寸按设备分辨率换算）
+  final double width;
   final BoxFit fit;
   final String fallbackSeed;
   final Alignment alignment;
@@ -34,10 +37,13 @@ class ServerImage extends ConsumerWidget {
     final client = ref.watch(serverClientProvider(serverId));
     final Widget fallback = transparentFallback ? const SizedBox.shrink() : ArtView(placeholderArt(fallbackSeed));
     if (client == null || image == null) return fallback;
-    final req = client.image(image!, maxWidth: maxWidth);
+    final px = ImageSizing.physicalWidth(context, width);
+    final req = client.image(image!, maxWidth: px);
     return Image.network(
       req.url.toString(),
       headers: req.headers,
+      // 按显示尺寸解码，大图不会占满内存（电视盒子尤其重要）
+      cacheWidth: px,
       fit: fit,
       alignment: alignment,
       gaplessPlayback: true,

@@ -2,18 +2,22 @@ import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../app/platform_profile.dart';
 import '../../app/theme.dart';
 import '../../data/config/app_config.dart';
 import '../../data/config/config_store.dart';
-import '../../data/media/media_models.dart';
 import '../../data/media/server_registry.dart';
 import '../../data/net/request_composer.dart';
 import '../../data/tmdb/tmdb_client.dart';
 import '../../ui/focus/focus_auto_scroll.dart';
+import '../../ui/focus/focusable.dart';
+import '../../ui/focus/input_mode.dart';
 import '../../ui/glass/glass.dart';
 import '../../ui/widgets/buttons.dart';
 import '../../ui/widgets/form.dart';
 import '../../ui/widgets/toast.dart';
+import '../../player/playback_cache.dart';
+import '../segments/segment_settings_section.dart';
 import '../update/update_controller.dart';
 import '../update/update_dialog.dart';
 
@@ -34,6 +38,7 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
   late final _tmdbKey = TextEditingController();
   late final _tmdbBase = TextEditingController();
   bool _tmdbTesting = false;
+  _Category _category = _Category.playback;
   String _version = '';
   String _source = '';
 
@@ -41,6 +46,7 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
   void initState() {
     super.initState();
     final c = ref.read(configProvider);
+    _refreshCacheSize();
     _ua.text = c.playback.userAgent;
     _client.text = c.playback.clientName;
     _device.text = c.playback.deviceName;
@@ -101,6 +107,28 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
     showToast(url.isEmpty ? '已关闭反向代理' : '反向代理地址已保存');
   }
 
+  int? _cacheSize;
+
+  void _updatePlayback(PlaybackConfig Function(PlaybackConfig) f) =>
+      ref.read(configProvider.notifier).update((c) => c.copyWith(playback: f(c.playback)));
+
+  Future<void> _refreshCacheSize() async {
+    final size = await PlaybackCache.size();
+    if (mounted) setState(() => _cacheSize = size);
+  }
+
+  Future<void> _clearCache() async {
+    await PlaybackCache.clear();
+    await _refreshCacheSize();
+    showToast('播放缓存已清除');
+  }
+
+  static String _formatBytes(int b) => b >= 1 << 30
+      ? '${(b / (1 << 30)).toStringAsFixed(1)} GB'
+      : b >= 1 << 20
+      ? '${(b / (1 << 20)).toStringAsFixed(0)} MB'
+      : '${(b / 1024).toStringAsFixed(0)} KB';
+
   Future<void> _saveTmdb() async {
     final store = ref.read(configProvider.notifier);
     await store.update(
@@ -115,9 +143,11 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
     }
     setState(() => _tmdbTesting = true);
     try {
-      final meta = await TmdbClient(config.tmdb, config.proxy).details(MediaKind.movie, '550');
-      showToast('TMDB 连接成功：${meta?.title ?? ''}');
+      final j = await TmdbClient(config.tmdb, config.proxy).get('/movie/550');
+      showToast('TMDB 连接成功：${j['title'] ?? ''}');
       ref.invalidate(zhMetaProvider);
+      ref.invalidate(tmdbRowProvider);
+      ref.invalidate(tmdbPeopleProvider);
     } catch (e) {
       showToast('TMDB 连接失败：${e is DioException ? (e.response?.statusCode ?? e.message) : e}');
     } finally {
@@ -155,210 +185,360 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
       UpdateIdle() => '',
     };
 
-    return FocusAutoScroll(
-      child: SingleChildScrollView(
-        padding: const EdgeInsets.fromLTRB(VSpace.contentLeft, VSpace.safeV, VSpace.safeH, 240),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            const Text('设置', style: VText.h1),
-            const SizedBox(height: 40),
-
-            // ───────── 播放 ─────────
-            _Section(
-              title: '播放',
-              children: [
-                VTextField(
-                  label: '播放 UA（自定义后以此 UA 播放；服务器里单独设置的优先）',
-                  controller: _ua,
-                  hint: defaultUserAgent(appVersion),
-                  width: 1000,
-                ),
-                const SizedBox(height: 20),
-                Row(
-                  children: [
-                    VTextField(label: '客户端名称（上报给 Emby / Jellyfin）', controller: _client, width: 488),
-                    const SizedBox(width: 24),
-                    VTextField(label: '设备名称', controller: _device, hint: defaultDeviceName(), width: 488),
-                  ],
-                ),
-                const SizedBox(height: 20),
-                VToggle(
-                  label: 'API 与图片请求也使用播放 UA',
-                  subtitle: '默认只有视频流使用播放 UA',
-                  value: config.playback.uaForApi,
-                  width: 1000,
-                  onChanged: (v) => ref
-                      .read(configProvider.notifier)
-                      .update((c) => c.copyWith(playback: c.playback.copyWith(uaForApi: v))),
-                ),
-                const SizedBox(height: 12),
-                VToggle(
-                  label: '快进 / 快退步长：${config.playback.seekStepSeconds} 秒',
-                  subtitle: '按 OK 在 5 / 10 / 15 / 30 秒之间切换',
-                  value: true,
-                  width: 1000,
-                  onChanged: (_) {
-                    const steps = [5, 10, 15, 30];
-                    final i = steps.indexOf(config.playback.seekStepSeconds);
-                    ref
-                        .read(configProvider.notifier)
-                        .update(
-                          (c) =>
-                              c.copyWith(playback: c.playback.copyWith(seekStepSeconds: steps[(i + 1) % steps.length])),
-                        );
-                  },
-                ),
-                const SizedBox(height: 24),
-                PillButton(icon: Icons.save_rounded, label: '保存播放设置', onPressed: _savePlayback),
-              ],
+    final sections = <Widget>[
+      // ───────── 播放 ─────────
+      _Section(
+        title: '播放',
+        children: [
+          VTextField(label: '播放 UA（自定义后以此 UA 播放；服务器里单独设置的优先）', controller: _ua, hint: defaultUserAgent(appVersion)),
+          const SizedBox(height: 20),
+          Row(
+            children: [
+              Expanded(
+                child: VTextField(label: '客户端名称（上报给 Emby / Jellyfin）', controller: _client),
+              ),
+              const SizedBox(width: 24),
+              Expanded(
+                child: VTextField(label: '设备名称', controller: _device, hint: defaultDeviceName()),
+              ),
+            ],
+          ),
+          const SizedBox(height: 20),
+          VToggle(
+            label: 'API 与图片请求也使用播放 UA',
+            subtitle: '默认只有视频流使用播放 UA',
+            value: config.playback.uaForApi,
+            onChanged: (v) =>
+                ref.read(configProvider.notifier).update((c) => c.copyWith(playback: c.playback.copyWith(uaForApi: v))),
+          ),
+          const SizedBox(height: 12),
+          VToggle(
+            label: '播放预加载',
+            subtitle: '在详情页、继续观看上停留时提前准备播放信息并预热视频；剧集看到 85% 时预加载下一集。会多用少量流量',
+            value: config.playback.preload,
+            onChanged: (v) =>
+                ref.read(configProvider.notifier).update((c) => c.copyWith(playback: c.playback.copyWith(preload: v))),
+          ),
+          if (config.playback.preload) ...[
+            const SizedBox(height: 20),
+            VChoice<int>(
+              label: '起播预热量（按下播放前提前读取的数据：片头、续播位置、片尾索引）',
+              options: [for (final mb in PlaybackConfig.warmChoices) (mb, '$mb MB')],
+              value: config.playback.warmMb,
+              onChanged: (v) => _updatePlayback((p) => p.copyWith(warmMb: v)),
             ),
-
-            // ───────── 元数据 ─────────
-            _Section(
-              title: '元数据 · TMDB',
-              children: [
-                Text(
-                  '媒体库里的标题、简介、类型不是中文时，用 TMDB 的简体中文数据补全；之后首页推荐也会用到。',
-                  style: VText.caption.copyWith(color: VColors.textSecondary),
-                ),
-                const SizedBox(height: 20),
-                VTextField(label: 'TMDB API Key 或读取令牌（themoviedb.org → 设置 → API）', controller: _tmdbKey, width: 1000),
-                const SizedBox(height: 20),
-                VTextField(
-                  label: '自定义 API 地址（可留空）',
-                  controller: _tmdbBase,
-                  hint: 'https://api.themoviedb.org/3',
-                  keyboardType: TextInputType.url,
-                  width: 1000,
-                ),
-                const SizedBox(height: 20),
-                VToggle(
-                  label: '通过反向代理访问 TMDB',
-                  subtitle: '国内网络直连 TMDB 不稳定时打开（需先填写反向代理的完整地址）',
-                  value: config.tmdb.useProxy,
-                  width: 1000,
-                  onChanged: (v) =>
-                      ref.read(configProvider.notifier).update((c) => c.copyWith(tmdb: c.tmdb.copyWith(useProxy: v))),
-                ),
-                const SizedBox(height: 24),
-                PillButton(
-                  icon: Icons.save_rounded,
-                  label: _tmdbTesting ? '测试中…' : '保存并测试',
-                  onPressed: _tmdbTesting ? null : _saveTmdb,
-                ),
+          ],
+          const SizedBox(height: 20),
+          VChoice<int>(
+            label: PlatformProfile.isTv
+                ? '播放缓冲上限（边播边预读的最大数据量；电视内存有限，实际最多使用可用内存的 40%）'
+                : '播放缓冲上限（边播边预读的最大数据量；超过 256 MB 时写入磁盘缓存，不占内存）',
+            options: [for (final mb in PlaybackConfig.bufferChoices) (mb, mb >= 1024 ? '${mb ~/ 1024} GB' : '$mb MB')],
+            value: config.playback.bufferMb,
+            onChanged: (v) => _updatePlayback((p) => p.copyWith(bufferMb: v)),
+          ),
+          const SizedBox(height: 20),
+          VToggle(
+            label: '关闭播放器后清除播放缓存',
+            subtitle: '退出播放时删除磁盘缓存文件和预加载的数据（连播下一集时保留）',
+            value: config.playback.clearCacheOnExit,
+            onChanged: (v) => _updatePlayback((p) => p.copyWith(clearCacheOnExit: v)),
+          ),
+          const SizedBox(height: 16),
+          PillButton(
+            icon: Icons.cleaning_services_outlined,
+            label: _cacheSize == null ? '立即清除播放缓存' : '立即清除播放缓存（当前 ${_formatBytes(_cacheSize!)}）',
+            onPressed: _clearCache,
+          ),
+          const SizedBox(height: 12),
+          VToggle(
+            label: '快进 / 快退步长：${config.playback.seekStepSeconds} 秒',
+            subtitle: '按 OK 在 5 / 10 / 15 / 30 秒之间切换',
+            value: true,
+            onChanged: (_) {
+              const steps = [5, 10, 15, 30];
+              final i = steps.indexOf(config.playback.seekStepSeconds);
+              ref
+                  .read(configProvider.notifier)
+                  .update(
+                    (c) => c.copyWith(playback: c.playback.copyWith(seekStepSeconds: steps[(i + 1) % steps.length])),
+                  );
+            },
+          ),
+          if (PlatformProfile.isTv) ...[
+            const SizedBox(height: 24),
+            VChoice<EnginePreference>(
+              label: '播放内核（Android）',
+              options: const [
+                (EnginePreference.auto, '自动（ExoPlayer，失败换 mpv）'),
+                (EnginePreference.exo, 'ExoPlayer'),
+                (EnginePreference.mpv, 'mpv'),
               ],
+              value: config.playback.engine,
+              onChanged: (v) =>
+                  ref.read(configProvider.notifier).update((c) => c.copyWith(playback: c.playback.copyWith(engine: v))),
             ),
-
-            // ───────── 反向代理 ─────────
-            _Section(
-              title: '反向代理 · 绑定线路',
-              children: [
-                VTextField(
-                  label: '完整地址（emby-reverse-proxy-go）',
-                  controller: _proxy,
-                  hint: 'https://embyproxy.example.com/proxy/',
-                  keyboardType: TextInputType.url,
-                  width: 1000,
-                  helper: '更换地址后，已绑定的线路会继续使用这个代理。示例：https://emby.a.com → …/proxy/https/emby.a.com/443',
-                ),
-                const SizedBox(height: 20),
-                Row(
-                  children: [
-                    PillButton(icon: Icons.save_rounded, label: '保存地址', onPressed: _saveProxy),
-                    const SizedBox(width: 24),
-                    PillButton(
-                      label: config.proxy.scope == ProxyScope.all ? '代理范围：API + 视频流' : '代理范围：仅视频流',
-                      onPressed: () => ref
-                          .read(configProvider.notifier)
-                          .update(
-                            (c) => c.copyWith(
-                              proxy: ProxyConfig(
-                                baseUrl: c.proxy.baseUrl,
-                                scope: c.proxy.scope == ProxyScope.all ? ProxyScope.streamOnly : ProxyScope.all,
-                              ),
-                            ),
-                          ),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 28),
-                Text('媒体服务器线路', style: VText.caption.copyWith(color: VColors.textTertiary)),
-                const SizedBox(height: 12),
-                if (config.servers.isEmpty)
-                  Text('还没有添加服务器', style: VText.label.copyWith(color: VColors.textMuted))
-                else
-                  for (final s in config.servers)
-                    for (final l in s.lines) ...[
-                      VToggle(
-                        label: '${s.name} · ${l.name}',
-                        subtitle: l.url,
-                        value: l.proxied,
-                        width: 1000,
-                        onChanged: (v) => ref
-                            .read(configProvider.notifier)
-                            .updateServer(
-                              s.id,
-                              (old) => old.copyWith(
-                                lines: [for (final x in old.lines) x.id == l.id ? x.copyWith(proxied: v) : x],
-                              ),
-                            ),
-                      ),
-                      const SizedBox(height: 10),
-                    ],
-              ],
+            const SizedBox(height: 16),
+            VToggle(
+              label: '自动帧率切换',
+              subtitle: '按片源帧率切换电视刷新率（如 23.976 / 24 / 25Hz），避免画面卡顿',
+              value: config.playback.autoFrameRate,
+              onChanged: (v) => ref
+                  .read(configProvider.notifier)
+                  .update((c) => c.copyWith(playback: c.playback.copyWith(autoFrameRate: v))),
             ),
+            const SizedBox(height: 12),
+            VToggle(
+              label: '隧道播放',
+              subtitle: 'ExoPlayer 专用，部分电视盒子音画同步更好；出现黑屏或卡顿时请关闭',
+              value: config.playback.tunneling,
+              onChanged: (v) => ref
+                  .read(configProvider.notifier)
+                  .update((c) => c.copyWith(playback: c.playback.copyWith(tunneling: v))),
+            ),
+          ],
+          const SizedBox(height: 24),
+          PillButton(icon: Icons.save_rounded, label: '保存播放设置', onPressed: _savePlayback),
+        ],
+      ),
 
-            // ───────── 关于与更新 ─────────
-            _Section(
-              title: '关于与更新',
-              children: [
-                _InfoLine(label: '当前版本', value: _version),
-                _InfoLine(label: '更新来源', value: _source),
-                const SizedBox(height: 20),
-                Row(
-                  children: [
-                    PillButton(
-                      icon: Icons.refresh_rounded,
-                      label: state is UpdateChecking ? '检查中…' : '检查更新',
-                      onPressed: state is UpdateChecking ? null : _check,
-                    ),
-                    const SizedBox(width: 24),
-                    Expanded(
-                      child: Text(
-                        status,
-                        style: VText.caption.copyWith(
-                          color: state is UpdateFailed ? VColors.bad : VColors.textSecondary,
+      // ───────── 片头片尾 ─────────
+      const _Section(title: '片头片尾', children: [SegmentSettingsSection()]),
+
+      // ───────── 元数据 ─────────
+      _Section(
+        title: '元数据 · TMDB',
+        children: [
+          Text(
+            TmdbConfig.builtinToken.isEmpty
+                ? '首页推荐、详情页演职员 / 相似推荐，以及媒体库不是中文时的标题简介补全，都来自 TMDB。'
+                : '已内置 TMDB 读取令牌，可直接使用；填写自己的令牌后优先使用你的。',
+            style: VText.caption.copyWith(color: VColors.textSecondary),
+          ),
+          const SizedBox(height: 20),
+          VTextField(label: 'TMDB API Key 或读取令牌（themoviedb.org → 设置 → API）', controller: _tmdbKey),
+          const SizedBox(height: 20),
+          VTextField(
+            label: '自定义 API 地址（可留空）',
+            controller: _tmdbBase,
+            hint: 'https://api.themoviedb.org/3',
+            keyboardType: TextInputType.url,
+          ),
+          const SizedBox(height: 20),
+          VToggle(
+            label: '通过反向代理访问 TMDB',
+            subtitle: 'API 与图片（image.tmdb.org）都走反向代理；国内直连 TMDB 不稳定时打开',
+            value: config.tmdb.useProxy,
+            onChanged: (v) =>
+                ref.read(configProvider.notifier).update((c) => c.copyWith(tmdb: c.tmdb.copyWith(useProxy: v))),
+          ),
+          const SizedBox(height: 24),
+          PillButton(
+            icon: Icons.save_rounded,
+            label: _tmdbTesting ? '测试中…' : '保存并测试',
+            onPressed: _tmdbTesting ? null : _saveTmdb,
+          ),
+        ],
+      ),
+
+      // ───────── 反向代理 ─────────
+      _Section(
+        title: '反向代理 · 绑定线路',
+        children: [
+          VTextField(
+            label: '完整地址（emby-reverse-proxy-go）',
+            controller: _proxy,
+            hint: 'https://embyproxy.example.com/proxy/',
+            keyboardType: TextInputType.url,
+            helper: '更换地址后，已绑定的线路会继续使用这个代理。示例：https://emby.a.com → …/proxy/https/emby.a.com/443',
+          ),
+          const SizedBox(height: 20),
+          Row(
+            children: [
+              PillButton(icon: Icons.save_rounded, label: '保存地址', onPressed: _saveProxy),
+              const SizedBox(width: 24),
+              PillButton(
+                label: config.proxy.scope == ProxyScope.all ? '代理范围：API + 视频流' : '代理范围：仅视频流',
+                onPressed: () => ref
+                    .read(configProvider.notifier)
+                    .update(
+                      (c) => c.copyWith(
+                        proxy: ProxyConfig(
+                          baseUrl: c.proxy.baseUrl,
+                          scope: c.proxy.scope == ProxyScope.all ? ProxyScope.streamOnly : ProxyScope.all,
                         ),
                       ),
                     ),
-                  ],
-                ),
-                const SizedBox(height: 20),
+              ),
+            ],
+          ),
+          const SizedBox(height: 28),
+          Text('媒体服务器线路', style: VText.caption.copyWith(color: VColors.textTertiary)),
+          const SizedBox(height: 12),
+          if (config.servers.isEmpty)
+            Text('还没有添加服务器', style: VText.label.copyWith(color: VColors.textMuted))
+          else
+            for (final s in config.servers)
+              for (final l in s.lines) ...[
                 VToggle(
-                  label: '启动时自动检查更新',
-                  value: updater.settings.autoCheck,
-                  width: 1000,
-                  onChanged: (v) async {
-                    await updater.saveSettings(UpdateSettings(autoCheck: v, manifestUrl: updater.settings.manifestUrl));
-                    setState(() {});
-                  },
+                  label: '${s.name} · ${l.name}',
+                  subtitle: l.url,
+                  value: l.proxied,
+                  onChanged: (v) => ref
+                      .read(configProvider.notifier)
+                      .updateServer(
+                        s.id,
+                        (old) =>
+                            old.copyWith(lines: [for (final x in old.lines) x.id == l.id ? x.copyWith(proxied: v) : x]),
+                      ),
                 ),
-                const SizedBox(height: 20),
-                VTextField(
-                  label: '自定义更新地址（latest.json，留空使用 GitHub Releases）',
-                  controller: _manifest,
-                  hint: 'https://example.com/viora/latest.json',
-                  keyboardType: TextInputType.url,
-                  width: 1000,
+                const SizedBox(height: 10),
+              ],
+        ],
+      ),
+
+      // ───────── 关于与更新 ─────────
+      _Section(
+        title: '关于与更新',
+        children: [
+          _InfoLine(label: '当前版本', value: _version),
+          _InfoLine(label: '更新来源', value: _source),
+          const SizedBox(height: 20),
+          Row(
+            children: [
+              PillButton(
+                icon: Icons.refresh_rounded,
+                label: state is UpdateChecking ? '检查中…' : '检查更新',
+                onPressed: state is UpdateChecking ? null : _check,
+              ),
+              const SizedBox(width: 24),
+              Expanded(
+                child: Text(
+                  status,
+                  style: VText.caption.copyWith(color: state is UpdateFailed ? VColors.bad : VColors.textSecondary),
                 ),
-                const SizedBox(height: 16),
-                PillButton(icon: Icons.save_rounded, label: '保存更新地址', onPressed: _saveManifest),
+              ),
+            ],
+          ),
+          const SizedBox(height: 20),
+          VToggle(
+            label: '启动时自动检查更新',
+            value: updater.settings.autoCheck,
+            onChanged: (v) async {
+              await updater.saveSettings(UpdateSettings(autoCheck: v, manifestUrl: updater.settings.manifestUrl));
+              setState(() {});
+            },
+          ),
+          const SizedBox(height: 20),
+          VTextField(
+            label: '自定义更新地址（latest.json，留空使用 GitHub Releases）',
+            controller: _manifest,
+            hint: 'https://example.com/viora/latest.json',
+            keyboardType: TextInputType.url,
+          ),
+          const SizedBox(height: 16),
+          PillButton(icon: Icons.save_rounded, label: '保存更新地址', onPressed: _saveManifest),
+        ],
+      ),
+    ];
+    final current = _category.index.clamp(0, sections.length - 1);
+
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        // 左：分类
+        Padding(
+          padding: const EdgeInsets.fromLTRB(VSpace.contentLeft, VSpace.safeV, 0, VSpace.safeV),
+          child: SizedBox(
+            width: 340,
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text('设置', style: VText.h1),
+                const SizedBox(height: 40),
+                for (final c in _Category.values) ...[
+                  _CategoryItem(
+                    category: c,
+                    selected: c == _category,
+                    autofocus: c == _Category.values.first,
+                    onSelect: () => setState(() => _category = c),
+                  ),
+                  const SizedBox(height: 10),
+                ],
               ],
             ),
-          ],
+          ),
         ),
-      ),
+        const SizedBox(width: 48),
+        // 右：当前分类的内容，铺满剩余宽度
+        Expanded(
+          child: FocusAutoScroll(
+            child: SingleChildScrollView(
+              padding: const EdgeInsets.fromLTRB(0, VSpace.safeV + 92, VSpace.safeH, 240),
+              child: sections[current],
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+enum _Category {
+  playback('播放', Icons.play_circle_outline_rounded),
+  segments('片头片尾', Icons.fast_forward_outlined),
+  metadata('元数据', Icons.auto_awesome_outlined),
+  proxy('反向代理', Icons.shield_outlined),
+  about('关于与更新', Icons.system_update_alt_rounded);
+
+  const _Category(this.label, this.icon);
+  final String label;
+  final IconData icon;
+}
+
+/// 左侧分类：OK / 点击选中；遥控器移动焦点时直接切换内容
+class _CategoryItem extends StatelessWidget {
+  const _CategoryItem({required this.category, required this.selected, required this.onSelect, this.autofocus = false});
+
+  final _Category category;
+  final bool selected;
+  final bool autofocus;
+  final VoidCallback onSelect;
+
+  @override
+  Widget build(BuildContext context) {
+    return VFocusable(
+      autofocus: autofocus,
+      radius: 18,
+      scale: 1.03,
+      alignment: Alignment.centerLeft,
+      showRing: false,
+      onActivate: onSelect,
+      onFocusChange: (focused) {
+        if (focused && InputMode.shouldAutoScroll) onSelect();
+      },
+      builder: (context, focused) {
+        final fg = focused ? const Color(0xFF0B0C10) : (selected ? Colors.white : VColors.textSecondary);
+        return AnimatedContainer(
+          duration: VMotion.focus,
+          height: 68,
+          padding: const EdgeInsets.symmetric(horizontal: 22),
+          decoration: BoxDecoration(
+            color: focused ? Colors.white : (selected ? const Color(0x29FFFFFF) : const Color(0x00FFFFFF)),
+            borderRadius: BorderRadius.circular(18),
+          ),
+          child: Row(
+            children: [
+              Icon(category.icon, size: 28, color: fg),
+              const SizedBox(width: 16),
+              Text(
+                category.label,
+                style: VText.label.copyWith(color: fg, fontWeight: selected ? FontWeight.w700 : FontWeight.w400),
+              ),
+            ],
+          ),
+        );
+      },
     );
   }
 }
@@ -372,9 +552,8 @@ class _Section extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Padding(
-      padding: const EdgeInsets.only(bottom: 32),
+      padding: EdgeInsets.zero,
       child: Glass(
-        width: 1100,
         padding: const EdgeInsets.all(44),
         child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [SectionTitle(title), ...children]),
       ),

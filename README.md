@@ -20,7 +20,9 @@ UI 参考 iOS 端 Rex 的信息结构（首页 / 详情 / 资源库），并针�
 
 ## 开发
 
-当前进度：**M1 已完成**（Emby / Jellyfin 浏览与播放），首页推荐仍为假数据（M4 接入 TMDB），见 [docs/09-roadmap.md](docs/09-roadmap.md)。
+当前进度：**M0~M4 已完成，M5 片头片尾进行中**（Emby / Jellyfin 浏览与播放、多服务器聚合、TMDB 首页、播放预加载），见 [docs/09-roadmap.md](docs/09-roadmap.md)。
+
+片头片尾：媒体服务器标记（Jellyfin 媒体片段 / Emby 章节标记）→ TheIntroDB / IntroDB / PublicMetaDB → 章节名识别，播放时显示「跳过片头」「下一集」或自动跳过，在「设置 → 片头片尾」配置，详见 [docs/05-metadata-and-segments.md](docs/05-metadata-and-segments.md)。
 
 ```bash
 flutter pub get

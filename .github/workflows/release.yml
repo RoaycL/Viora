@@ -73,7 +73,7 @@ jobs:
           channel: stable
           cache: true
       - run: flutter pub get
-      - run: flutter build apk --release
+      - run: flutter build apk --release --dart-define=VIORA_TMDB_TOKEN=${{ secrets.TMDB_TOKEN }}
       - run: |
           mkdir -p dist
           cp build/app/outputs/flutter-apk/app-release.apk "dist/Viora-${{ needs.prepare.outputs.version }}-android.apk"
@@ -94,7 +94,7 @@ jobs:
           channel: stable
           cache: true
       - run: flutter pub get
-      - run: flutter build windows --release
+      - run: flutter build windows --release --dart-define=VIORA_TMDB_TOKEN=${{ secrets.TMDB_TOKEN }}
       - name: 打包安装程序与免安装版
         shell: pwsh
         run: |

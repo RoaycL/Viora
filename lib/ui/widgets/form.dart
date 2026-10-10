@@ -16,7 +16,7 @@ class VTextField extends StatefulWidget {
     this.obscure = false,
     this.autofocus = false,
     this.keyboardType,
-    this.width = 760,
+    this.width,
     this.onSubmitted,
     this.helper,
   });
@@ -27,7 +27,9 @@ class VTextField extends StatefulWidget {
   final bool obscure;
   final bool autofocus;
   final TextInputType? keyboardType;
-  final double width;
+
+  /// null = 填满父级宽度
+  final double? width;
   final ValueChanged<String>? onSubmitted;
   final String? helper;
 
@@ -128,14 +130,16 @@ class VToggle extends StatelessWidget {
     required this.value,
     required this.onChanged,
     this.subtitle,
-    this.width = 760,
+    this.width,
   });
 
   final String label;
   final String? subtitle;
   final bool value;
   final ValueChanged<bool> onChanged;
-  final double width;
+
+  /// null = 填满父级宽度
+  final double? width;
 
   @override
   Widget build(BuildContext context) {

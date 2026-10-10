@@ -98,3 +98,15 @@ TV 端搜索输入：屏幕键盘（拼音首字母 + 全拼两种布局）、�
 ### 5.4 播放中切换
 
 播放器侧边面板"资源"页列出同一集的全部版本，切换时保持当前进度（见 08）。某个版本起播失败（网络错误、403、解码失败）时，自动提示"切换到下一个资源？"并倒计时 5 秒自动切换。
+
+## 6. 实现说明（v0.4.0）
+
+| 模块 | 文件 |
+|---|---|
+| 标题归一化 / 拼音 | `lib/data/index/title_norm.dart`（全角转半角、繁转简、去年份 / 季号 / 标点；`lpinyin` 生成首字母与全拼） |
+| 索引存储 | `lib/data/index/media_index.dart`（`sqlite3`，`items` + `sync_state` 两张表；全量同步用代号 `gen` 删除服务器上已不存在的条目） |
+| 同步调度 | `lib/data/index/index_sync.dart`（启动 2 秒后同步全部服务器；每页 500 条；距上次全量超过 7 天走全量，否则按 `MinDateLastSaved = 上次增量 − 5 分钟` 增量） |
+| 多资源 | `lib/data/aggregate/sources.dart`（单集按"剧集副本 + 季号 + 集号"跨服务器映射；各服务器 `PlaybackInfo` 并发、单台 8 秒超时；排序：偏好服务器 → 分辨率 → 延迟（差 > 80ms 才算）→ 码率） |
+| 聚合搜索 | `lib/features/search/search_page.dart`（本地索引先出结果，再并发实时搜索各服务器、单台 5 秒超时，回来一台合并一台） |
+
+Web 预览构建不支持 SQLite（条件导入 `sqlite_stub.dart`），此时只走服务器实时搜索。

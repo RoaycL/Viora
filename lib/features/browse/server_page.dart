@@ -14,6 +14,7 @@ import '../../ui/rows/focus_row.dart';
 import '../../ui/widgets/buttons.dart';
 import '../../ui/widgets/server_image.dart';
 import 'media_cards.dart';
+import '../../ui/focus/input_mode.dart';
 
 final _serverResumeProvider = FutureProvider.family<List<MediaItem>, String>((ref, serverId) async {
   final client = ref.watch(serverClientProvider(serverId));
@@ -114,7 +115,7 @@ class _LibraryCard extends StatelessWidget {
           child: Stack(
             fit: StackFit.expand,
             children: [
-              ServerImage(serverId: serverId, image: library.image, maxWidth: 800, fallbackSeed: library.id),
+              ServerImage(serverId: serverId, image: library.image, width: 400, fallbackSeed: library.id),
               const DecoratedBox(
                 decoration: BoxDecoration(
                   gradient: LinearGradient(
@@ -317,7 +318,7 @@ class _GridPosterState extends State<_GridPoster> {
   void initState() {
     super.initState();
     _node.addListener(() {
-      if (_node.hasPrimaryFocus) {
+      if (_node.hasPrimaryFocus && InputMode.shouldAutoScroll) {
         Scrollable.ensureVisible(context, alignment: 0.4, duration: VMotion.scroll, curve: Curves.easeOutCubic);
       }
     });

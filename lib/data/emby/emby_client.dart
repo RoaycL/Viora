@@ -18,6 +18,26 @@ class PlaybackRequest {
   final String userAgent;
 }
 
+/// 服务器章节
+class ServerChapter {
+  const ServerChapter({required this.name, required this.start, this.marker});
+
+  final String name;
+  final Duration start;
+
+  /// Emby：IntroStart / IntroEnd / CreditsStart；普通章节为 Chapter 或空
+  final String? marker;
+}
+
+/// Jellyfin 媒体片段
+class ServerMediaSegment {
+  const ServerMediaSegment({required this.type, required this.start, required this.end});
+
+  final String type;
+  final Duration start;
+  final Duration end;
+}
+
 class MediaServerException implements Exception {
   const MediaServerException(this.message, {this.statusCode});
 
@@ -197,7 +217,11 @@ class EmbyClient {
     return e?.toString() ?? '未知错误';
   }
 
-  String get _uid => _server.userId ?? '';
+  /// 先确保已登录再取用户 ID：路径里的用户 ID 必须在发请求之前拼好
+  Future<String> _userId() async {
+    if (!_server.loggedIn) await login();
+    return _server.userId ?? '';
+  }
 
   static const _fields =
       'PrimaryImageAspectRatio,ProductionYear,PremiereDate,ProviderIds,Overview,Genres,CommunityRating,'
@@ -207,7 +231,7 @@ class EmbyClient {
   // ───────────────────────── 浏览 ─────────────────────────
 
   Future<List<Library>> libraries() async {
-    final data = await _request('GET', '/Users/$_uid/Views') as Map<String, dynamic>;
+    final data = await _request('GET', '/Users/${await _userId()}/Views') as Map<String, dynamic>;
     return [
       for (final j in (data['Items'] as List? ?? const []).cast<Map<String, dynamic>>())
         if (const {null, 'movies', 'tvshows', 'mixed', 'homevideos', 'boxsets'}.contains(j['CollectionType']))
@@ -230,10 +254,12 @@ class EmbyClient {
     String sortBy = 'DateCreated,SortName',
     String sortOrder = 'Descending',
     String? searchTerm,
+    DateTime? minDateLastSaved,
+    String? filters,
   }) async {
     final data = await _request(
       'GET',
-      '/Users/$_uid/Items',
+      '/Users/${await _userId()}/Items',
       query: {
         'ParentId': ?parentId,
         'Recursive': 'true',
@@ -244,6 +270,8 @@ class EmbyClient {
         'SortOrder': sortOrder,
         'Fields': _fields,
         'SearchTerm': ?searchTerm,
+        'MinDateLastSaved': ?minDateLastSaved?.toUtc().toIso8601String(),
+        'Filters': ?filters,
         ..._imageQuery,
       },
     ) as Map<String, dynamic>;
@@ -254,7 +282,7 @@ class EmbyClient {
   Future<List<MediaItem>> latest({String? parentId, int limit = 20}) async {
     final data = await _request(
       'GET',
-      '/Users/$_uid/Items/Latest',
+      '/Users/${await _userId()}/Items/Latest',
       query: {'ParentId': ?parentId, 'Limit': '$limit', 'Fields': _fields, ..._imageQuery},
     );
     return (data as List? ?? const []).cast<Map<String, dynamic>>().map(parseItem).toList();
@@ -263,20 +291,58 @@ class EmbyClient {
   Future<List<MediaItem>> resume({int limit = 20}) async {
     final data = await _request(
       'GET',
-      '/Users/$_uid/Items/Resume',
+      '/Users/${await _userId()}/Items/Resume',
       query: {'Limit': '$limit', 'MediaTypes': 'Video', 'Fields': _fields, ..._imageQuery},
     ) as Map<String, dynamic>;
     return (data['Items'] as List? ?? const []).cast<Map<String, dynamic>>().map(parseItem).toList();
   }
 
-  Future<MediaItem> item(String id) async =>
-      parseItem(await _request('GET', '/Users/$_uid/Items/$id', query: {'Fields': _fields}) as Map<String, dynamic>);
+  Future<MediaItem> item(String id) async => parseItem(
+    await _request('GET', '/Users/${await _userId()}/Items/$id', query: {'Fields': _fields}) as Map<String, dynamic>,
+  );
+
+  /// 章节列表（片头片尾：Emby 4.8+ 的章节带 MarkerType：IntroStart / IntroEnd / CreditsStart）
+  Future<List<ServerChapter>> chapters(String itemId) async {
+    final j = await _request(
+      'GET',
+      '/Users/${await _userId()}/Items/$itemId',
+      query: {'Fields': 'Chapters'},
+    ) as Map<String, dynamic>;
+    return [
+      for (final c in (j['Chapters'] as List? ?? const []).cast<Map<String, dynamic>>())
+        ServerChapter(
+          name: c['Name'] as String? ?? '',
+          start: ticksToDuration(c['StartPositionTicks'] as num?),
+          marker: c['MarkerType'] as String?,
+        ),
+    ];
+  }
+
+  /// Jellyfin 10.10+ 的媒体片段（Intro / Outro / Recap / Preview / Commercial）。Emby 或旧版本返回空列表。
+  Future<List<ServerMediaSegment>> mediaSegments(String itemId) async {
+    if (_server.type != ServerType.jellyfin) return const [];
+    try {
+      final j = await _request('GET', '/MediaSegments/$itemId') as Map<String, dynamic>;
+      return [
+        for (final s in (j['Items'] as List? ?? const []).cast<Map<String, dynamic>>())
+          ServerMediaSegment(
+            type: s['Type'] as String? ?? '',
+            start: ticksToDuration(s['StartTicks'] as num?),
+            end: ticksToDuration(s['EndTicks'] as num?),
+          ),
+      ];
+    } on MediaServerException catch (e) {
+      // 旧版 Jellyfin 没有这个接口
+      if (e.statusCode == 404 || e.statusCode == 400) return const [];
+      rethrow;
+    }
+  }
 
   Future<List<MediaItem>> seasons(String seriesId) async {
     final data = await _request(
       'GET',
       '/Shows/$seriesId/Seasons',
-      query: {'UserId': _uid, 'Fields': _fields},
+      query: {'UserId': await _userId(), 'Fields': _fields},
     ) as Map<String, dynamic>;
     return (data['Items'] as List? ?? const []).cast<Map<String, dynamic>>().map(parseItem).toList();
   }
@@ -285,7 +351,7 @@ class EmbyClient {
     final data = await _request(
       'GET',
       '/Shows/$seriesId/Episodes',
-      query: {'UserId': _uid, 'SeasonId': ?seasonId, 'Fields': _fields, ..._imageQuery},
+      query: {'UserId': await _userId(), 'SeasonId': ?seasonId, 'Fields': _fields, ..._imageQuery},
     ) as Map<String, dynamic>;
     return (data['Items'] as List? ?? const []).cast<Map<String, dynamic>>().map(parseItem).toList();
   }
@@ -295,14 +361,14 @@ class EmbyClient {
     final data = await _request(
       'GET',
       '/Shows/NextUp',
-      query: {'UserId': _uid, 'SeriesId': seriesId, 'Fields': _fields},
+      query: {'UserId': await _userId(), 'SeriesId': seriesId, 'Fields': _fields},
     ) as Map<String, dynamic>;
     final list = (data['Items'] as List? ?? const []).cast<Map<String, dynamic>>();
     return list.isEmpty ? null : parseItem(list.first);
   }
 
   Future<({int movies, int series})> counts() async {
-    final data = await _request('GET', '/Items/Counts', query: {'UserId': _uid}) as Map<String, dynamic>;
+    final data = await _request('GET', '/Items/Counts', query: {'UserId': await _userId()}) as Map<String, dynamic>;
     return (movies: data['MovieCount'] as int? ?? 0, series: data['SeriesCount'] as int? ?? 0);
   }
 
@@ -312,8 +378,8 @@ class EmbyClient {
     final data = await _request(
       'POST',
       '/Items/$itemId/PlaybackInfo',
-      query: {'UserId': _uid, 'IsPlayback': 'true', 'AutoOpenLiveStream': 'true'},
-      body: {'UserId': _uid},
+      query: {'UserId': await _userId(), 'IsPlayback': 'true', 'AutoOpenLiveStream': 'true'},
+      body: {'UserId': await _userId()},
     ) as Map<String, dynamic>;
     final sources = [
       for (final s in (data['MediaSources'] as List? ?? const []).cast<Map<String, dynamic>>()) parseSource(itemId, s),
@@ -399,11 +465,11 @@ class EmbyClient {
     }
   }
 
-  Future<void> setPlayed(String itemId, bool played) =>
-      _request(played ? 'POST' : 'DELETE', '/Users/$_uid/PlayedItems/$itemId');
+  Future<void> setPlayed(String itemId, bool played) async =>
+      _request(played ? 'POST' : 'DELETE', '/Users/${await _userId()}/PlayedItems/$itemId');
 
-  Future<void> setFavorite(String itemId, bool favorite) =>
-      _request(favorite ? 'POST' : 'DELETE', '/Users/$_uid/FavoriteItems/$itemId');
+  Future<void> setFavorite(String itemId, bool favorite) async =>
+      _request(favorite ? 'POST' : 'DELETE', '/Users/${await _userId()}/FavoriteItems/$itemId');
 
   // ───────────────────────── 图片 ─────────────────────────
 
@@ -476,6 +542,7 @@ class EmbyClient {
       runtime: j['RunTimeTicks'] == null ? null : ticksToDuration(j['RunTimeTicks'] as num),
       tmdbId: (providers['Tmdb'] ?? providers['tmdb'])?.toString(),
       imdbId: (providers['Imdb'] ?? providers['imdb'])?.toString(),
+      tvdbId: (providers['Tvdb'] ?? providers['tvdb'])?.toString(),
       primary: primary,
       backdrop: backdrop,
       thumb: thumb,
@@ -491,6 +558,7 @@ class EmbyClient {
       position: ticksToDuration(user['PlaybackPositionTicks'] as num?),
       playedPercentage: (user['PlayedPercentage'] as num?)?.toDouble(),
       dateCreated: DateTime.tryParse(j['DateCreated'] as String? ?? ''),
+      lastPlayed: DateTime.tryParse(user['LastPlayedDate'] as String? ?? ''),
     );
   }
 

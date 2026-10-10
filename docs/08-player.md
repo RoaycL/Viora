@@ -7,6 +7,44 @@
 | Windows | mpv（`media_kit`） | — | — |
 | Android TV | ExoPlayer（Media3） | mpv | ① 用户在设置中改默认；② 按资源手动"用 mpv 播放"；③ ExoPlayer 起播失败（不支持的编码/封装）自动回退一次；④ 资源含 ASS 特效字幕且用户开启"ASS 优先 mpv" |
 
+## 1.1 实现（M2）
+
+| 部分 | 位置 |
+| --- | --- |
+| 内核接口 `PlayerEngine` / `EngineState` / `EngineTrack` | `lib/player/engine.dart` |
+| mpv 内核 | `lib/player/mpv_engine.dart`（media_kit） |
+| ExoPlayer 内核（Dart 侧） | `lib/player/exo_engine.dart`：MethodChannel `viora/exo`、EventChannel `viora/exo/events`、PlatformView `viora/exo-view`（Hybrid Composition） |
+| ExoPlayer 内核（原生） | `android/app/src/main/kotlin/com/viora/viora/exo/`：`ExoController`（播放器、轨道、事件）、`ExoPlugin`（通道、PlayerView、自动帧率） |
+
+- **画面**：PlayerView 使用 SurfaceView，以 Hybrid Composition 嵌入 Flutter，SurfaceView 直接参与系统合成，HDR10 / HLG / 杜比视界可直通到电视；Flutter 的 OSD 叠在上面。PlayerView 设置为不可聚焦，遥控器按键始终由 Flutter 处理。
+- **网络**：`DefaultHttpDataSource` 设置播放 UA、请求头，允许跨协议重定向（https → http 的网盘直链）。
+- **音频直通**：由 ExoPlayer 根据 HDMI 能力（AudioCapabilities）自动选择 AC3 / EAC3 / DTS / TrueHD 直通。
+- **自动帧率**：拿到视频帧率后，在同分辨率的显示模式里选刷新率等于帧率（或整数倍）的一项，设置 `preferredDisplayModeId`；退出播放恢复。开启时关闭 ExoPlayer 自带的 `Surface.setFrameRate`，避免冲突。
+- **回退**：ExoPlayer 报解析 / 解码 / 音频输出类错误（错误码 3xxx、4xxx、5xxx），或所有音轨 / 视频轨都不被设备支持（否则会静音或黑屏继续播）时，"自动"模式下换 mpv 从当前位置重试一次。网络错误不回退。
+- **语言偏好**：音轨优先 zh / chi / zho / cmn / yue，字幕优先中文。
+
+## 1.2 起播加速与预加载（v0.6.0）
+
+| 手段 | 时机 | 作用 |
+| --- | --- | --- |
+| 播放信息缓存 | 详情页查资源、首页「继续观看」焦点停留 0.8 秒 | 起播时不再请求 PlaybackInfo（经反代一次约 1.5~2 秒），3 分钟内有效；同一条目并发请求合并 |
+| 视频预热 | 详情页默认版本、「继续观看」焦点停留 | 读片头 1MB、片尾 256KB（MKV Cues / MP4 moov）、续播位置附近 1MB，唤醒服务器硬盘、解析网盘 302 直链、建立反代回源；同一版本 5 分钟内只预热一次 |
+| 下一集预加载 | 剧集播放到 85% | 提前拿到下一集并预热，播完直接跳转 |
+| 并行起播 | 进入播放页 | 创建播放内核、取条目信息、取播放信息同时进行 |
+| ExoPlayer 起播缓冲 | Android | bufferForPlayback 1 秒（默认 2.5 秒），卡顿后 2.5 秒（默认 5 秒） |
+
+设置 → 播放 →「播放预加载」可关闭（会多用少量流量）。实现：`lib/player/preload.dart`。
+
+v0.7.0 起可调（设置 → 播放）：
+
+| 设置 | 选项 | 说明 |
+| --- | --- | --- |
+| 起播预热量 | 2 / 8 / 32 / 128 MB | 片头 40%、续播位置 40%、片尾 20%（至少 256KB）；从头播放时续播那份并入片头 |
+| 播放缓冲上限 | 64 / 256 / 512 MB / 1 / 2 GB（默认 256 MB） | mpv：`demuxer-max-bytes`，超过 256 MB 时 `cache-on-disk` 写到系统临时目录 `viora_play_cache`；ExoPlayer：`targetBufferBytes`，最多用可用内存的 40% |
+| 关闭播放器后清除播放缓存 | 开（默认）/ 关 | 退出播放时删除磁盘缓存文件与预加载数据；连播下一集 / 切换版本时保留预加载数据；启动时清理上次残留 |
+
+实现：`lib/player/playback_cache.dart`。
+
 ## 2. PlayerEngine 接口
 
 ```dart
