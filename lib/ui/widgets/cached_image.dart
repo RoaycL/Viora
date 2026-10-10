@@ -44,7 +44,10 @@ class CachedNetImage extends ImageProvider<CachedNetImage> {
       MultiFrameImageStreamCompleter(codec: _load(decode), scale: 1, debugLabel: url);
 
   Future<ui.Codec> _load(ImageDecoderCallback decode) async {
-    final bytes = await (_inflight[url] ??= _bytes().whenComplete(() => _inflight.remove(url)));
+    // 注意不能写成 `whenComplete(() => _inflight.remove(url))`：remove 返回的正是这个 Future，会自己等自己而永远不完成
+    final bytes = await (_inflight[url] ??= _bytes().whenComplete(() {
+      _inflight.remove(url);
+    }));
     return decode(await ui.ImmutableBuffer.fromUint8List(bytes));
   }
 
