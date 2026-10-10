@@ -143,7 +143,8 @@ class _HomeBodyState extends ConsumerState<_HomeBody> {
     onDetail: () => openTmdbTitle(context, t),
   );
 
-  HeroEntry _itemHero(MediaItem it, String badge, {int? resources, String? server}) {
+  /// 首页只做展示：不显示跨服务器的资源数（在详情页里看，docs/04-aggregation.md §7）
+  HeroEntry _itemHero(MediaItem it, String badge, {String? server}) {
     final episode = it.kind == MediaKind.episode;
     final logo = episode ? null : it.logo;
     return HeroEntry(
@@ -174,7 +175,6 @@ class _HomeBodyState extends ConsumerState<_HomeBody> {
       genres: it.genres,
       rating: it.rating != null && it.rating! > 0 ? it.rating : null,
       overview: it.overview ?? '',
-      resources: resources,
       onPlay: it.playable
           ? () => playMediaItem(context, it)
           : it.kind == MediaKind.series
@@ -199,13 +199,13 @@ class _HomeBodyState extends ConsumerState<_HomeBody> {
     badge == null ? null : _tmdbHero(t, badge),
   );
 
-  _Backdrop _itemBackdrop(MediaItem it, {String? badge, int? resources, String? server}) {
+  _Backdrop _itemBackdrop(MediaItem it, {String? badge, String? server}) {
     final img = it.backdrop ?? it.thumb;
     return _Backdrop(
       '${it.serverId}/${it.id}',
       placeholderArt(it.id),
       img == null ? null : ServerImage(serverId: it.serverId, image: img, width: 1920, transparentFallback: true),
-      badge == null ? null : _itemHero(it, badge, resources: resources, server: server),
+      badge == null ? null : _itemHero(it, badge, server: server),
     );
   }
 
@@ -227,7 +227,7 @@ class _HomeBodyState extends ConsumerState<_HomeBody> {
     // 没有 TMDB：用媒体库最近入库
     return [
       for (final g in recent.where((g) => g.primary.backdrop != null).take(8))
-        (_itemHero(g.primary, '最近入库', resources: g.copies.length), _itemBackdrop(g.primary)),
+        (_itemHero(g.primary, '最近入库'), _itemBackdrop(g.primary)),
     ];
   }
 
@@ -354,13 +354,10 @@ class _HomeBodyState extends ConsumerState<_HomeBody> {
                         _itemBackdrop(
                           recent[i].primary,
                           badge: '最近入库',
-                          resources: recent[i].copies.length,
                           server: serverNames[recent[i].primary.serverId],
                         ),
                       ),
-                      itemBuilder: (context, i, node) => _hoverTrack(
-                        mediaPosterCard(context, recent[i].primary, node, resources: recent[i].copies.length),
-                      ),
+                      itemBuilder: (context, i, node) => _hoverTrack(mediaPosterCard(context, recent[i].primary, node)),
                     ),
                   tmdbRow(3, '正在热映', TmdbRow.nowPlaying),
                   tmdbRow(4, '正在播出', TmdbRow.onTheAir),
