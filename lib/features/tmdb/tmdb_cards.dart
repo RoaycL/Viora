@@ -1,23 +1,14 @@
 import 'package:flutter/material.dart';
-import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
-import '../../data/aggregate/tmdb_link.dart';
 import '../../data/media/media_models.dart';
 import '../../data/tmdb/tmdb_client.dart';
 import '../../ui/rows/cards.dart';
 import '../../ui/widgets/server_image.dart';
 import '../../ui/widgets/tmdb_image.dart';
 
-/// 打开 TMDB 条目：媒体库里有就直接进媒体库详情（可播放），否则进 TMDB 详情。
-void openTmdbTitle(BuildContext context, WidgetRef ref, TmdbTitle t) {
-  final copies = ref.read(libraryCopiesProvider(linkKeyOf(t)));
-  if (copies.isNotEmpty) {
-    context.push('/item/${copies.first.serverId}/${copies.first.id}');
-  } else {
-    context.push('/tmdb/${t.type}/${t.id}');
-  }
-}
+/// 打开 TMDB 条目的详情页。首页、推荐行只做展示，进详情页后才到各服务器搜索资源（docs/04-aggregation.md §5）
+void openTmdbTitle(BuildContext context, TmdbTitle t) => context.push('/tmdb/${t.type}/${t.id}');
 
 /// 播放 TMDB 条目：电影直接播放（默认资源），剧集进详情选集
 void playTmdbTitle(BuildContext context, MediaItem copy) {
@@ -34,8 +25,8 @@ String tmdbSubtitle(TmdbTitle t) => [
   if (t.year == null && t.rating == null) t.isTv ? '剧集' : '电影',
 ].join(' · ');
 
-/// TMDB 海报卡：角标显示媒体库里的资源数（没有时半透明并显示"无资源"）
-class TmdbPosterCard extends ConsumerWidget {
+/// TMDB 海报卡（只做展示，不查媒体库资源）
+class TmdbPosterCard extends StatelessWidget {
   const TmdbPosterCard({super.key, required this.title, required this.node, this.onFocusChange});
 
   final TmdbTitle title;
@@ -43,17 +34,15 @@ class TmdbPosterCard extends ConsumerWidget {
   final ValueChanged<bool>? onFocusChange;
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  Widget build(BuildContext context) {
     final t = title;
-    final copies = ref.watch(libraryCopiesProvider(linkKeyOf(t)));
     return PosterCard(
       node: node,
       art: placeholderArt(t.key),
       image: TmdbImage(path: t.posterPath, fallbackSeed: t.key),
       title: t.title,
       subtitle: tmdbSubtitle(t),
-      resources: copies.length,
-      onActivate: () => openTmdbTitle(context, ref, t),
+      onActivate: () => openTmdbTitle(context, t),
       onFocusChange: onFocusChange,
     );
   }

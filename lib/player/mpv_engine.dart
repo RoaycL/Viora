@@ -74,7 +74,8 @@ class MpvEngine extends PlayerEngine {
     final native = _player.platform;
     if (kIsWeb || native is! NativePlayer || _state.value.duration == Duration.zero) return;
     try {
-      final v = int.tryParse((await native.getProperty('cache-speed')).split('.').first);
+      final raw = await (native as dynamic).getProperty('cache-speed') as String;
+      final v = int.tryParse(raw.split('.').first);
       if (v != null && !_disposed) _set((x) => x.copyWith(speed: v));
     } catch (_) {}
   }

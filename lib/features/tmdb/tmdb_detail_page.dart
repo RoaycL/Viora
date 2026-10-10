@@ -4,6 +4,9 @@ import 'package:go_router/go_router.dart';
 
 import '../../app/theme.dart';
 import '../../data/aggregate/tmdb_link.dart';
+import '../../data/config/config_store.dart';
+import '../../data/media/media_models.dart';
+import '../../ui/panels/context_menu.dart';
 import '../../data/tmdb/tmdb_client.dart';
 import '../../ui/focus/row_focus.dart';
 import '../../ui/rows/cards.dart';
@@ -14,7 +17,7 @@ import '../browse/media_cards.dart';
 import 'tmdb_cards.dart';
 
 /// TMDB 作品详情：媒体库里没有的作品（首页推荐、人物作品、相似推荐点进来）。
-/// 媒体库里有时直接跳到媒体库详情，见 [openTmdbTitle]。
+/// 进入后才到各服务器搜索资源（[tmdbLibrarySearchProvider]），找到时可直接播放或选择资源。
 class TmdbDetailPage extends ConsumerWidget {
   const TmdbDetailPage({super.key, required this.isTv, required this.id});
 
@@ -70,7 +73,12 @@ class _TmdbDetail extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final copies = ref.watch(libraryCopiesProvider(linkKeyOf(t)));
+    // 进入详情页才到各服务器搜索资源
+    final search = ref.watch(tmdbLibrarySearchProvider(searchKeyOf(t)));
+    final copies = search.value ?? const <MediaItem>[];
+    final searching = search.isLoading;
+    final servers = ref.watch(configProvider.select((c) => c.servers));
+    String serverName(String id) => servers.where((s) => s.id == id).firstOrNull?.displayName ?? '服务器';
     final meta = [
       t.isTv ? '剧集' : '电影',
       if (t.year != null) '${t.year}',
@@ -165,7 +173,11 @@ class _TmdbDetail extends ConsumerWidget {
                                 const SizedBox(width: 20),
                               ],
                               Text(
-                                copies.isEmpty ? '媒体库暂无资源' : '媒体库有 ${copies.length} 个资源',
+                                searching
+                                    ? '正在各服务器搜索资源…'
+                                    : copies.isEmpty
+                                    ? (servers.isEmpty ? '还没有添加服务器' : '媒体库暂无资源')
+                                    : '找到 ${copies.length} 个资源 · ${copies.map((c) => serverName(c.serverId)).toSet().join('、')}',
                                 style: TextStyle(
                                   fontSize: 20,
                                   color: copies.isEmpty ? VColors.textTertiary : const Color(0xFF9AF2B8),
@@ -197,21 +209,41 @@ class _TmdbDetail extends ConsumerWidget {
                     child: FocusButtonRow(
                       rowIndex: 0,
                       children: [
-                        if (copies.isNotEmpty)
+                        if (copies.isNotEmpty) ...[
                           (node) => PillButton(
                             focusNode: node,
                             large: true,
                             icon: Icons.play_arrow_rounded,
-                            label: '去媒体库播放',
-                            onPressed: () => context.push('/item/${copies.first.serverId}/${copies.first.id}'),
+                            label: t.isTv ? '去选集观看' : '播放',
+                            onPressed: () => playTmdbTitle(context, copies.first),
                           ),
-                        (node) => PillButton(
-                          focusNode: node,
-                          large: copies.isEmpty,
-                          icon: Icons.search_rounded,
-                          label: '在媒体库中搜索',
-                          onPressed: () => context.go('/search?q=${Uri.encodeComponent(t.title)}'),
-                        ),
+                          (node) => PillButton(
+                            focusNode: node,
+                            icon: Icons.video_library_outlined,
+                            label: copies.length > 1 ? '选择资源 · ${copies.length}' : '媒体库详情',
+                            onPressed: () => copies.length == 1
+                                ? context.push('/item/${copies.first.serverId}/${copies.first.id}')
+                                : showContextMenu(
+                                    context,
+                                    title: '选择资源',
+                                    actions: [
+                                      for (final c in copies)
+                                        MenuAction(
+                                          [serverName(c.serverId), c.name, if (c.year != null) '${c.year}'].join(' · '),
+                                          Icons.dns_outlined,
+                                          () => context.push('/item/${c.serverId}/${c.id}'),
+                                        ),
+                                    ],
+                                  ),
+                          ),
+                        ] else if (!searching)
+                          (node) => PillButton(
+                            focusNode: node,
+                            large: true,
+                            icon: Icons.search_rounded,
+                            label: '用关键词搜索',
+                            onPressed: () => context.go('/search?q=${Uri.encodeComponent(t.title)}'),
+                          ),
                       ],
                     ),
                   ),

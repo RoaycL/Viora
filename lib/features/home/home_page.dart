@@ -127,7 +127,8 @@ class _HomeBodyState extends ConsumerState<_HomeBody> {
     });
   }
 
-  HeroEntry _tmdbHero(TmdbTitle t, String badge, {required List<MediaItem> copies}) => HeroEntry(
+  /// TMDB 推荐只做展示：不在首页查媒体库资源，进详情页再到各服务器搜索（docs/04-aggregation.md §5）
+  HeroEntry _tmdbHero(TmdbTitle t, String badge) => HeroEntry(
     key: t.key,
     title: t.title,
     latinTitle: t.originalTitle,
@@ -139,11 +140,7 @@ class _HomeBodyState extends ConsumerState<_HomeBody> {
     genres: t.genreNames,
     rating: t.rating,
     overview: t.overview,
-    resources: copies.length,
-    // 媒体库里有资源才能播放
-    onPlay: copies.isEmpty ? null : () => playTmdbTitle(context, copies.first),
-    onDetail: () => openTmdbTitle(context, ref, t),
-    onSearch: () => context.go('/search?q=${Uri.encodeComponent(t.title)}'),
+    onDetail: () => openTmdbTitle(context, t),
   );
 
   HeroEntry _itemHero(MediaItem it, String badge, {int? resources, String? server}) {
@@ -199,7 +196,7 @@ class _HomeBodyState extends ConsumerState<_HomeBody> {
             fallbackSeed: t.key,
             transparentFallback: true,
           ),
-    badge == null ? null : _tmdbHero(t, badge, copies: ref.read(libraryCopiesProvider(linkKeyOf(t)))),
+    badge == null ? null : _tmdbHero(t, badge),
   );
 
   _Backdrop _itemBackdrop(MediaItem it, {String? badge, int? resources, String? server}) {
@@ -224,8 +221,7 @@ class _HomeBodyState extends ConsumerState<_HomeBody> {
 
   List<(HeroEntry, _Backdrop)> _heroes(List<TmdbTitle> trending, List<AggregatedTitle> recent) {
     final heroes = [
-      for (final t in trending.where((t) => t.backdropPath != null).take(8))
-        (_tmdbHero(t, '今日趋势', copies: ref.watch(libraryCopiesProvider(linkKeyOf(t)))), _tmdbBackdrop(t)),
+      for (final t in trending.where((t) => t.backdropPath != null).take(8)) (_tmdbHero(t, '今日趋势'), _tmdbBackdrop(t)),
     ];
     if (heroes.isNotEmpty) return heroes;
     // 没有 TMDB：用媒体库最近入库

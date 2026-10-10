@@ -122,7 +122,7 @@ class _SideNavRailState extends State<SideNavRail> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    const _Logo(),
+                    _Logo(expanded: _expanded),
                     const SizedBox(height: 32),
                     for (final item in main) ...[
                       _RailItem(
@@ -218,16 +218,53 @@ class _RailItem extends StatelessWidget {
 }
 
 class _Logo extends StatelessWidget {
-  const _Logo();
+  const _Logo({required this.expanded});
+
+  /// 展开时图标旁边淡入「Viora」字样
+  final bool expanded;
 
   @override
   Widget build(BuildContext context) {
     return SizedBox(
-      width: 56,
-      child: Center(
-        child: ClipRRect(
-          borderRadius: BorderRadius.circular(VRadius.sm),
-          child: Image.asset('assets/images/app_icon.png', width: 44, height: 44, filterQuality: FilterQuality.medium),
+      height: 44,
+      child: ClipRect(
+        child: OverflowBox(
+          alignment: Alignment.centerLeft,
+          maxWidth: VSpace.navRailExpandedWidth,
+          child: Row(
+            children: [
+              SizedBox(
+                width: 56,
+                child: Center(
+                  child: ClipRRect(
+                    borderRadius: BorderRadius.circular(VRadius.sm),
+                    child: Image.asset(
+                      'assets/images/app_icon.png',
+                      width: 44,
+                      height: 44,
+                      filterQuality: FilterQuality.medium,
+                    ),
+                  ),
+                ),
+              ),
+              const SizedBox(width: 10),
+              AnimatedOpacity(
+                opacity: expanded ? 1 : 0,
+                duration: VMotion.focus,
+                child: AnimatedSlide(
+                  offset: expanded ? Offset.zero : const Offset(-0.15, 0),
+                  duration: VMotion.focus,
+                  curve: Curves.easeOutCubic,
+                  child: const Text(
+                    'Viora',
+                    maxLines: 1,
+                    softWrap: false,
+                    style: TextStyle(fontSize: 30, fontWeight: FontWeight.w800, letterSpacing: 0.5, height: 1),
+                  ),
+                ),
+              ),
+            ],
+          ),
         ),
       ),
     );

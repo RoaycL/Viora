@@ -1,7 +1,10 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
+import '../../app/input/intents.dart';
+import '../../app/platform_profile.dart';
 import '../../app/theme.dart';
 import '../../ui/focus/input_mode.dart';
 import '../../ui/focus/row_focus.dart';
@@ -27,7 +30,6 @@ class HeroEntry {
     this.overview = '',
     this.resources,
     this.onPlay,
-    this.onSearch,
   });
 
   final String key;
@@ -48,7 +50,6 @@ class HeroEntry {
   final int? resources;
   final VoidCallback? onPlay;
   final VoidCallback onDetail;
-  final VoidCallback? onSearch;
 }
 
 /// 首页 Hero（效果图：首页 · 焦点在 Hero 播放按钮）。
@@ -172,26 +173,19 @@ class HomeHeroState extends State<HomeHero> implements FocusRowHandle {
   Widget build(BuildContext context) {
     final t = widget.items[widget.index.clamp(0, widget.items.length - 1)];
     final hasPlay = t.onPlay != null;
+    // Windows：点封面大图进详情，不放「详情 / 查看详情」按钮（只保留播放）；
+    // 电视：遥控器需要能聚焦的按钮，保留「播放 + 详情」或「查看详情」
+    final desktop = PlatformProfile.isDesktop;
+    final showButtons = !desktop || hasPlay;
     const buttonsHeight = 76.0;
-    return SizedBox(
+    final hero = SizedBox(
       height: HomeHero.heightOf(context),
       child: Stack(
         children: [
-          // 背景区域：鼠标按住左右拖动切换上一部 / 下一部
-          Positioned.fill(
-            child: GestureDetector(
-              behavior: HitTestBehavior.translucent,
-              onHorizontalDragEnd: (d) {
-                final v = d.primaryVelocity ?? 0;
-                if (v < -150) _switchTo(widget.index + 1);
-                if (v > 150) _switchTo(widget.index - 1 + widget.items.length);
-              },
-            ),
-          ),
           // 标题、简介：底部对齐在按钮上方，内容长短只影响向上延伸，不推动按钮
           Positioned(
             left: VSpace.contentLeft,
-            bottom: HomeHero.buttonsBottom + buttonsHeight + 34,
+            bottom: showButtons ? HomeHero.buttonsBottom + buttonsHeight + 34 : HomeHero.buttonsBottom + 20,
             width: 900,
             child: AnimatedSwitcher(
               duration: VMotion.backdrop,
@@ -200,30 +194,34 @@ class HomeHeroState extends State<HomeHero> implements FocusRowHandle {
               child: _HeroInfo(key: ValueKey(t.key), title: t),
             ),
           ),
-          Positioned(
-            left: VSpace.contentLeft,
-            bottom: HomeHero.buttonsBottom,
-            height: buttonsHeight,
-            child: Row(
-              children: [
-                PillButton(
-                  focusNode: _nodes[0],
-                  autofocus: true,
-                  large: true,
-                  icon: hasPlay ? Icons.play_arrow_rounded : Icons.info_outline_rounded,
-                  label: hasPlay ? '播放' : '查看详情',
-                  onPressed: hasPlay ? t.onPlay : t.onDetail,
-                ),
-                const SizedBox(width: 40),
-                PillButton(
-                  focusNode: _nodes[1],
-                  icon: hasPlay ? Icons.info_outline_rounded : Icons.search_rounded,
-                  label: hasPlay ? '详情' : '搜索资源',
-                  onPressed: hasPlay ? t.onDetail : t.onSearch,
-                ),
-              ],
+          if (showButtons)
+            Positioned(
+              left: VSpace.contentLeft,
+              bottom: HomeHero.buttonsBottom,
+              height: buttonsHeight,
+              child: Row(
+                children: [
+                  PillButton(
+                    focusNode: _nodes[0],
+                    autofocus: true,
+                    large: true,
+                    icon: hasPlay ? Icons.play_arrow_rounded : Icons.info_outline_rounded,
+                    label: hasPlay ? '播放' : '查看详情',
+                    onPressed: hasPlay ? t.onPlay : t.onDetail,
+                  ),
+                  // 电视上 TMDB 推荐只有「查看详情」（资源在详情页里搜索）；Windows 点封面进详情
+                  if (hasPlay && !desktop) ...[
+                    const SizedBox(width: 40),
+                    PillButton(
+                      focusNode: _nodes[1],
+                      icon: Icons.info_outline_rounded,
+                      label: '详情',
+                      onPressed: t.onDetail,
+                    ),
+                  ],
+                ],
+              ),
             ),
-          ),
           // 状态栏随 Hero 一起滚走，不遮挡下方内容
           const Positioned(right: VSpace.safeH, top: VSpace.safeV, child: StatusBar()),
           if (widget.showDots && widget.items.length > 1)
@@ -255,6 +253,34 @@ class HomeHeroState extends State<HomeHero> implements FocusRowHandle {
               ),
             ),
         ],
+      ),
+    );
+    // 点击封面（标题、简介、背景）进详情；按住左右拖动切换上一部 / 下一部
+    return GestureDetector(
+      behavior: HitTestBehavior.translucent,
+      onTap: desktop ? t.onDetail : null,
+      onHorizontalDragEnd: (d) {
+        final v = d.primaryVelocity ?? 0;
+        if (v < -150) _switchTo(widget.index + 1);
+        if (v > 150) _switchTo(widget.index - 1 + widget.items.length);
+      },
+      child: MouseRegion(
+        cursor: desktop ? SystemMouseCursors.click : MouseCursor.defer,
+        child: showButtons
+            ? hero
+            // Windows 没有按钮时：封面本身作为第 0 行的焦点（键盘回车进详情）
+            : Focus(
+                focusNode: _nodes[0],
+                autofocus: true,
+                onKeyEvent: (node, e) {
+                  if (e is KeyDownEvent && confirmKeys.contains(e.logicalKey)) {
+                    t.onDetail();
+                    return KeyEventResult.handled;
+                  }
+                  return KeyEventResult.ignored;
+                },
+                child: hero,
+              ),
       ),
     );
   }

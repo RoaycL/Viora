@@ -164,11 +164,11 @@ void main() {
     await press(tester, LogicalKeyboardKey.arrowDown);
     await press(tester, LogicalKeyboardKey.arrowDown);
     await press(tester, LogicalKeyboardKey.select);
-    expect(find.text('在媒体库中搜索'), findsOneWidget);
-    expect(find.text('媒体库暂无资源'), findsOneWidget);
+    expect(find.text('用关键词搜索'), findsOneWidget);
+    expect(find.textContaining(RegExp('媒体库暂无资源|还没有添加服务器')), findsOneWidget);
 
     await press(tester, LogicalKeyboardKey.escape);
-    expect(find.text('在媒体库中搜索'), findsNothing);
+    expect(find.text('用关键词搜索'), findsNothing);
     expect(focused, 'row4#0');
     await unmount(tester);
   });
