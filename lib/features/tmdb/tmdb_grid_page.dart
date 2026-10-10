@@ -30,7 +30,12 @@ class TmdbPersonPage extends ConsumerWidget {
                   child: SizedBox(
                     width: 160,
                     height: 160,
-                    child: TmdbImage(path: person.profilePath, size: 'w185', fallbackSeed: 'p$id'),
+                    child: TmdbImage(
+                      path: person.profilePath,
+                      kind: TmdbImageKind.profile,
+                      width: 160,
+                      fallbackSeed: 'p$id',
+                    ),
                   ),
                 ),
                 const SizedBox(width: 40),

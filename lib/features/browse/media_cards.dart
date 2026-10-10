@@ -65,7 +65,7 @@ Widget mediaLandscapeCard(
     image: ServerImage(
       serverId: item.serverId,
       image: item.thumb ?? item.backdrop ?? item.primary,
-      maxWidth: 800,
+      width: LandscapeCard.width,
       fallbackSeed: item.id,
     ),
     title: isEpisode ? (item.seriesName ?? item.name) : item.name,

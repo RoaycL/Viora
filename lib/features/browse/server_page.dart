@@ -115,7 +115,7 @@ class _LibraryCard extends StatelessWidget {
           child: Stack(
             fit: StackFit.expand,
             children: [
-              ServerImage(serverId: serverId, image: library.image, maxWidth: 800, fallbackSeed: library.id),
+              ServerImage(serverId: serverId, image: library.image, width: 400, fallbackSeed: library.id),
               const DecoratedBox(
                 decoration: BoxDecoration(
                   gradient: LinearGradient(

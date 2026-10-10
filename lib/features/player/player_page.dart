@@ -20,6 +20,7 @@ import '../../player/mpv_engine.dart';
 import '../../player/playback_cache.dart';
 import '../../player/preload.dart';
 import '../../ui/glass/glass.dart';
+import '../../ui/scale/design_scale.dart';
 import '../../ui/panels/context_menu.dart';
 import '../../ui/rows/cards.dart';
 import '../../ui/widgets/buttons.dart';
@@ -79,6 +80,8 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
   void initState() {
     super.initState();
     SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
+    // 视频画面要实时更新：播放时调整窗口大小不用界面快照
+    DesignScale.snapshotAllowed.value = false;
     _progressTimer = Timer.periodic(const Duration(seconds: 10), (_) {
       if (_started && _state.playing) _report();
     });
@@ -272,6 +275,7 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
   void dispose() {
     _reportStopped();
     SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
+    DesignScale.snapshotAllowed.value = true;
     for (final s in _engineSubs) {
       s.cancel();
     }

@@ -88,7 +88,13 @@ class _TmdbDetail extends ConsumerWidget {
     return Stack(
       children: [
         Positioned.fill(
-          child: TmdbImage(path: t.backdropPath, size: 'w1280', fallbackSeed: t.key, alignment: Alignment.topRight),
+          child: TmdbImage(
+            path: t.backdropPath,
+            kind: TmdbImageKind.backdrop,
+            width: 1920,
+            fallbackSeed: t.key,
+            alignment: Alignment.topRight,
+          ),
         ),
         const Positioned.fill(
           child: DecoratedBox(
@@ -132,6 +138,8 @@ class _TmdbDetail extends ConsumerWidget {
                               width: 640,
                               child: TmdbImage(
                                 path: t.logoPath,
+                                kind: TmdbImageKind.logo,
+                                width: 640,
                                 fit: BoxFit.contain,
                                 alignment: Alignment.centerLeft,
                                 transparentFallback: true,

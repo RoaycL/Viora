@@ -3,14 +3,37 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../data/tmdb/tmdb_client.dart';
 import 'art.dart';
+import 'image_sizing.dart';
 import 'server_image.dart';
 
+/// TMDB 图片的种类（各自可用的尺寸不同）
+enum TmdbImageKind {
+  poster([92, 154, 185, 342, 500, 780]),
+  backdrop([300, 780, 1280]),
+  profile([45, 185]),
+  logo([45, 92, 154, 185, 300, 500]);
+
+  const TmdbImageKind(this.widths);
+
+  final List<int> widths;
+
+  /// 不小于 [px] 的最小尺寸；都不够时用原图
+  String sizeFor(int px) {
+    for (final w in widths) {
+      if (w >= px) return 'w$w';
+    }
+    return 'original';
+  }
+}
+
 /// TMDB 图片（image.tmdb.org，可走反向代理）。没有图或加载失败时显示占位渐变。
+/// 尺寸按设备实际分辨率选择：1080P 的海报用 w342，4K 用 w500，全屏背景 4K 用原图。
 class TmdbImage extends ConsumerWidget {
   const TmdbImage({
     super.key,
     required this.path,
-    this.size = 'w500',
+    this.kind = TmdbImageKind.poster,
+    this.width = 220,
     this.fit = BoxFit.cover,
     this.fallbackSeed = '',
     this.alignment = Alignment.center,
@@ -20,7 +43,10 @@ class TmdbImage extends ConsumerWidget {
   });
 
   final String? path;
-  final String size;
+  final TmdbImageKind kind;
+
+  /// 图片在设计稿上的显示宽度
+  final double width;
   final BoxFit fit;
   final String fallbackSeed;
   final Alignment alignment;
@@ -38,8 +64,10 @@ class TmdbImage extends ConsumerWidget {
     final Widget fallback =
         this.fallback ?? (transparentFallback ? const SizedBox.shrink() : ArtView(placeholderArt(fallbackSeed)));
     if (client == null || path == null || path!.isEmpty) return fallback;
+    final px = ImageSizing.physicalWidth(context, width);
     return Image.network(
-      client.image(path!, size: size),
+      client.image(path!, size: kind.sizeFor(px)),
+      cacheWidth: px,
       fit: fit,
       alignment: alignment,
       color: color,

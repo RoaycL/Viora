@@ -93,7 +93,13 @@ class _HomeBodyState extends ConsumerState<_HomeBody> {
     placeholderArt(t.key),
     t.backdropPath == null
         ? null
-        : TmdbImage(path: t.backdropPath, size: 'w1280', fallbackSeed: t.key, transparentFallback: true),
+        : TmdbImage(
+            path: t.backdropPath,
+            kind: TmdbImageKind.backdrop,
+            width: 1920,
+            fallbackSeed: t.key,
+            transparentFallback: true,
+          ),
   );
 
   _Backdrop _itemBackdrop(MediaItem it) {
@@ -101,7 +107,7 @@ class _HomeBodyState extends ConsumerState<_HomeBody> {
     return _Backdrop(
       '${it.serverId}/${it.id}',
       placeholderArt(it.id),
-      img == null ? null : ServerImage(serverId: it.serverId, image: img, maxWidth: 1920, transparentFallback: true),
+      img == null ? null : ServerImage(serverId: it.serverId, image: img, width: 1920, transparentFallback: true),
     );
   }
 
@@ -156,7 +162,7 @@ class _HomeBodyState extends ConsumerState<_HomeBody> {
                 : ServerImage(
                     serverId: g.primary.serverId,
                     image: g.primary.logo,
-                    maxWidth: 800,
+                    width: 620,
                     fit: BoxFit.contain,
                     alignment: Alignment.bottomLeft,
                     transparentFallback: true,
@@ -316,7 +322,8 @@ class _HomeBodyState extends ConsumerState<_HomeBody> {
                           name: n.name,
                           logo: TmdbImage(
                             path: n.logoPath,
-                            size: 'w300',
+                            kind: TmdbImageKind.logo,
+                            width: 190,
                             fit: BoxFit.contain,
                             transparentFallback: true,
                             color: Colors.white,
@@ -369,7 +376,14 @@ class _TmdbLogo extends ConsumerWidget {
     if (logo == null) return text;
     return ConstrainedBox(
       constraints: const BoxConstraints(maxWidth: 620, maxHeight: 150),
-      child: TmdbImage(path: logo, size: 'w500', fit: BoxFit.contain, alignment: Alignment.bottomLeft, fallback: text),
+      child: TmdbImage(
+        path: logo,
+        kind: TmdbImageKind.logo,
+        width: 620,
+        fit: BoxFit.contain,
+        alignment: Alignment.bottomLeft,
+        fallback: text,
+      ),
     );
   }
 }

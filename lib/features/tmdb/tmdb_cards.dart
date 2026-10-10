@@ -49,7 +49,7 @@ class TmdbPosterCard extends ConsumerWidget {
     return PosterCard(
       node: node,
       art: placeholderArt(t.key),
-      image: TmdbImage(path: t.posterPath, size: 'w342', fallbackSeed: t.key),
+      image: TmdbImage(path: t.posterPath, fallbackSeed: t.key),
       title: t.title,
       subtitle: tmdbSubtitle(t),
       resources: copies.length,
@@ -71,7 +71,7 @@ class TmdbPersonCard extends StatelessWidget {
     art: placeholderArt('p${person.id}'),
     image: person.profilePath == null
         ? null
-        : TmdbImage(path: person.profilePath, size: 'w185', fallbackSeed: 'p${person.id}'),
+        : TmdbImage(path: person.profilePath, kind: TmdbImageKind.profile, width: 160, fallbackSeed: 'p${person.id}'),
     name: person.name,
     role: person.role,
     onActivate: () => context.push('/tmdb/person/${person.id}'),

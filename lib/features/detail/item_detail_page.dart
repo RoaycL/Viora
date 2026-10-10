@@ -169,7 +169,7 @@ class _ItemDetailPageState extends ConsumerState<ItemDetailPage> {
           child: ServerImage(
             serverId: widget.serverId,
             image: item.backdrop ?? item.primary,
-            maxWidth: 1920,
+            width: 1920,
             fallbackSeed: item.id,
             alignment: Alignment.topRight,
           ),
@@ -427,7 +427,7 @@ class _Title extends StatelessWidget {
       child: ServerImage(
         serverId: serverId,
         image: item.logo,
-        maxWidth: 800,
+        width: 640,
         fit: BoxFit.contain,
         alignment: Alignment.centerLeft,
         fallbackSeed: item.id,
