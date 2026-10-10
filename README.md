@@ -6,6 +6,27 @@
 
 > Plex、飞牛影视（fnOS）在计划中，暂不支持。
 
+![首页](docs/screenshots/home.jpg)
+
+## 界面预览
+
+<table>
+  <tr>
+    <td><img src="docs/screenshots/home_rows.jpg" alt="首页推荐"><br><sub>首页：TMDB 推荐与继续观看</sub></td>
+    <td><img src="docs/screenshots/detail.jpg" alt="详情页"><br><sub>详情页：进入后在所有服务器上查找资源</sub></td>
+  </tr>
+  <tr>
+    <td><img src="docs/screenshots/player_none.jpg" alt="播放界面"><br><sub>播放：进度条标出片头片尾，右上角显示网速</sub></td>
+    <td><img src="docs/screenshots/player_sources.jpg" alt="切换版本"><br><sub>播放中切换服务器 / 版本</sub></td>
+  </tr>
+  <tr>
+    <td><img src="docs/screenshots/danmaku.jpg" alt="弹幕"><br><sub>弹幕</sub></td>
+    <td><img src="docs/screenshots/settings_danmaku.jpg" alt="弹幕设置"><br><sub>设置：弹幕服务器与显示样式</sub></td>
+  </tr>
+</table>
+
+> 截图中的影视海报与剧照来自 TMDB，仅作界面展示。
+
 ## 下载安装
 
 到 [Releases](../../releases) 下载最新版本（目前是测试版）：
@@ -34,6 +55,13 @@
 3. 电视收到后会自动登录、测速并同步片库。
 
 > 同步只在局域网内直接传输，不经过任何外部服务器；接收页面关闭或 5 分钟没有操作会自动停止。请不要在公共 Wi-Fi 下使用。
+
+<table>
+  <tr>
+    <td width="68%"><img src="docs/screenshots/settings_sync.jpg" alt="同步配置"><br><sub>设置 → 同步配置</sub></td>
+    <td width="32%"><img src="docs/screenshots/sync_phone.jpg" alt="手机配置网页"><br><sub>手机扫码后填写配置</sub></td>
+  </tr>
+</table>
 
 ### 2. 开始看
 

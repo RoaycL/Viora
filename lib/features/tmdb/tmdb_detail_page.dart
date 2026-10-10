@@ -210,6 +210,7 @@ class _TmdbDetail extends ConsumerWidget {
                     padding: const EdgeInsets.symmetric(horizontal: VSpace.safeH),
                     child: FocusButtonRow(
                       rowIndex: 0,
+                      scrollToTop: true,
                       children: [
                         if (copies.isNotEmpty) ...[
                           (node) => PillButton(
@@ -238,7 +239,18 @@ class _TmdbDetail extends ConsumerWidget {
                                     ],
                                   ),
                           ),
-                        ],
+                        ] else
+                          // 没找到资源时也要有一个按钮：遥控器焦点停在这里，页面不会滚到演职员行把标题顶出屏幕；
+                          // 服务器刚恢复在线时可以重新搜一次
+                          (node) => PillButton(
+                            focusNode: node,
+                            large: true,
+                            icon: searching ? Icons.hourglass_top_rounded : Icons.refresh_rounded,
+                            label: searching ? '正在各服务器搜索…' : '暂未找到资源 · 重新搜索',
+                            onPressed: () {
+                              if (!searching) ref.invalidate(tmdbLibrarySearchProvider(searchKeyOf(t)));
+                            },
+                          ),
                       ],
                     ),
                   ),

@@ -258,6 +258,7 @@ class _ItemDetailPageState extends ConsumerState<ItemDetailPage> {
                     padding: const EdgeInsets.symmetric(horizontal: VSpace.safeH),
                     child: FocusButtonRow(
                       rowIndex: 0,
+                      scrollToTop: true,
                       children: [
                         (node) => PillButton(
                           focusNode: node,

@@ -166,7 +166,8 @@ void main() {
     await press(tester, LogicalKeyboardKey.arrowDown);
     await press(tester, LogicalKeyboardKey.select);
     // 没有资源时只显示"暂未找到资源"，不再有关键词搜索按钮；页面底部是「已经到底了」
-    expect(find.textContaining(RegExp('暂未找到资源|还没有添加服务器')), findsOneWidget);
+    // 没找到资源时第 0 行是「重新搜索」按钮（焦点停在这里，页面不滚到底）
+    expect(find.text('暂未找到资源 · 重新搜索'), findsOneWidget);
     expect(find.text('用关键词搜索'), findsNothing);
     expect(
       find.descendant(of: find.byType(TmdbDetailPage), matching: find.text('已经到底了', skipOffstage: false)),
@@ -174,7 +175,7 @@ void main() {
     );
 
     await press(tester, LogicalKeyboardKey.escape);
-    expect(find.textContaining(RegExp('暂未找到资源|还没有添加服务器')), findsNothing);
+    expect(find.text('暂未找到资源 · 重新搜索'), findsNothing);
     expect(focused, 'row4#0');
     await unmount(tester);
   });
