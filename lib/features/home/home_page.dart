@@ -409,16 +409,13 @@ class _TmdbLogo extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final logo = ref.watch(tmdbTitleProvider((isTv: title.isTv, id: title.id))).value?.logoPath;
-    // 长标题缩小字号完整显示，而不是截断成"火柴盒大…"
-    final text = FittedBox(
-      fit: BoxFit.scaleDown,
-      alignment: Alignment.bottomLeft,
-      child: Text(
-        title.title,
-        maxLines: 1,
-        style: VText.display.copyWith(
-          shadows: const [Shadow(color: Color(0x73000000), blurRadius: 40, offset: Offset(0, 6))],
-        ),
+    // 与详情页一致：固定字号（短标题 100、长标题 72），最多两行
+    final text = Text(
+      title.title,
+      maxLines: 2,
+      overflow: TextOverflow.ellipsis,
+      style: VText.titleFor(title.title).copyWith(
+        shadows: const [Shadow(color: Color(0x73000000), blurRadius: 40, offset: Offset(0, 6))],
       ),
     );
     if (logo == null) return text;

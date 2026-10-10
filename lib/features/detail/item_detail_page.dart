@@ -415,12 +415,7 @@ class _Title extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final text = Text(
-      title,
-      maxLines: 2,
-      overflow: TextOverflow.ellipsis,
-      style: VText.display.copyWith(fontSize: title.length > 8 ? 72 : 100, letterSpacing: 2),
-    );
+    final text = Text(title, maxLines: 2, overflow: TextOverflow.ellipsis, style: VText.titleFor(title));
     // 标题已换成中文时不用（通常是英文的）Logo 图
     if (item.logo == null || item.kind == MediaKind.episode || title != item.name) return text;
     return SizedBox(

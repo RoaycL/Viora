@@ -231,15 +231,12 @@ class _HeroInfo extends StatelessWidget {
           ],
         ),
     ];
-    final titleText = FittedBox(
-      fit: BoxFit.scaleDown,
-      alignment: Alignment.bottomLeft,
-      child: Text(
-        t.title,
-        maxLines: 1,
-        style: VText.display.copyWith(
-          shadows: const [Shadow(color: Color(0x73000000), blurRadius: 40, offset: Offset(0, 6))],
-        ),
+    final titleText = Text(
+      t.title,
+      maxLines: 2,
+      overflow: TextOverflow.ellipsis,
+      style: VText.titleFor(t.title).copyWith(
+        shadows: const [Shadow(color: Color(0x73000000), blurRadius: 40, offset: Offset(0, 6))],
       ),
     );
     const dot = Text('  •  ', style: TextStyle(fontSize: 22, color: Color(0x66FFFFFF)));

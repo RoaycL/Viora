@@ -79,12 +79,7 @@ class _TmdbDetail extends ConsumerWidget {
       if (!t.isTv && t.runtimeMinutes != null) formatDuration(Duration(minutes: t.runtimeMinutes!)),
       if (t.isTv && t.seasons != null) '${t.seasons} 季',
     ].join('  •  ');
-    final title = Text(
-      t.title,
-      maxLines: 2,
-      overflow: TextOverflow.ellipsis,
-      style: VText.display.copyWith(fontSize: t.title.length > 8 ? 72 : 100, letterSpacing: 2),
-    );
+    final title = Text(t.title, maxLines: 2, overflow: TextOverflow.ellipsis, style: VText.titleFor(t.title));
 
     return Stack(
       children: [

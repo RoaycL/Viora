@@ -1,3 +1,4 @@
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -172,19 +173,21 @@ void main() {
     await unmount(tester);
   });
 
-  testWidgets('导航栏：焦点不在导航栏 3 秒后自动隐藏，按 ← 进入时重新出现', (tester) async {
+  testWidgets('导航栏：收起状态始终显示，焦点进入时展开、离开时收起', (tester) async {
     await pumpApp(tester);
-    Offset railOffset() => tester.widget<AnimatedSlide>(find.byType(AnimatedSlide).first).offset;
-    expect(railOffset(), Offset.zero);
-
     await tester.pump(const Duration(seconds: 4));
     await tester.pumpAndSettle();
-    expect(railOffset(), isNot(Offset.zero));
+    // 收起时只有图标
+    expect(find.byIcon(Icons.dns_rounded), findsOneWidget);
+    expect(find.text('资源库'), findsNothing);
 
     await press(tester, LogicalKeyboardKey.arrowLeft);
     await press(tester, LogicalKeyboardKey.arrowLeft);
     expect(focused, 'nav:/');
-    expect(railOffset(), Offset.zero);
+    expect(find.text('资源库'), findsOneWidget);
+
+    await press(tester, LogicalKeyboardKey.arrowRight);
+    expect(find.text('资源库'), findsNothing);
     await unmount(tester);
   });
 
@@ -200,6 +203,22 @@ void main() {
     expect(find.text('正在热映'), findsOneWidget);
     expect(find.text('配置 TMDB 后显示（设置 → 元数据）'), findsWidgets);
     expect(focused, isNotNull);
+    await unmount(tester);
+  });
+
+  testWidgets('导航栏（鼠标）：移到上面展开，移开立即收起', (tester) async {
+    await pumpApp(tester);
+    final mouse = await tester.createGesture(kind: PointerDeviceKind.mouse);
+    await mouse.addPointer(location: const Offset(1000, 900));
+    addTearDown(mouse.removePointer);
+
+    await mouse.moveTo(tester.getCenter(find.byIcon(Icons.dns_rounded)));
+    await tester.pumpAndSettle();
+    expect(find.text('资源库'), findsOneWidget);
+
+    await mouse.moveTo(const Offset(1000, 900));
+    await tester.pumpAndSettle();
+    expect(find.text('资源库'), findsNothing);
     await unmount(tester);
   });
 }
