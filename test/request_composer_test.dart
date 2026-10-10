@@ -59,17 +59,28 @@ void main() {
       );
     });
 
-    test('线路绑定代理且配置了完整地址时改写', () {
+    test('线路绑定代理且配置了完整地址时改写：API 和视频流一起走代理', () {
       final c = composer(
         server(ServerType.emby),
         config: const AppConfig(
           deviceId: 'dev',
-          proxy: ProxyConfig(baseUrl: base, scope: ProxyScope.streamOnly),
+          proxy: ProxyConfig(baseUrl: base),
         ),
       );
       final api = c.resolve('/Items');
-      expect(c.finalUrl(api, RequestKind.api), api);
+      expect(c.finalUrl(api, RequestKind.api).toString(), startsWith('https://embyproxy.example.com/proxy/https/'));
       expect(c.finalUrl(api, RequestKind.stream).toString(), startsWith('https://embyproxy.example.com/proxy/https/'));
+      // 没勾选代理的线路直连
+      final direct = RequestComposer(
+        config: const AppConfig(
+          deviceId: 'dev',
+          proxy: ProxyConfig(baseUrl: base),
+        ),
+        server: server(ServerType.emby),
+        line: const ServerLine(id: 'l2', name: '直连', url: 'https://emby.a.com'),
+        appVersion: '0.2.0',
+      );
+      expect(direct.finalUrl(api, RequestKind.stream), api);
     });
 
     test('内网地址即使勾了走反向代理也直连（公网代理连不到家里的网络）', () {

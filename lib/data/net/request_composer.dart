@@ -83,7 +83,8 @@ class RequestComposer {
     if (!line.proxied || !config.proxy.enabled) return false;
     // 内网地址（192.168.x.x、10.x.x.x、NAS 主机名等）不能走公网上的反向代理：代理服务器连不到你家里的网络
     if (isLanHost(Uri.tryParse(line.url.trim())?.host ?? '')) return false;
-    return config.proxy.scope == ProxyScope.all || kind == RequestKind.stream;
+    // API、图片、视频流一起走代理
+    return true;
   }
 
   Uri finalUrl(Uri original, RequestKind kind) => usesProxy(kind) ? proxify(original, config.proxy.baseUrl) : original;

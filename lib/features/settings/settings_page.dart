@@ -99,13 +99,7 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
     if (url.isNotEmpty && !url.contains('://')) url = 'https://$url';
     if (url.isNotEmpty && !url.endsWith('/')) url = '$url/';
     _proxy.text = url;
-    await ref
-        .read(configProvider.notifier)
-        .update(
-          (c) => c.copyWith(
-            proxy: ProxyConfig(baseUrl: url, scope: c.proxy.scope),
-          ),
-        );
+    await ref.read(configProvider.notifier).update((c) => c.copyWith(proxy: ProxyConfig(baseUrl: url)));
     showToast(url.isEmpty ? '已关闭反向代理' : '反向代理地址已保存');
   }
 
@@ -377,25 +371,9 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
             helper: '更换地址后，已绑定的线路会继续使用这个代理。示例：https://emby.a.com → …/proxy/https/emby.a.com/443',
           ),
           const SizedBox(height: 20),
-          Row(
-            children: [
-              PillButton(icon: Icons.save_rounded, label: '保存地址', onPressed: _saveProxy),
-              const SizedBox(width: 24),
-              PillButton(
-                label: config.proxy.scope == ProxyScope.all ? '代理范围：API + 视频流' : '代理范围：仅视频流',
-                onPressed: () => ref
-                    .read(configProvider.notifier)
-                    .update(
-                      (c) => c.copyWith(
-                        proxy: ProxyConfig(
-                          baseUrl: c.proxy.baseUrl,
-                          scope: c.proxy.scope == ProxyScope.all ? ProxyScope.streamOnly : ProxyScope.all,
-                        ),
-                      ),
-                    ),
-              ),
-            ],
-          ),
+          PillButton(icon: Icons.save_rounded, label: '保存地址', onPressed: _saveProxy),
+          const SizedBox(height: 12),
+          Text('勾选的线路：登录、浏览、图片和视频播放全部经过代理；内网地址始终直连。', style: VText.small.copyWith(color: VColors.textTertiary)),
           const SizedBox(height: 28),
           Text('媒体服务器线路', style: VText.caption.copyWith(color: VColors.textTertiary)),
           const SizedBox(height: 12),

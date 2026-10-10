@@ -145,7 +145,7 @@ ReverseProxy {
 
 ### 5.4 作用范围
 
-- `proxyScope`：`apiAndStream`（默认）/ `streamOnly` / `apiOnly`。
+- 不区分代理范围：线路勾选走代理后，API、图片、视频流全部经过代理（v0.12 起合并）；内网地址始终直连。
 - 图片请求跟随 API 的规则。
 - 对于不改写 `Location` 的自定义代理：播放器需要自己处理 302（Windows 的 mpv 和 Android 的 ExoPlayer 自定义 `DataSource` 都关闭自动跟随），对重定向目标再改写一次。
 - 更换代理地址后，已绑定的线路继续生效（绑定关系存的是 `proxyId`，与 Rex 提示一致）。

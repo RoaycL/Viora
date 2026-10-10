@@ -15,16 +15,6 @@ enum ServerType {
   static ServerType parse(String? s) => values.firstWhere((t) => t.name == s, orElse: () => emby);
 }
 
-enum ProxyScope {
-  /// API、图片、视频流都走代理
-  all,
-
-  /// 只有视频流走代理
-  streamOnly;
-
-  static ProxyScope parse(String? s) => values.firstWhere((t) => t.name == s, orElse: () => all);
-}
-
 class ServerLine {
   const ServerLine({required this.id, required this.name, required this.url, this.proxied = false, this.latencyMs});
 
@@ -196,19 +186,19 @@ class ServerConfig {
 }
 
 /// 反向代理（默认按 emby-reverse-proxy-go 的地址格式改写，见 docs/03-media-servers.md §5.2）。
+/// 线路勾选「走反向代理」后，API、图片、视频流全部经过代理（不再区分代理范围）。
 class ProxyConfig {
-  const ProxyConfig({this.baseUrl = '', this.scope = ProxyScope.all});
+  const ProxyConfig({this.baseUrl = ''});
 
   /// "完整地址"，如 `https://embyproxy.example.com/proxy/`；空 = 未配置
   final String baseUrl;
-  final ProxyScope scope;
 
   bool get enabled => baseUrl.trim().isNotEmpty;
 
-  Map<String, dynamic> toJson() => {'baseUrl': baseUrl, 'scope': scope.name};
+  Map<String, dynamic> toJson() => {'baseUrl': baseUrl};
 
-  factory ProxyConfig.fromJson(Map<String, dynamic> j) =>
-      ProxyConfig(baseUrl: j['baseUrl'] as String? ?? '', scope: ProxyScope.parse(j['scope'] as String?));
+  /// 旧版本保存的 scope（代理范围）字段直接忽略
+  factory ProxyConfig.fromJson(Map<String, dynamic> j) => ProxyConfig(baseUrl: j['baseUrl'] as String? ?? '');
 }
 
 /// Android 播放内核偏好
@@ -524,7 +514,6 @@ class AppConfig {
   String clientKey(String serverId) => [
     server(serverId)?.connectionKey,
     proxy.baseUrl,
-    proxy.scope.name,
     playback.userAgent,
     playback.uaForApi,
     playback.clientName,
