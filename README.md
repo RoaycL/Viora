@@ -1,55 +1,139 @@
 # Viora
 
-面向 **Windows** 与 **Android TV** 的大屏媒体播放器。连接 Emby / Jellyfin / Plex / 飞牛影视（fnOS），把多台服务器聚合成同一个片库，用 TMDB 做首页推荐和元数据补全，支持反向代理线路、多版本资源选择、自动跳过片头片尾和自定义播放 UA。
+为大屏打造的家庭影音播放器，支持 **Android TV** 和 **Windows**。
 
-UI 参考 iOS 端 Rex 的信息结构（首页 / 详情 / 资源库），并针对 10 英尺大屏、遥控器和键鼠做了重新设计。
+把你的 Emby / Jellyfin 服务器（可以多台）连起来，所有片子合成一个片库：首页有 TMDB 的热门推荐，详情页能看到每台服务器上的不同版本，播放时可以跳过片头片尾、开弹幕，用遥控器或键鼠都顺手。
 
-## 设计文档
+> Plex、飞牛影视（fnOS）在计划中，暂不支持。
+
+## 下载安装
+
+到 [Releases](../../releases) 下载最新版本（目前是测试版）：
+
+| 文件 | 适用 |
+| --- | --- |
+| `Viora-<版本>-android.apk` | Android TV / 电视盒子 / Android 设备 |
+| `Viora-<版本>-windows-setup.exe` | Windows 安装版（推荐，支持应用内自动更新） |
+| `Viora-<版本>-windows-portable.zip` | Windows 免安装版，解压即用 |
+
+- **Android TV**：用 U 盘、当贝助手或「发送文件到电视」把 APK 传到电视上安装，第一次需要允许「安装未知应用」。
+- **自动更新**：启动后会自动检查新版本，也可以在「设置 → 关于与更新」手动检查。Windows 会自动安装并重新打开；Android 会弹出系统安装界面。
+
+## 快速开始
+
+### 1. 添加服务器
+
+**在电脑上**：资源库 → 添加服务器，选择 Emby 或 Jellyfin，填写地址、用户名和密码。一台服务器可以填多条线路（比如内网地址和外网地址），Viora 会自动测速选最快的线路。
+
+**在电视上**（推荐用同步，不用遥控器打字）：
+
+1. 电视上打开「设置 → 同步配置 → 接收配置」，屏幕上会显示二维码和 4 位配对码。
+2. 二选一：
+   - **用手机**：扫码打开网页，填写服务器、反向代理、TMDB Key、弹幕服务器等，点「发送到电视」。
+   - **用 Windows 版 Viora**：「设置 → 同步配置 → 发送到电视」，选中找到的电视，输入配对码，把电脑上的配置一次推过去。
+3. 电视收到后会自动登录、测速并同步片库。
+
+> 同步只在局域网内直接传输，不经过任何外部服务器；接收页面关闭或 5 分钟没有操作会自动停止。请不要在公共 Wi-Fi 下使用。
+
+### 2. 开始看
+
+- **首页**：TMDB 今日趋势、正在热映、热门剧集等推荐，以及你的「继续观看」和「最近入库」。
+- **详情页**：进入后自动在所有服务器上查找这部片子。可以直接播放，也可以选择某台服务器、某个版本（4K / 1080P、HDR / 杜比视界）。
+- **资源库**：按服务器、按媒体库浏览；「收藏」「观看记录」汇总所有服务器的内容。
+- **搜索**：支持中文、拼音首字母、全拼，同时搜所有服务器。
+
+## 播放
+
+- **继续观看**：自动从上次的位置开始，进度同步回服务器，在其他设备上也能接着看。
+- **切换版本**：播放中点右下角的清晰度（如「4K」），可以换到其他服务器或其他版本，从当前进度接着播。
+- **选集**：剧集播放时右下角「选集」查看本季所有集，看到快结束时会预加载下一集。
+- **跳过片头片尾**：出现「跳过片头」「下一集」按钮时按 OK 即可；也可以设置为自动跳过。数据来自媒体服务器的片段标记、章节，以及 TheIntroDB / IntroDB 等在线数据库。
+- **音轨 / 字幕 / 倍速**：控制栏上直接切换，支持外挂字幕。
+- **弹幕**：右上角「弹」开关，需要先配置弹幕服务器（见下文）。
+- **网速**：右上角实时显示下载速度。
+- **Windows 专属**：小窗播放（置顶在屏幕右下角）、全屏、拖动进度条。
+
+### Android TV 遥控器
+
+| 按键 | 作用 |
+| --- | --- |
+| 方向键 | 移动焦点；播放时 ←→ 快退 / 快进（长按加速） |
+| OK | 确认；播放时暂停 / 继续，出现跳过按钮时执行跳过 |
+| ↓（播放时） | 进入底部按钮：清晰度、选集、倍速等 |
+| 菜单键 / 长按 OK | 打开菜单（播放时为播放设置） |
+| 返回 | 一层层返回；在首页连按两次退出 |
+| 最左侧再按 ← | 打开侧边导航栏 |
+
+### Windows 键鼠
+
+| 操作 | 作用 |
+| --- | --- |
+| 鼠标悬停 / 点击 | 选中 / 打开；右键打开菜单 |
+| 空格 / K | 暂停 / 继续 |
+| ← → / J L | 快退 / 快进 |
+| F 或双击画面、F11 | 全屏 |
+| P | 小窗播放 |
+| N | 下一集 |
+| D | 弹幕开关 |
+| A / C | 切换音轨 / 字幕 |
+| Esc / 鼠标侧键 | 返回 |
+
+## 设置
+
+| 分类 | 可以做什么 |
+| --- | --- |
+| 播放 | 播放 UA、客户端名称、播放预加载、缓冲大小、快进步长；电视上可选播放内核（ExoPlayer / mpv）、自动帧率、隧道播放 |
+| 片头片尾 | 各数据源开关与 API Key，片头 / 片尾 / 前情提要分别设为显示按钮或自动跳过 |
+| 弹幕 | 弹幕服务器（最多 3 个）、数量上限、字号、透明度、显示区域、速度、繁简转换、颜色、屏蔽词 |
+| 元数据 | TMDB API Key（已内置可直接用），可通过反向代理访问 TMDB |
+| 反向代理 | 填写代理地址后，可以让指定线路走代理访问 |
+| 同步配置 | 接收配置（电视 / 电脑）、发送到电视（Windows） |
+| 关于与更新 | 版本信息、检查更新、自定义更新地址 |
+
+### 弹幕
+
+弹幕来自自部署的 [danmu_api](https://github.com/huangxd-/danmu_api)（聚合腾讯、爱奇艺、优酷、B 站等平台）。部署后在「设置 → 弹幕」填写地址，格式为 `https://你的域名/token`。
+
+播放时会按「剧名 + 季 + 集」自动匹配弹幕。匹配不对时，在播放菜单 → 弹幕里手动搜索并选择，同一季后面的集会自动记住；也可以调整弹幕的时间偏移。
+
+## 常见问题
+
+**电视上看起来卡？**
+电视版已经关闭了磨砂模糊等耗性能的效果。如果仍然卡顿，可以在「设置 → 播放」降低播放缓冲上限，或换用另一个播放内核试试。
+
+**无法播放 / 提示 403？**
+部分服务器会限制客户端，在「设置 → 播放」修改播放 UA 或客户端名称，或在服务器设置里单独指定 UA。
+
+**连不上服务器？**
+在资源库里对服务器测速，看看哪条线路可用；外网访问不稳定时可以配置反向代理。
+
+**弹幕没有出来？**
+确认已填写弹幕服务器；在播放菜单 → 弹幕 → 重新自动匹配，或手动搜索选择。
+
+## 开发者
+
+技术设计与开发说明见 [docs/](docs/)：
 
 | 文档 | 内容 |
 | --- | --- |
-| [docs/01-overview.md](docs/01-overview.md) | 产品定位、功能范围、技术选型、整体架构 |
-| [docs/02-architecture.md](docs/02-architecture.md) | 工程结构、分层、核心数据模型与接口 |
-| [docs/03-media-servers.md](docs/03-media-servers.md) | Emby / Jellyfin / Plex / fnOS 适配、多线路、反向代理、自定义 UA |
-| [docs/04-aggregation.md](docs/04-aggregation.md) | 聚合索引、聚合搜索、多资源（多版本）选择 |
-| [docs/05-metadata-and-segments.md](docs/05-metadata-and-segments.md) | 元数据优先级、TMDB 接入、片头片尾数据源与合并策略 |
-| [docs/06-ui-design.md](docs/06-ui-design.md) | 大屏设计规范与各页面线框（首页 / 详情 / 资源库 / 搜索 / 播放器 / 设置） |
-| [docs/07-input-control.md](docs/07-input-control.md) | 遥控器与键鼠操作方案、焦点系统 |
-| [docs/08-player.md](docs/08-player.md) | 播放内核、HDR / 字幕 / 音轨、进度上报、跳过片头片尾交互 |
-| [docs/09-roadmap.md](docs/09-roadmap.md) | 里程碑与待确认事项 |
-
-## 开发
-
-当前进度：**M0~M4 已完成，M5 片头片尾进行中**（Emby / Jellyfin 浏览与播放、多服务器聚合、TMDB 首页、播放预加载），见 [docs/09-roadmap.md](docs/09-roadmap.md)。
-
-片头片尾：媒体服务器标记（Jellyfin 媒体片段 / Emby 章节标记）→ TheIntroDB / IntroDB / PublicMetaDB → 章节名识别，播放时显示「跳过片头」「下一集」或自动跳过，在「设置 → 片头片尾」配置，详见 [docs/05-metadata-and-segments.md](docs/05-metadata-and-segments.md)。
+| [01-overview](docs/01-overview.md) | 产品定位、功能范围、技术选型 |
+| [02-architecture](docs/02-architecture.md) | 工程结构与数据模型 |
+| [03-media-servers](docs/03-media-servers.md) | 媒体服务器适配、多线路、反向代理、UA |
+| [04-aggregation](docs/04-aggregation.md) | 聚合索引、聚合搜索、多版本选择 |
+| [05-metadata-and-segments](docs/05-metadata-and-segments.md) | 元数据、TMDB、片头片尾 |
+| [06-ui-design](docs/06-ui-design.md) | 大屏设计规范 |
+| [07-input-control](docs/07-input-control.md) | 遥控器与键鼠、焦点系统 |
+| [08-player](docs/08-player.md) | 播放内核与播放界面 |
+| [09-roadmap](docs/09-roadmap.md) | 里程碑 |
+| [10-danmaku](docs/10-danmaku.md) | 弹幕 |
+| [11-sync](docs/11-sync.md) | 局域网同步配置 |
 
 ```bash
 flutter pub get
-flutter run -d windows          # Windows（需要 Visual Studio C++ 桌面开发组件）
-flutter run -d <android-tv-id>  # Android TV / 模拟器（adb connect <电视IP>:5555 后可见）
-flutter test                    # 单元 + 遥控器操作测试
-VIORA_LIVE=1 flutter test test/live  # 连 Jellyfin 官方演示服的联调测试
+flutter run -d windows   # Windows
+flutter run              # Android TV（adb connect <电视IP>:5555 后可见）
+flutter test
 flutter analyze
 ```
 
-代码结构：
-
-| 目录 | 内容 |
-| --- | --- |
-| `lib/app/` | 应用入口、路由、主题令牌、应用壳（导航栏 + 内容区）、输入意图与返回键链 |
-| `lib/ui/` | 大屏组件库：`DesignScale`（1920 画布缩放）、`Glass`（磨砂玻璃）、`VFocusable`（焦点外壳）、`FocusRow` / `RowFocusScope`（行导航与行记忆）、卡片、按钮、侧边菜单 |
-| `lib/features/` | 页面：首页、资源库、详情页（首屏），其余页面为占位 |
-| `test/` | 遥控器操作的 Widget 测试（行记忆、导航栏进出、返回键、页面跳转） |
-
-操作：方向键移动；OK / Enter 确认，长按 OK 或菜单键 / 右键打开菜单；返回 / Esc 后退；鼠标悬停即聚焦。
-
-## 测试包与更新
-
-- 推送到 `main` 或 `claude/**` 分支时，GitHub Actions（`.github/workflows/release.yml`）会构建 APK 和 Windows 安装包。
-- **发布新测试版**：把 `pubspec.yaml` 的 `version` 改大（如 `0.1.0+1` → `0.1.1+2`）后推送，CI 会自动创建预发布 Release `v0.1.1`。
-- 应用内更新：启动 3 秒后静默检查，或在「设置 → 关于与更新」手动检查。
-  - 更新源默认是本仓库的 GitHub Releases，**仓库需要公开**客户端才能访问；仓库保持私有时可改用自建 `latest.json` 地址（每个 Release 都附带一份）。
-  - Windows：下载安装包后静默覆盖安装，完成后自动重新打开。
-  - Android：下载 APK 后拉起系统安装界面；首次需要允许 Viora「安装未知应用」。
-- Android 测试包用仓库内的测试证书 `android/keystore/viora-test.jks` 签名（保证每次更新签名一致）。正式发布前应换成私有证书，通过 CI 环境变量 `VIORA_KEYSTORE_PATH` 等注入。
+把 `pubspec.yaml` 的 `version` 改大后推送，CI（`.github/workflows/release.yml`）会自动构建 APK 与 Windows 安装包并发布预发布版本。
