@@ -18,6 +18,26 @@ class PlaybackRequest {
   final String userAgent;
 }
 
+/// 服务器章节
+class ServerChapter {
+  const ServerChapter({required this.name, required this.start, this.marker});
+
+  final String name;
+  final Duration start;
+
+  /// Emby：IntroStart / IntroEnd / CreditsStart；普通章节为 Chapter 或空
+  final String? marker;
+}
+
+/// Jellyfin 媒体片段
+class ServerMediaSegment {
+  const ServerMediaSegment({required this.type, required this.start, required this.end});
+
+  final String type;
+  final Duration start;
+  final Duration end;
+}
+
 class MediaServerException implements Exception {
   const MediaServerException(this.message, {this.statusCode});
 
@@ -280,6 +300,43 @@ class EmbyClient {
   Future<MediaItem> item(String id) async => parseItem(
     await _request('GET', '/Users/${await _userId()}/Items/$id', query: {'Fields': _fields}) as Map<String, dynamic>,
   );
+
+  /// 章节列表（片头片尾：Emby 4.8+ 的章节带 MarkerType：IntroStart / IntroEnd / CreditsStart）
+  Future<List<ServerChapter>> chapters(String itemId) async {
+    final j = await _request(
+      'GET',
+      '/Users/${await _userId()}/Items/$itemId',
+      query: {'Fields': 'Chapters'},
+    ) as Map<String, dynamic>;
+    return [
+      for (final c in (j['Chapters'] as List? ?? const []).cast<Map<String, dynamic>>())
+        ServerChapter(
+          name: c['Name'] as String? ?? '',
+          start: ticksToDuration(c['StartPositionTicks'] as num?),
+          marker: c['MarkerType'] as String?,
+        ),
+    ];
+  }
+
+  /// Jellyfin 10.10+ 的媒体片段（Intro / Outro / Recap / Preview / Commercial）。Emby 或旧版本返回空列表。
+  Future<List<ServerMediaSegment>> mediaSegments(String itemId) async {
+    if (_server.type != ServerType.jellyfin) return const [];
+    try {
+      final j = await _request('GET', '/MediaSegments/$itemId') as Map<String, dynamic>;
+      return [
+        for (final s in (j['Items'] as List? ?? const []).cast<Map<String, dynamic>>())
+          ServerMediaSegment(
+            type: s['Type'] as String? ?? '',
+            start: ticksToDuration(s['StartTicks'] as num?),
+            end: ticksToDuration(s['EndTicks'] as num?),
+          ),
+      ];
+    } on MediaServerException catch (e) {
+      // 旧版 Jellyfin 没有这个接口
+      if (e.statusCode == 404 || e.statusCode == 400) return const [];
+      rethrow;
+    }
+  }
 
   Future<List<MediaItem>> seasons(String seriesId) async {
     final data = await _request(

@@ -118,11 +118,7 @@ class _DesignScaleState extends State<DesignScale> {
                   ),
                   child: kIsWeb
                       ? widget.child
-                      : SnapshotWidget(
-                          controller: _snapshot,
-                          mode: SnapshotMode.permissive,
-                          child: widget.child,
-                        ),
+                      : SnapshotWidget(controller: _snapshot, mode: SnapshotMode.permissive, child: widget.child),
                 ),
               ),
             ),

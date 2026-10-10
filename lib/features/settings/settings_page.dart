@@ -17,6 +17,7 @@ import '../../ui/widgets/buttons.dart';
 import '../../ui/widgets/form.dart';
 import '../../ui/widgets/toast.dart';
 import '../../player/playback_cache.dart';
+import '../segments/segment_settings_section.dart';
 import '../update/update_controller.dart';
 import '../update/update_dialog.dart';
 
@@ -301,6 +302,9 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
         ],
       ),
 
+      // ───────── 片头片尾 ─────────
+      const _Section(title: '片头片尾', children: [SegmentSettingsSection()]),
+
       // ───────── 元数据 ─────────
       _Section(
         title: '元数据 · TMDB',
@@ -482,6 +486,7 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
 
 enum _Category {
   playback('播放', Icons.play_circle_outline_rounded),
+  segments('片头片尾', Icons.fast_forward_outlined),
   metadata('元数据', Icons.auto_awesome_outlined),
   proxy('反向代理', Icons.shield_outlined),
   about('关于与更新', Icons.system_update_alt_rounded);

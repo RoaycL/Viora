@@ -7,6 +7,7 @@ import 'app/app.dart';
 import 'app/window_frame.dart';
 import 'data/config/config_store.dart';
 import 'data/media/server_registry.dart';
+import 'data/segments/segment_http.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -14,6 +15,7 @@ Future<void> main() async {
   await initDesktopWindow();
   try {
     appVersion = (await PackageInfo.fromPlatform()).version;
+    segmentClientVersion = appVersion;
   } catch (_) {}
 
   // 先读入本地配置（服务器、线路、代理、UA），再启动界面

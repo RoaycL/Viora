@@ -19,6 +19,11 @@ import '../../player/exo_engine.dart';
 import '../../player/mpv_engine.dart';
 import '../../player/playback_cache.dart';
 import '../../player/preload.dart';
+import '../../player/segment_playback_session.dart';
+import '../../player/segment_skip_controller.dart';
+import '../../domain/models/segment.dart';
+import '../../data/index/media_index.dart';
+import '../segments/segment_service.dart';
 import '../../ui/glass/glass.dart';
 import '../../ui/scale/design_scale.dart';
 import '../../ui/panels/context_menu.dart';
@@ -65,6 +70,11 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
   bool _started = false;
   bool _stopped = false;
   bool _wasPlaying = false;
+
+  /// 片头片尾（docs/05 §3）：起播后后台解析，不阻塞播放
+  SegmentPlaybackSession? _segments;
+  SegmentSkipAction? _skipPrompt;
+  List<Segment> _segmentList = const [];
 
   /// 剧集看到 85% 时预加载的下一集（播完直接跳过去，起播更快）
   MediaItem? _nextEpisode;
@@ -131,6 +141,7 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
 
   void _onEngineState() {
     final s = _state;
+    _segments?.onPosition(s.position);
     if (!_nextPreloading &&
         s.duration > Duration.zero &&
         s.position.inMilliseconds > s.duration.inMilliseconds * 0.85) {
@@ -201,6 +212,7 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
       await _openCurrent(at ?? Duration(milliseconds: widget.startMs));
       _item = await itemFuture;
       if (mounted) setState(() {});
+      unawaited(_beginSegments());
       ref.read(configProvider.notifier).updateServer(widget.serverId, (s) => s.copyWith(lastAccessAt: DateTime.now()));
     } catch (e) {
       if (mounted) setState(() => _error = e.toString());
@@ -229,6 +241,90 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
       ref.invalidate(resumeProvider);
       ref.invalidate(itemProvider((serverId: widget.serverId, itemId: widget.itemId)));
     }
+  }
+
+  // ───────────────────────── 片头片尾 ─────────────────────────
+
+  Future<void> _beginSegments() async {
+    final item = _item, client = _client, source = _source;
+    if (item == null || client == null || source == null) return;
+    if (item.kind != MediaKind.movie && item.kind != MediaKind.episode) return;
+    try {
+      final settings = await ref.read(segmentSettingsProvider.future);
+      // 剧集的 TMDB / IMDb ID 在剧上（第三方数据库按"剧 ID + 季 + 集"查询）
+      var title = item;
+      var hasNext = false;
+      if (item.kind == MediaKind.episode && item.seriesId != null) {
+        final results = await Future.wait([
+          client.item(item.seriesId!).then<Object?>((v) => v, onError: (_) => null),
+          client.episodes(item.seriesId!, seasonId: item.seasonId).then<Object?>((v) => v, onError: (_) => null),
+        ]);
+        if (results[0] is MediaItem) title = results[0]! as MediaItem;
+        if (results[1] is List<MediaItem>) {
+          final eps = results[1]! as List<MediaItem>;
+          final i = eps.indexWhere((e) => e.id == item.id);
+          if (i >= 0 && i + 1 < eps.length) {
+            hasNext = true;
+            _nextEpisode ??= eps[i + 1];
+          }
+        }
+      }
+      final duration = source.duration ?? item.runtime ?? _state.duration;
+      if (duration <= Duration.zero || !mounted) return;
+      final query = SegmentQuery(
+        titleKey: titleKeyOf(title),
+        kind: item.kind == MediaKind.movie ? SegmentMediaKind.movie : SegmentMediaKind.episode,
+        duration: duration,
+        tmdbId: int.tryParse(title.tmdbId ?? ''),
+        imdbId: title.imdbId,
+        season: item.seasonNumber,
+        episode: item.episodeNumber,
+        sourceKey: '${widget.serverId}/${source.id}',
+      );
+      final resolver = await playbackSegmentResolver(ref, client, item.id);
+      if (!mounted || _source?.id != source.id) return;
+      _segments?.dispose();
+      _segments = SegmentPlaybackSession(
+        resolver: resolver,
+        seek: (to) async => _engine?.seek(to),
+        nextEpisode: () async {
+          final next = _nextEpisode;
+          if (next != null && mounted) _handoffTo('/play/${widget.serverId}/${next.id}?pos=0');
+        },
+        onPrompt: (action) {
+          if (!mounted || _samePrompt(action, _skipPrompt)) return;
+          setState(() => _skipPrompt = action);
+        },
+        onResolution: (r) {
+          if (mounted) setState(() => _segmentList = r.segments);
+        },
+        onAutoSkip: (action) => showToast(_autoSkipText(action)),
+        onActionError: (e) => debugPrint('segments: $e'),
+      )..begin(query, settings, hasNextEpisode: hasNext);
+    } catch (e) {
+      debugPrint('segments unavailable: $e');
+    }
+  }
+
+  static bool _samePrompt(SegmentSkipAction? a, SegmentSkipAction? b) =>
+      identical(a, b) ||
+      (a != null &&
+          b != null &&
+          a.segment.start == b.segment.start &&
+          a.segment.type == b.segment.type &&
+          a.kind == b.kind);
+
+  static String _autoSkipText(SegmentSkipAction a) => switch (a.segment.type) {
+    _ when a.kind == SegmentSkipActionKind.nextEpisode => '片尾：已自动播放下一集',
+    SegmentType.intro => '已自动跳过片头',
+    SegmentType.recap => '已自动跳过前情提要',
+    SegmentType.credits => '已自动跳过片尾',
+    SegmentType.preview => '已自动跳过预告',
+  };
+
+  void _activateSkip() {
+    final action = _skipPrompt;
+    if (action != null) _segments?.activate(action);
   }
 
   void _handoffTo(String route) {
@@ -282,6 +378,7 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
     _osdTimer?.cancel();
     _progressTimer?.cancel();
     _seekTimer?.cancel();
+    _segments?.dispose();
     _focus.dispose();
     _engine?.state.removeListener(_onEngineState);
     final engine = _engine;
@@ -356,6 +453,9 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
       _seekBy(repeat ? step * 3 : step);
     } else if (repeat) {
       return KeyEventResult.handled;
+    } else if (confirmKeys.contains(key) && _skipPrompt != null) {
+      // 出现"跳过片头 / 下一集"按钮时，OK 键执行跳过（空格仍是暂停）
+      _activateSkip();
     } else if (confirmKeys.contains(key) ||
         key == LogicalKeyboardKey.space ||
         key == LogicalKeyboardKey.keyK ||
@@ -607,11 +707,34 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
                             ),
                           ),
                         ),
+                        // 跳过按钮：不随 OSD 隐藏；OSD 显示时让出进度条的位置
+                        AnimatedPositioned(
+                          duration: VMotion.scroll,
+                          curve: Curves.easeOutCubic,
+                          right: VSpace.safeH,
+                          bottom: _osd ? 230 : 110,
+                          child: AnimatedSwitcher(
+                            duration: VMotion.focus,
+                            child: _skipPrompt == null
+                                ? const SizedBox.shrink()
+                                : _SkipButton(
+                                    key: ValueKey('${_skipPrompt!.segment.type}${_skipPrompt!.segment.start}'),
+                                    action: _skipPrompt!,
+                                    onPressed: _activateSkip,
+                                  ),
+                          ),
+                        ),
                         if (_info)
                           Positioned(
                             right: VSpace.safeH,
                             top: 150,
-                            child: _InfoPanel(state: s, engine: engine.kind, source: _source, request: _request),
+                            child: _InfoPanel(
+                              state: s,
+                              engine: engine.kind,
+                              source: _source,
+                              request: _request,
+                              segments: _segmentList,
+                            ),
                           ),
                       ],
                     ),
@@ -751,7 +874,15 @@ class _Osd extends StatelessWidget {
 
 /// 媒体信息叠加层（I 键 / 菜单 → 媒体信息）
 class _InfoPanel extends StatelessWidget {
-  const _InfoPanel({required this.state, required this.engine, required this.source, required this.request});
+  const _InfoPanel({
+    required this.state,
+    required this.engine,
+    required this.source,
+    required this.request,
+    this.segments = const [],
+  });
+
+  final List<Segment> segments;
 
   final EngineState state;
   final EngineKind engine;
@@ -772,6 +903,11 @@ class _InfoPanel extends StatelessWidget {
       if (source?.bitrate != null) ('码率', '${(source!.bitrate! / 1000000).toStringAsFixed(2)} Mbps'),
       ('缓冲', '${(state.buffered - state.position).inSeconds} 秒'),
       if (request != null) ('播放 UA', request!.userAgent),
+      for (final seg in segments)
+        (
+          segmentTypeName(seg.type),
+          '${formatClock(seg.start)} – ${formatClock(seg.end)} · ${segmentProviderName(seg.provider)}',
+        ),
     ];
     return Glass(
       width: 620,
@@ -851,6 +987,61 @@ class _ErrorPanel extends StatelessWidget {
               ],
             ),
           ],
+        ),
+      ),
+    );
+  }
+}
+
+/// 跳过片头 / 前情提要 / 片尾、下一集（电视上按 OK，电脑上点击或按回车）
+class _SkipButton extends StatelessWidget {
+  const _SkipButton({super.key, required this.action, required this.onPressed});
+
+  final SegmentSkipAction action;
+  final VoidCallback onPressed;
+
+  @override
+  Widget build(BuildContext context) {
+    final next = action.kind == SegmentSkipActionKind.nextEpisode;
+    final label = next ? '下一集' : '跳过${segmentTypeName(action.segment.type)}';
+    return GestureDetector(
+      onTap: onPressed,
+      child: MouseRegion(
+        cursor: SystemMouseCursors.click,
+        child: Container(
+          padding: const EdgeInsets.fromLTRB(30, 16, 22, 16),
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(999),
+            boxShadow: const [BoxShadow(color: Color(0x66000000), blurRadius: 30, offset: Offset(0, 8))],
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(
+                label,
+                style: const TextStyle(fontSize: 26, fontWeight: FontWeight.w700, color: Color(0xFF0B0C10)),
+              ),
+              const SizedBox(width: 8),
+              Icon(
+                next ? Icons.skip_next_rounded : Icons.fast_forward_rounded,
+                size: 30,
+                color: const Color(0xFF0B0C10),
+              ),
+              const SizedBox(width: 14),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 2),
+                decoration: BoxDecoration(
+                  border: Border.all(color: const Color(0x590B0C10)),
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: Text(
+                  PlatformProfile.isTv ? 'OK' : 'Enter',
+                  style: const TextStyle(fontSize: 16, color: Color(0xA60B0C10), fontWeight: FontWeight.w600),
+                ),
+              ),
+            ],
+          ),
         ),
       ),
     );
