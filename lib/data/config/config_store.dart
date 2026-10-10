@@ -85,7 +85,7 @@ class ConfigStore extends Notifier<AppConfig> {
   Future<AppConfig> _readSecrets(AppConfig config) async {
     try {
       final servers = <ServerConfig>[];
-      for (final s in config.servers) {
+      for (final s in config.allServers) {
         final storedPassword = await vault.read(_secretKey(s.id, 'password'));
         final storedToken = await vault.read(_secretKey(s.id, 'token'));
         // 记下密钥库里已有的值：没变就不重写，删除服务器时知道要清哪些
@@ -113,8 +113,8 @@ class ConfigStore extends Notifier<AppConfig> {
     final json = config.toJson();
     if (_vaultOk) {
       try {
-        final ids = {for (final s in config.servers) s.id};
-        for (final s in config.servers) {
+        final ids = {for (final s in config.allServers) s.id};
+        for (final s in config.allServers) {
           await _put(_secretKey(s.id, 'password'), s.password);
           await _put(_secretKey(s.id, 'token'), s.token);
         }
@@ -131,7 +131,7 @@ class ConfigStore extends Notifier<AppConfig> {
       } catch (e) {
         debugPrint('secret vault write failed, keeping secrets in config: $e');
         _vaultOk = false;
-        json['servers'] = config.servers.map((s) => s.toJson()).toList();
+        json['servers'] = config.allServers.map((s) => s.toJson()).toList();
       }
     }
     final prefs = await SharedPreferences.getInstance();
@@ -148,7 +148,7 @@ class ConfigStore extends Notifier<AppConfig> {
   }
 
   Future<void> upsertServer(ServerConfig server) => update((c) {
-    final list = [...c.servers];
+    final list = [...c.allServers];
     final i = list.indexWhere((s) => s.id == server.id);
     if (i >= 0) {
       list[i] = server;
@@ -159,11 +159,11 @@ class ConfigStore extends Notifier<AppConfig> {
   });
 
   Future<void> updateServer(String id, ServerConfig Function(ServerConfig) change) => update((c) {
-    return c.copyWith(servers: [for (final s in c.servers) s.id == id ? change(s) : s]);
+    return c.copyWith(servers: [for (final s in c.allServers) s.id == id ? change(s) : s]);
   });
 
   Future<void> removeServer(String id) =>
-      update((c) => c.copyWith(servers: c.servers.where((s) => s.id != id).toList()));
+      update((c) => c.copyWith(servers: c.allServers.where((s) => s.id != id).toList()));
 }
 
 final configProvider = NotifierProvider<ConfigStore, AppConfig>(ConfigStore.new);

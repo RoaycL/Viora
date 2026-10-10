@@ -106,7 +106,7 @@ SyncMergeResult mergeSyncPayload(AppConfig c, Map<String, dynamic> p) {
 
   final servers = p['servers'];
   if (servers is List && servers.isNotEmpty) {
-    final list = [...config.servers];
+    final list = [...config.allServers];
     var added = 0, updated = 0;
     for (final raw in servers.whereType<Map<String, dynamic>>()) {
       final lines = [

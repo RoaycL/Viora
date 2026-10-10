@@ -15,12 +15,15 @@ final libraryCopiesProvider = Provider.family<List<MediaItem>, TmdbLinkKey>((ref
   ref.watch(indexRevisionProvider);
   final index = ref.watch(mediaIndexProvider).value;
   if (index == null) return const [];
-  ref.watch(configProvider.select((c) => c.serversKey));
-  final servers = {for (final s in ref.read(configProvider).servers) s.id};
+  ref.watch(
+    configProvider.select((c) => (c.serversKey, c.parental.enabled, c.parental.maxAge, c.parental.blockUnrated)),
+  );
+  final config = ref.read(configProvider);
+  final servers = {for (final s in config.servers) s.id};
   try {
     return index
         .byTmdb(key.isTv ? MediaKind.series : MediaKind.movie, '${key.id}')
-        .where((c) => servers.contains(c.serverId))
+        .where((c) => servers.contains(c.serverId) && itemVisible(config, c))
         .toList();
   } catch (_) {
     return const [];
@@ -34,10 +37,15 @@ final recentlyAddedProvider = Provider<List<AggregatedTitle>>((ref) {
   ref.watch(indexRevisionProvider);
   final index = ref.watch(mediaIndexProvider).value;
   if (index == null) return const [];
-  ref.watch(configProvider.select((c) => c.serversKey));
-  final servers = {for (final s in ref.read(configProvider).servers) s.id};
+  ref.watch(
+    configProvider.select((c) => (c.serversKey, c.parental.enabled, c.parental.maxAge, c.parental.blockUnrated)),
+  );
+  final config = ref.read(configProvider);
+  final servers = {for (final s in config.servers) s.id};
   try {
-    return groupTitles(index.latest(limit: 60).where((c) => servers.contains(c.serverId))).take(24).toList();
+    return groupTitles(index.latest(limit: 60).where((c) => servers.contains(c.serverId) && itemVisible(config, c)))
+        .take(24)
+        .toList();
   } catch (_) {
     return const [];
   }

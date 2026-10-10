@@ -20,6 +20,7 @@ import '../../player/playback_cache.dart';
 import '../../ui/panels/form_dialog.dart';
 import '../danmaku/danmaku_settings_section.dart';
 import '../segments/segment_settings_section.dart';
+import '../parental/parental_settings_section.dart';
 import '../sync/sync_settings_section.dart';
 import 'support_actions.dart';
 import '../update/update_controller.dart';
@@ -403,6 +404,9 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
       // ───────── 同步配置 ─────────
       const _Section(title: '同步配置', children: [SyncSettingsSection()]),
 
+      // ───────── 家长控制 ─────────
+      const _Section(title: '家长控制', children: [ParentalSettingsSection()]),
+
       // ───────── 关于与更新 ─────────
       _Section(
         title: '关于与更新',
@@ -505,6 +509,7 @@ enum _Category {
   metadata('元数据', Icons.auto_awesome_outlined),
   proxy('反向代理', Icons.shield_outlined),
   sync('同步配置', Icons.qr_code_2_rounded),
+  parental('家长控制', Icons.child_care_rounded),
   about('关于与更新', Icons.system_update_alt_rounded);
 
   const _Category(this.label, this.icon);

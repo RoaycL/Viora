@@ -258,7 +258,16 @@ class EmbyClient {
 
   /// 聚合索引用的精简字段：不要用户数据（播放进度等），服务器不用逐条查用户状态
   static const indexFields =
-      'ProductionYear,PremiereDate,ProviderIds,Overview,Genres,CommunityRating,DateCreated,OriginalTitle';
+      'ProductionYear,PremiereDate,ProviderIds,Overview,Genres,CommunityRating,DateCreated,OriginalTitle,OfficialRating';
+
+  /// 儿童模式：让服务器按分级过滤（Emby / Jellyfin 都支持 MaxOfficialRating），本地再按分级二次过滤
+  Map<String, String> get _parentalQuery =>
+      config.parental.enabled ? {'MaxOfficialRating': config.parental.maxOfficialRating} : const {};
+
+  Iterable<MediaItem> _allowed(Iterable<MediaItem> items) => config.parental.enabled
+      ? items.where((it) => it.kind == MediaKind.episode || config.parental.allows(it.officialRating))
+      : items;
+
   static const _imageQuery = {'EnableImageTypes': 'Primary,Backdrop,Thumb,Logo', 'ImageTypeLimit': '1'};
 
   // ───────────────────────── 浏览 ─────────────────────────
@@ -308,29 +317,30 @@ class EmbyClient {
         'SearchTerm': ?searchTerm,
         'MinDateLastSaved': ?minDateLastSaved?.toUtc().toIso8601String(),
         'Filters': ?filters,
+        ..._parentalQuery,
         ..._imageQuery,
       },
     ) as Map<String, dynamic>;
     final list = (data['Items'] as List? ?? const []).cast<Map<String, dynamic>>();
-    return PagedItems(list.map(parseItem).toList(), data['TotalRecordCount'] as int? ?? list.length);
+    return PagedItems(_allowed(list.map(parseItem)).toList(), data['TotalRecordCount'] as int? ?? list.length);
   }
 
   Future<List<MediaItem>> latest({String? parentId, int limit = 20}) async {
     final data = await _request(
       'GET',
       '/Users/${await _userId()}/Items/Latest',
-      query: {'ParentId': ?parentId, 'Limit': '$limit', 'Fields': _userFields, ..._imageQuery},
+      query: {'ParentId': ?parentId, 'Limit': '$limit', 'Fields': _userFields, ..._parentalQuery, ..._imageQuery},
     );
-    return (data as List? ?? const []).cast<Map<String, dynamic>>().map(parseItem).toList();
+    return _allowed((data as List? ?? const []).cast<Map<String, dynamic>>().map(parseItem)).toList();
   }
 
   Future<List<MediaItem>> resume({int limit = 20}) async {
     final data = await _request(
       'GET',
       '/Users/${await _userId()}/Items/Resume',
-      query: {'Limit': '$limit', 'MediaTypes': 'Video', 'Fields': _userFields, ..._imageQuery},
+      query: {'Limit': '$limit', 'MediaTypes': 'Video', 'Fields': _userFields, ..._parentalQuery, ..._imageQuery},
     ) as Map<String, dynamic>;
-    return (data['Items'] as List? ?? const []).cast<Map<String, dynamic>>().map(parseItem).toList();
+    return _allowed((data['Items'] as List? ?? const []).cast<Map<String, dynamic>>().map(parseItem)).toList();
   }
 
   Future<MediaItem> item(String id) async => parseItem(
