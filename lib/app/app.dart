@@ -28,6 +28,7 @@ import 'theme.dart';
 import '../ui/panels/exit_dialog.dart';
 import 'window_frame.dart';
 import '../ui/focus/input_mode.dart';
+import '../features/sync/webdav_service.dart';
 
 /// 启动时的后台任务（检查更新、同步聚合索引）；测试环境中关闭。
 bool autoCheckUpdatesOnLaunch = true;
@@ -42,6 +43,7 @@ class VioraApp extends ConsumerStatefulWidget {
 class _VioraAppState extends ConsumerState<VioraApp> with WidgetsBindingObserver {
   late final GoRouter _router = buildRouter(observers: [_BackObserver(_updateCanGoBackAfterFrame)]);
   DateTime? _lastExitHint;
+  WebDavSync? _webdav;
 
   /// 电视：长按返回键 3 秒弹出「退出 Viora？」，确认后才退出（不再"首页连按两次返回退出"，容易误退）
   static const exitHoldDuration = Duration(seconds: 3);
@@ -115,6 +117,9 @@ class _VioraAppState extends ConsumerState<VioraApp> with WidgetsBindingObserver
     _autoCheckUpdate();
     // 上次异常退出时残留的播放缓存
     if (ref.read(configProvider).playback.clearCacheOnExit) PlaybackCache.clear();
+    // WebDAV 同步：启动时同步一次，之后配置变化后自动同步（没填 WebDAV 时什么都不做）
+    _webdav = WebDavSync.instance = WebDavSync(ProviderScope.containerOf(context, listen: false));
+    if (autoCheckUpdatesOnLaunch) _webdav!.start();
     if (autoCheckUpdatesOnLaunch) {
       // 稍后在后台：各服务器线路测速（选最快线路、更新在线状态），再同步聚合索引（docs/04-aggregation.md §2）
       Future<void>.delayed(const Duration(seconds: 1), () async {
@@ -151,6 +156,8 @@ class _VioraAppState extends ConsumerState<VioraApp> with WidgetsBindingObserver
 
   @override
   void dispose() {
+    if (identical(WebDavSync.instance, _webdav)) WebDavSync.instance = null;
+    _webdav?.dispose();
     WidgetsBinding.instance.removeObserver(this);
     HardwareKeyboard.instance.removeHandler(_onHardwareKey);
     _exitHold?.cancel();

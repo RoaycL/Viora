@@ -14,6 +14,9 @@ import '../../data/sync/config_payload.dart';
 import '../../domain/models/segment_settings.dart';
 import '../../data/sync/config_receiver.dart';
 import '../../data/sync/config_sender.dart';
+import '../../data/sync/webdav_sync.dart';
+import '../../data/config/app_config.dart';
+import '../../ui/panels/context_menu.dart';
 import '../../ui/glass/glass.dart';
 import '../../ui/panels/form_dialog.dart';
 import '../../ui/widgets/buttons.dart';
@@ -21,6 +24,7 @@ import '../../ui/widgets/form.dart';
 import '../../ui/widgets/toast.dart';
 import '../segments/segment_service.dart';
 import '../settings/support_actions.dart';
+import 'webdav_service.dart';
 
 /// 设置 → 同步配置（docs/11-sync.md）
 ///
@@ -66,9 +70,11 @@ class SyncSettingsSection extends ConsumerWidget {
             onConfigure: () => exportBackup(ref),
           ),
         ],
+        const SizedBox(height: 12),
+        const WebDavEntry(),
         const SizedBox(height: 20),
         Text(
-          '只在局域网内直接传输，不经过任何外部服务器；接收页面关闭或 5 分钟没有操作后自动停止，需要输入电视上的 4 位配对码。'
+          '「发送 / 接收」只在局域网内直接传输，不经过任何外部服务器；接收页面关闭或 5 分钟没有操作后自动停止，需要输入电视上的 4 位配对码。'
           '传输没有加密，请不要在公共 Wi-Fi 下使用。',
           style: VText.small.copyWith(color: VColors.textTertiary),
         ),
@@ -77,13 +83,180 @@ class SyncSettingsSection extends ConsumerWidget {
   }
 }
 
+// ───────────────────────── WebDAV ─────────────────────────
+
+/// 设置 → 同步配置 → WebDAV 同步：多台设备共用 WebDAV 上的一个配置文件
+class WebDavEntry extends ConsumerWidget {
+  const WebDavEntry({super.key});
+
+  static String _ago(DateTime t) {
+    final d = DateTime.now().difference(t);
+    if (d.inMinutes < 1) return '刚刚';
+    if (d.inHours < 1) return '${d.inMinutes} 分钟前';
+    if (d.inDays < 1) return '${d.inHours} 小时前';
+    return '${d.inDays} 天前';
+  }
+
+  Future<void> _run(WebDavSyncMode mode) async {
+    final sync = WebDavSync.instance;
+    if (sync == null) return;
+    try {
+      showToast(await sync.sync(mode: mode));
+    } catch (e) {
+      showToast('$e');
+    }
+  }
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final c = ref.watch(configProvider.select((c) => c.webdav));
+    final status = WebDavSync.instance?.status ?? ValueNotifier(const WebDavStatus());
+    return ValueListenableBuilder(
+      valueListenable: status,
+      builder: (context, s, _) => SettingsEntry(
+        title: 'WebDAV 同步',
+        subtitle: !c.configured
+            ? '把全部配置存到 WebDAV（坚果云、群晖、Alist 等），多台设备自动保持一致'
+            : [
+                Uri.tryParse(c.url)?.host ?? c.url,
+                c.autoSync ? '自动同步' : '手动同步',
+                if (c.passphrase.isNotEmpty) '已加密',
+                if (s.message != null) '${s.at == null ? '' : '${_ago(s.at!)}：'}${s.message}',
+              ].join(' · '),
+        status: s.running ? '同步中…' : null,
+        trailing: [
+          if (c.configured) ...[
+            SmallIconButton(
+              icon: Icons.sync_rounded,
+              label: '立即同步',
+              onPressed: s.running ? null : () => _run(WebDavSyncMode.auto),
+            ),
+            SmallIconButton(
+              icon: Icons.more_horiz_rounded,
+              onPressed: s.running
+                  ? null
+                  : () => showContextMenu(
+                      context,
+                      title: 'WebDAV 同步',
+                      actions: [
+                        MenuAction('用本机配置覆盖云端', Icons.cloud_upload_outlined, () => _run(WebDavSyncMode.upload)),
+                        MenuAction('用云端配置覆盖本机', Icons.cloud_download_outlined, () => _run(WebDavSyncMode.download)),
+                      ],
+                    ),
+            ),
+          ],
+        ],
+        onConfigure: () => showWebDavDialog(context, ref),
+      ),
+    );
+  }
+}
+
+Future<void> showWebDavDialog(BuildContext context, WidgetRef ref) async {
+  final c = ref.read(configProvider).webdav;
+  final url = TextEditingController(text: c.url);
+  final user = TextEditingController(text: c.username);
+  final pass = TextEditingController(text: c.password);
+  final path = TextEditingController(text: c.path);
+  final phrase = TextEditingController(text: c.passphrase);
+  var auto = c.autoSync;
+  await showFormDialog(
+    context,
+    title: 'WebDAV 同步',
+    description:
+        '服务器、反向代理、播放 UA、TMDB、弹幕、片头片尾设置会存成 WebDAV 上的一个文件，'
+        '每台设备填同样的地址即可保持一致。播放内核、缓冲等跟设备有关的设置不同步。'
+        '文件里有服务器密码，建议设置加密口令（所有设备填同一个）。',
+    saveLabel: '保存并同步',
+    children: [
+      VTextField(
+        label: 'WebDAV 地址',
+        controller: url,
+        hint: 'https://dav.jianguoyun.com/dav/',
+        keyboardType: TextInputType.url,
+        autofocus: true,
+      ),
+      const SizedBox(height: 20),
+      Row(
+        children: [
+          Expanded(
+            child: VTextField(label: '用户名', controller: user, credential: true),
+          ),
+          const SizedBox(width: 20),
+          Expanded(
+            child: VTextField(label: '密码（坚果云填应用密码）', controller: pass, obscure: true),
+          ),
+        ],
+      ),
+      const SizedBox(height: 20),
+      Row(
+        children: [
+          Expanded(
+            child: VTextField(label: '文件路径', controller: path, hint: WebDavConfig.defaultPath),
+          ),
+          const SizedBox(width: 20),
+          Expanded(
+            child: VTextField(label: '加密口令（可选，所有设备一致）', controller: phrase, obscure: true),
+          ),
+        ],
+      ),
+      const SizedBox(height: 20),
+      StatefulBuilder(
+        builder: (context, setState) => VToggle(
+          label: '自动同步',
+          subtitle: '启动时同步一次，修改配置后自动上传',
+          value: auto,
+          onChanged: (v) => setState(() => auto = v),
+        ),
+      ),
+    ],
+    onSave: () async {
+      final next = WebDavConfig(
+        url: url.text.trim(),
+        username: user.text.trim(),
+        password: pass.text,
+        path: path.text.trim().isEmpty ? WebDavConfig.defaultPath : path.text.trim(),
+        passphrase: phrase.text,
+        autoSync: auto,
+      );
+      if (next.configured) {
+        try {
+          await WebDavClient(next).test();
+        } catch (e) {
+          showToast('$e');
+          return false;
+        }
+      }
+      // 换了地址、文件或口令：下一次按第一次同步处理（两边合并），不会误删任何一边的服务器
+      if (next.url != c.url || next.path != c.path || next.username != c.username || next.passphrase != c.passphrase) {
+        await WebDavSync.instance?.resetState();
+      }
+      await ref.read(configProvider.notifier).update((x) => x.copyWith(webdav: next));
+      if (!next.configured) {
+        showToast('已关闭 WebDAV 同步');
+        return true;
+      }
+      unawaited(WebDavSync.instance?.sync().then(showToast, onError: (Object e) => showToast('$e')));
+      return true;
+    },
+  );
+  for (final t in [url, user, pass, path, phrase]) {
+    t.dispose();
+  }
+}
+
 // ───────────────────────── 接收 ─────────────────────────
 
 /// 应用收到的配置：合并、保存，然后后台对新增 / 修改的服务器测速并登录
 /// 用 [ProviderContainer]（不是 WidgetRef）：接收窗口关掉后，后台登录还要继续
-Future<String> applySyncPayload(ProviderContainer ref, Map<String, dynamic> payload, void Function(String) log) async {
+Future<String> applySyncPayload(
+  ProviderContainer ref,
+  Map<String, dynamic> payload,
+  void Function(String) log, {
+  bool replaceServers = false,
+}) async {
   final store = ref.read(configProvider.notifier);
-  final result = mergeSyncPayload(ref.read(configProvider), payload);
+  final result = mergeSyncPayload(ref.read(configProvider), payload, replaceServers: replaceServers);
   if (result.isEmpty) return '没有可导入的内容';
   await store.update((_) => result.config);
   if (result.segmentKeys.isNotEmpty || result.segmentSettings != null) {

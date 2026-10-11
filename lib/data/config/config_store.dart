@@ -57,6 +57,8 @@ class ConfigStore extends Notifier<AppConfig> {
 
   static String _secretKey(String serverId, String field) => 'viora.server.$serverId.$field';
 
+  static String _webdavKey(String field) => 'viora.webdav.$field';
+
   bool _loaded = false;
   bool get loaded => _loaded;
 
@@ -95,7 +97,14 @@ class ConfigStore extends Notifier<AppConfig> {
         final token = s.token ?? storedToken;
         servers.add(ServerConfig.fromJson({...s.toJson(), 'password': password ?? '', 'token': token}));
       }
-      return config.copyWith(servers: servers);
+      var webdav = config.webdav;
+      for (final field in const ['password', 'passphrase']) {
+        final stored = await vault.read(_webdavKey(field));
+        _written[_webdavKey(field)] = stored;
+        final current = webdav.toJson()[field] as String;
+        if (current.isEmpty && stored != null) webdav = WebDavConfig.fromJson({...webdav.toJson(), field: stored});
+      }
+      return config.copyWith(servers: servers, webdav: webdav);
     } catch (e) {
       debugPrint('secret vault unavailable: $e');
       _vaultOk = false;
@@ -118,8 +127,12 @@ class ConfigStore extends Notifier<AppConfig> {
           await _put(_secretKey(s.id, 'password'), s.password);
           await _put(_secretKey(s.id, 'token'), s.token);
         }
+        await _put(_webdavKey('password'), config.webdav.password);
+        await _put(_webdavKey('passphrase'), config.webdav.passphrase);
+        json['webdav'] = {...json['webdav'] as Map<String, dynamic>, 'password': '', 'passphrase': ''};
         // 删掉已移除服务器的密码
         for (final key in [..._written.keys]) {
+          if (!key.startsWith('viora.server.')) continue;
           final id = key.split('.').elementAtOrNull(2);
           if (id != null && !ids.contains(id) && _written[key] != null) await _put(key, null);
         }
@@ -132,6 +145,7 @@ class ConfigStore extends Notifier<AppConfig> {
         debugPrint('secret vault write failed, keeping secrets in config: $e');
         _vaultOk = false;
         json['servers'] = config.allServers.map((s) => s.toJson()).toList();
+        json['webdav'] = config.webdav.toJson();
       }
     }
     final prefs = await SharedPreferences.getInstance();

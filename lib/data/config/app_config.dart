@@ -584,6 +584,72 @@ int? ratingAge(String? rating) {
   return n == null ? null : int.parse(n[1]!);
 }
 
+/// WebDAV 同步（docs/11-sync.md §WebDAV）：把配置存成 WebDAV 上的一个文件，多台设备共用
+class WebDavConfig {
+  const WebDavConfig({
+    this.url = '',
+    this.username = '',
+    this.password = '',
+    this.path = defaultPath,
+    this.passphrase = '',
+    this.autoSync = true,
+  });
+
+  static const defaultPath = 'Viora/viora-config.json';
+
+  /// 如 `https://dav.jianguoyun.com/dav/`
+  final String url;
+  final String username;
+
+  /// 和服务器密码一样存进系统密钥库
+  final String password;
+
+  /// 相对 [url] 的文件路径
+  final String path;
+
+  /// 加密口令（可选）：设置后云端文件用 AES-GCM 加密，所有设备要填同一个口令
+  final String passphrase;
+
+  /// 启动时和配置变化后自动同步
+  final bool autoSync;
+
+  bool get configured => url.trim().isNotEmpty;
+
+  WebDavConfig copyWith({
+    String? url,
+    String? username,
+    String? password,
+    String? path,
+    String? passphrase,
+    bool? autoSync,
+  }) => WebDavConfig(
+    url: url ?? this.url,
+    username: username ?? this.username,
+    password: password ?? this.password,
+    path: path ?? this.path,
+    passphrase: passphrase ?? this.passphrase,
+    autoSync: autoSync ?? this.autoSync,
+  );
+
+  Map<String, dynamic> toJson() => {
+    'url': url,
+    'username': username,
+    'password': password,
+    'path': path,
+    'passphrase': passphrase,
+    'autoSync': autoSync,
+  };
+
+  factory WebDavConfig.fromJson(Map<String, dynamic> j) => WebDavConfig(
+    url: j['url'] as String? ?? '',
+    username: j['username'] as String? ?? '',
+    password: j['password'] as String? ?? '',
+    path: (j['path'] as String?)?.trim().isNotEmpty == true ? (j['path'] as String).trim() : defaultPath,
+    passphrase: j['passphrase'] as String? ?? '',
+    autoSync: j['autoSync'] as bool? ?? true,
+  );
+}
+
 class AppConfig {
   const AppConfig({
     List<ServerConfig> servers = const [],
@@ -592,8 +658,11 @@ class AppConfig {
     this.tmdb = const TmdbConfig(),
     this.danmaku = const DanmakuConfig(),
     this.parental = const ParentalConfig(),
+    this.webdav = const WebDavConfig(),
     this.deviceId = '',
   }) : allServers = servers;
+
+  final WebDavConfig webdav;
 
   /// 全部服务器（含儿童模式下隐藏的）：保存配置、修改服务器列表时用这个
   final List<ServerConfig> allServers;
@@ -648,6 +717,7 @@ class AppConfig {
     TmdbConfig? tmdb,
     DanmakuConfig? danmaku,
     ParentalConfig? parental,
+    WebDavConfig? webdav,
     String? deviceId,
   }) => AppConfig(
     // 默认保留全部服务器（含儿童模式下隐藏的），否则改任何设置都会把隐藏的服务器丢掉
@@ -657,6 +727,7 @@ class AppConfig {
     playback: playback ?? this.playback,
     tmdb: tmdb ?? this.tmdb,
     danmaku: danmaku ?? this.danmaku,
+    webdav: webdav ?? this.webdav,
     deviceId: deviceId ?? this.deviceId,
   );
 
@@ -668,6 +739,7 @@ class AppConfig {
     'tmdb': tmdb.toJson(),
     'danmaku': danmaku.toJson(),
     'parental': parental.toJson(),
+    'webdav': webdav.toJson(),
     'deviceId': deviceId,
   };
 
@@ -678,6 +750,7 @@ class AppConfig {
     tmdb: TmdbConfig.fromJson(j['tmdb'] as Map<String, dynamic>? ?? const {}),
     danmaku: DanmakuConfig.fromJson(j['danmaku'] as Map<String, dynamic>? ?? const {}),
     parental: ParentalConfig.fromJson(j['parental'] as Map<String, dynamic>? ?? const {}),
+    webdav: WebDavConfig.fromJson(j['webdav'] as Map<String, dynamic>? ?? const {}),
     deviceId: j['deviceId'] as String? ?? '',
   );
 }

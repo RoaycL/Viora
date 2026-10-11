@@ -74,6 +74,18 @@ String syncWebPage({required String deviceName}) {
   </section>
 
   <section>
+    <h2>WebDAV 同步（可选）</h2>
+    <label>填好后电视会从 WebDAV 下载其他设备上传的全部配置，之后自动保持同步</label>
+    <input id="davurl" type="url" placeholder="https://dav.jianguoyun.com/dav/">
+    <div class="row">
+      <div><label>用户名</label><input id="davuser" autocapitalize="off" autocomplete="off"></div>
+      <div><label>密码</label><input id="davpass" type="password" autocomplete="off"></div>
+    </div>
+    <label>加密口令（其他设备设置了才填）</label>
+    <input id="davphrase" type="password" autocomplete="off">
+  </section>
+
+  <section>
     <h2>片头片尾</h2>
     <label>TheIntroDB API Key</label>
     <input id="theintrodb" autocomplete="off">
@@ -135,6 +147,10 @@ String syncWebPage({required String deviceName}) {
     if (val('theintrodb')) keys.theintrodb = val('theintrodb');
     if (val('introdb')) keys.introdb = val('introdb');
     if (Object.keys(keys).length) p.segments = { keys };
+    if (val('davurl')) {
+      p.webdav = { url: val('davurl'), username: val('davuser'), password: document.getElementById('davpass').value,
+        passphrase: document.getElementById('davphrase').value, autoSync: true };
+    }
     return p;
   }
   async function send() {
