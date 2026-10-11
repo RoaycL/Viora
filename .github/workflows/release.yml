@@ -15,6 +15,9 @@ on:
   push:
     branches: [main]
     paths-ignore: ['docs/**', '**.md']
+  pull_request:
+    branches: [main]
+    paths-ignore: ['docs/**', '**.md']
   workflow_dispatch:
 
 concurrency:
@@ -59,9 +62,12 @@ jobs:
       - run: flutter pub get
       - run: flutter analyze
       - run: flutter test
+      - name: 验证 TV 性能对照模式
+        run: flutter test --dart-define=VIORA_TV_PERF_BASELINE=true test/tv_home_performance_test.dart
 
   android:
     needs: prepare
+    if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -84,9 +90,24 @@ jobs:
           name: android
           path: dist/*
           if-no-files-found: error
+      - name: 构建 TV 性能测量 APK（Profile）
+        if: needs.prepare.outputs.exists == 'false' && github.ref == 'refs/heads/main'
+        run: |
+          flutter build apk --profile --dart-define=VIORA_FRAME_STATS=true --dart-define=VIORA_TMDB_TOKEN=${{ secrets.TMDB_TOKEN }}
+          mkdir -p profile-dist
+          cp build/app/outputs/flutter-apk/app-profile.apk "profile-dist/Viora-${{ needs.prepare.outputs.version }}-android-profile.apk"
+          flutter build apk --profile --dart-define=VIORA_FRAME_STATS=true --dart-define=VIORA_TV_PERF_BASELINE=true --dart-define=VIORA_TMDB_TOKEN=${{ secrets.TMDB_TOKEN }}
+          cp build/app/outputs/flutter-apk/app-profile.apk "profile-dist/Viora-${{ needs.prepare.outputs.version }}-android-profile-baseline.apk"
+      - uses: actions/upload-artifact@v4
+        if: needs.prepare.outputs.exists == 'false' && github.ref == 'refs/heads/main'
+        with:
+          name: android-tv-performance
+          path: profile-dist/*
+          if-no-files-found: error
 
   windows:
     needs: prepare
+    if: github.event_name != 'pull_request'
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
@@ -128,6 +149,7 @@ jobs:
         with:
           path: dist
           merge-multiple: true
+          pattern: '{android,windows}'
       - name: 生成更新说明与 latest.json
         env:
           VERSION: ${{ needs.prepare.outputs.version }}

@@ -1,4 +1,5 @@
 import 'package:flutter/widgets.dart';
+import 'package:flutter/scheduler.dart';
 
 import 'shell_focus.dart';
 import 'input_mode.dart';
@@ -12,22 +13,48 @@ abstract class FocusRowHandle {
   int get rememberedIndex;
 }
 
+abstract class DeferredFocusRowHandle extends FocusRowHandle {
+  void updateVisibility();
+}
+
 /// 管理一个页面上的所有行（docs/07-input-control.md §2.2）：
 /// ↑↓ 在行之间移动并恢复行记忆，←→ 在行内移动，最左再按 ← 交给应用壳（进入导航栏）。
 class RowFocusController {
   final Map<int, FocusRowHandle> _rows = <int, FocusRowHandle>{};
+  final Map<int, DeferredFocusRowHandle> _deferred = <int, DeferredFocusRowHandle>{};
 
-  void register(int rowIndex, FocusRowHandle row) => _rows[rowIndex] = row;
+  void register(int rowIndex, FocusRowHandle row) {
+    _rows[rowIndex] = row;
+    final pending = _deferred[rowIndex];
+    if (pending == null || !pending.nodeAt(0).hasPrimaryFocus) return;
+    SchedulerBinding.instance.addPostFrameCallback((_) {
+      if (identical(_rows[rowIndex], row) && pending.nodeAt(0).hasPrimaryFocus) focusRow(rowIndex);
+    });
+  }
+
+  /// A lightweight focus target exists even when a row's cards are not built.
+  void registerDeferred(int rowIndex, DeferredFocusRowHandle row) => _deferred[rowIndex] = row;
+
+  void refreshDeferredRows() {
+    for (final row in _deferred.values) {
+      row.updateVisibility();
+    }
+  }
+
+  void unregisterDeferred(int rowIndex, FocusRowHandle row) {
+    if (identical(_deferred[rowIndex], row)) _deferred.remove(rowIndex);
+  }
 
   void unregister(int rowIndex, FocusRowHandle row) {
     if (identical(_rows[rowIndex], row)) _rows.remove(rowIndex);
   }
 
-  List<int> get _sortedRows => _rows.keys.toList()..sort();
+  Map<int, FocusRowHandle> get _available => {..._deferred, ..._rows};
+  List<int> get _sortedRows => _available.keys.toList()..sort();
 
   ({int row, int index})? locate(FocusNode? node) {
     if (node == null) return null;
-    for (final entry in _rows.entries) {
+    for (final entry in _available.entries) {
       final row = entry.value;
       for (var i = 0; i < row.length; i++) {
         if (identical(row.nodeAt(i), node)) return (row: entry.key, index: i);
@@ -37,7 +64,7 @@ class RowFocusController {
   }
 
   bool focusRow(int rowIndex, {int? index}) {
-    final row = _rows[rowIndex];
+    final row = _available[rowIndex];
     if (row == null || row.length == 0) return false;
     final i = (index ?? row.rememberedIndex).clamp(0, row.length - 1);
     row.nodeAt(i).requestFocus();
@@ -52,11 +79,20 @@ class RowFocusController {
     return false;
   }
 
+  bool focusAdjacent(int rowIndex, {required bool forward}) {
+    final rows = _sortedRows;
+    final candidates = forward ? rows.where((r) => r > rowIndex) : rows.reversed.where((r) => r < rowIndex);
+    for (final r in candidates) {
+      if (focusRow(r)) return true;
+    }
+    return false;
+  }
+
   /// 返回 true 表示已处理。
   bool move(FocusNode? current, TraversalDirection direction) {
     final pos = locate(current);
     if (pos == null) return false;
-    final row = _rows[pos.row]!;
+    final row = _available[pos.row]!;
     switch (direction) {
       case TraversalDirection.left:
         if (pos.index == 0) return false;
@@ -68,12 +104,7 @@ class RowFocusController {
         return true;
       case TraversalDirection.up:
       case TraversalDirection.down:
-        final rows = _sortedRows;
-        final at = rows.indexOf(pos.row);
-        final step = direction == TraversalDirection.down ? 1 : -1;
-        for (var i = at + step; i >= 0 && i < rows.length; i += step) {
-          if (focusRow(rows[i])) return true;
-        }
+        focusAdjacent(pos.row, forward: direction == TraversalDirection.down);
         return true;
     }
   }
