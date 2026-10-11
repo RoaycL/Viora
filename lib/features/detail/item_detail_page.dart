@@ -18,6 +18,7 @@ import '../../ui/widgets/server_image.dart';
 import '../../ui/widgets/toast.dart';
 import '../browse/media_cards.dart';
 import '../tmdb/tmdb_detail_page.dart';
+import 'detail_layout.dart';
 import 'source_widgets.dart';
 
 typedef _Key = ({String serverId, String itemId});
@@ -161,203 +162,151 @@ class _ItemDetailPageState extends ConsumerState<ItemDetailPage> {
       ?item.officialRating,
     ].join('  •  ');
 
-    return Stack(
-      children: [
-        Positioned.fill(
-          child: ServerImage(
-            serverId: widget.serverId,
-            image: item.backdrop ?? item.primary,
-            width: 1920,
-            fallbackSeed: item.id,
-            alignment: Alignment.topRight,
-          ),
-        ),
-        const Positioned.fill(
-          child: DecoratedBox(
-            decoration: BoxDecoration(
-              gradient: LinearGradient(
-                stops: [0, 0.32, 0.62, 1],
-                colors: [Color(0xCC07080B), Color(0xA607080B), Color(0x3307080B), Color(0x0007080B)],
-              ),
+    return DetailLayout(
+      seed: item.id,
+      backdrop: ServerImage(
+        serverId: widget.serverId,
+        image: item.backdrop ?? item.primary,
+        width: 1920,
+        fallbackSeed: item.id,
+        alignment: Alignment.topRight,
+        transparentFallback: true,
+      ),
+      info: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          _Title(serverId: widget.serverId, item: item, title: zh.title),
+          if (item.kind == MediaKind.episode && item.seriesName != null) ...[
+            const SizedBox(height: 12),
+            Text(
+              '${item.seriesName}  ${item.episodeLabel ?? ''}',
+              style: VText.label.copyWith(color: VColors.textSecondary),
             ),
-          ),
-        ),
-        const Positioned.fill(
-          child: DecoratedBox(
-            decoration: BoxDecoration(
-              gradient: LinearGradient(
-                begin: Alignment.topCenter,
-                end: Alignment.bottomCenter,
-                stops: [0.45, 0.85],
-                colors: [Color(0x0007080B), VColors.background],
-              ),
-            ),
-          ),
-        ),
-        Positioned.fill(
-          child: RowFocusScope(
-            child: SingleChildScrollView(
-              padding: const EdgeInsets.only(top: 130, bottom: 24),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: VSpace.safeH),
-                    child: SizedBox(
-                      width: 1000,
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          _Title(serverId: widget.serverId, item: item, title: zh.title),
-                          if (item.kind == MediaKind.episode && item.seriesName != null) ...[
-                            const SizedBox(height: 12),
-                            Text(
-                              '${item.seriesName}  ${item.episodeLabel ?? ''}',
-                              style: VText.label.copyWith(color: VColors.textSecondary),
-                            ),
-                          ],
-                          const SizedBox(height: 22),
-                          Text(meta, style: const TextStyle(fontSize: 22, color: Color(0xD1FFFFFF))),
-                          if ((item.rating ?? 0) > 0 || (item.criticRating ?? 0) > 0) ...[
-                            const SizedBox(height: 14),
-                            Row(
-                              children: [
-                                if ((item.rating ?? 0) > 0) ...[
-                                  const Icon(Icons.star_rounded, color: VColors.rating, size: 26),
-                                  const SizedBox(width: 6),
-                                  Text(
-                                    item.rating!.toStringAsFixed(1),
-                                    style: const TextStyle(
-                                      fontSize: 24,
-                                      fontWeight: FontWeight.w600,
-                                      color: VColors.rating,
-                                    ),
-                                  ),
-                                  const SizedBox(width: 28),
-                                ],
-                                // 烂番茄新鲜度：≥ 60% 新鲜（红番茄），否则烂番茄（绿）
-                                if ((item.criticRating ?? 0) > 0) ...[
-                                  Text(item.criticRating! >= 60 ? '🍅' : '🤢', style: const TextStyle(fontSize: 22)),
-                                  const SizedBox(width: 6),
-                                  Text(
-                                    '烂番茄 ${item.criticRating!.round()}%',
-                                    style: TextStyle(
-                                      fontSize: 22,
-                                      fontWeight: FontWeight.w600,
-                                      color: item.criticRating! >= 60
-                                          ? const Color(0xFFFF6B5B)
-                                          : const Color(0xFF8BC34A),
-                                    ),
-                                  ),
-                                ],
-                              ],
-                            ),
-                          ],
-                          if (zh.overview?.isNotEmpty == true) ...[
-                            const SizedBox(height: 18),
-                            Text(
-                              zh.overview!,
-                              maxLines: 3,
-                              overflow: TextOverflow.ellipsis,
-                              style: VText.body.copyWith(color: const Color(0xCCFFFFFF), height: 1.65),
-                            ),
-                          ],
-                        ],
-                      ),
-                    ),
+          ],
+          const SizedBox(height: 22),
+          Text(meta, style: const TextStyle(fontSize: 22, color: Color(0xD1FFFFFF))),
+          if ((item.rating ?? 0) > 0 || (item.criticRating ?? 0) > 0) ...[
+            const SizedBox(height: 14),
+            Row(
+              children: [
+                if ((item.rating ?? 0) > 0) ...[
+                  const Icon(Icons.star_rounded, color: VColors.rating, size: 26),
+                  const SizedBox(width: 6),
+                  Text(
+                    item.rating!.toStringAsFixed(1),
+                    style: const TextStyle(fontSize: 24, fontWeight: FontWeight.w600, color: VColors.rating),
                   ),
-                  const SizedBox(height: 36),
-                  const RowAutoFocus(),
-                  Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: VSpace.safeH),
-                    child: FocusButtonRow(
-                      rowIndex: 0,
-                      scrollToTop: true,
-                      children: [
-                        (node) => PillButton(
-                          focusNode: node,
-                          large: true,
-                          icon: Icons.play_arrow_rounded,
-                          label: playLabel,
-                          onPressed: playTarget == null ? null : () => play(selected),
-                        ),
-                        if (resumeAt > Duration.zero)
-                          (node) => PillButton(
-                            focusNode: node,
-                            icon: Icons.replay_rounded,
-                            label: '从头播放',
-                            onPressed: () => play(selected, fromStart: true),
-                          ),
-                        (node) => CircleIconButton(
-                          focusNode: node,
-                          icon: favorite ? Icons.favorite_rounded : Icons.favorite_border_rounded,
-                          tooltip: favorite ? '取消收藏' : '收藏',
-                          onPressed: () => _toggleFavorite(item, !favorite),
-                        ),
-                        (node) => CircleIconButton(
-                          focusNode: node,
-                          icon: played ? Icons.check_circle_rounded : Icons.check_rounded,
-                          tooltip: played ? '标记未看' : '标记已看',
-                          onPressed: () => _togglePlayed(item, !played),
-                        ),
-                      ],
-                    ),
-                  ),
-                  const SizedBox(height: 48),
-                  if (isSeries && seasons.length > 1)
-                    Padding(
-                      padding: const EdgeInsets.only(left: VSpace.safeH),
-                      child: FocusButtonRow(
-                        rowIndex: 1,
-                        spacing: 12,
-                        children: [
-                          for (final s in seasons)
-                            (node) => SelectChip(
-                              node: node,
-                              label: s.name,
-                              selected: s.id == seasonId,
-                              onTap: () => setState(() => _seasonId = s.id),
-                            ),
-                        ],
-                      ),
-                    ),
-                  if (episodes.isNotEmpty)
-                    FocusRow(
-                      rowIndex: 2,
-                      leading: VSpace.safeH,
-                      title: seasons.length <= 1 ? '剧集' : null,
-                      itemCount: episodes.length,
-                      itemExtent: LandscapeCard.width,
-                      height: LandscapeCard.height,
-                      itemBuilder: (context, i, node) => mediaLandscapeCard(
-                        context,
-                        episodes[i],
-                        node,
-                        onMenu: () => openMediaItem(context, episodes[i]),
-                      ),
-                    ),
-                  if (optionsAsync != null) ...[
-                    const SizedBox(height: 24),
-                    SourcesSection(
-                      options: options,
-                      loading: optionsAsync.isLoading,
-                      selected: selected,
-                      onSelect: (o) => setState(() => _sourceKey = sourceKeyOf(o)),
-                      onPlay: play,
-                      firstRow: 3,
-                      caption: playTarget?.episodeLabel,
-                    ),
-                  ],
-                  if (tmdb != null) ...[
-                    const SizedBox(height: 24),
-                    ...tmdbExtraRows(tmdb, firstRow: 3 + SourcesSection.rows),
-                  ],
-                  const EndOfPage(leading: VSpace.safeH),
+                  const SizedBox(width: 28),
                 ],
+                // 烂番茄新鲜度：≥ 60% 新鲜（红番茄），否则烂番茄（绿）
+                if ((item.criticRating ?? 0) > 0) ...[
+                  Text(item.criticRating! >= 60 ? '🍅' : '🤢', style: const TextStyle(fontSize: 22)),
+                  const SizedBox(width: 6),
+                  Text(
+                    '烂番茄 ${item.criticRating!.round()}%',
+                    style: TextStyle(
+                      fontSize: 22,
+                      fontWeight: FontWeight.w600,
+                      color: item.criticRating! >= 60 ? const Color(0xFFFF6B5B) : const Color(0xFF8BC34A),
+                    ),
+                  ),
+                ],
+              ],
+            ),
+          ],
+          if (zh.overview?.isNotEmpty == true) ...[
+            const SizedBox(height: 18),
+            Text(
+              zh.overview!,
+              maxLines: 3,
+              overflow: TextOverflow.ellipsis,
+              style: VText.body.copyWith(color: const Color(0xCCFFFFFF), height: 1.65),
+            ),
+          ],
+        ],
+      ),
+      buttons: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const RowAutoFocus(),
+          FocusButtonRow(
+            rowIndex: 0,
+            scrollToTop: true,
+            children: [
+              (node) => PillButton(
+                focusNode: node,
+                large: true,
+                icon: Icons.play_arrow_rounded,
+                label: playLabel,
+                onPressed: playTarget == null ? null : () => play(selected),
               ),
+              if (resumeAt > Duration.zero)
+                (node) => PillButton(
+                  focusNode: node,
+                  icon: Icons.replay_rounded,
+                  label: '从头播放',
+                  onPressed: () => play(selected, fromStart: true),
+                ),
+              (node) => CircleIconButton(
+                focusNode: node,
+                icon: favorite ? Icons.favorite_rounded : Icons.favorite_border_rounded,
+                tooltip: favorite ? '取消收藏' : '收藏',
+                onPressed: () => _toggleFavorite(item, !favorite),
+              ),
+              (node) => CircleIconButton(
+                focusNode: node,
+                icon: played ? Icons.check_circle_rounded : Icons.check_rounded,
+                tooltip: played ? '标记未看' : '标记已看',
+                onPressed: () => _togglePlayed(item, !played),
+              ),
+            ],
+          ),
+        ],
+      ),
+      below: [
+        const SizedBox(height: 48),
+        if (isSeries && seasons.length > 1)
+          Padding(
+            padding: const EdgeInsets.only(left: VSpace.safeH),
+            child: FocusButtonRow(
+              rowIndex: 1,
+              spacing: 12,
+              children: [
+                for (final s in seasons)
+                  (node) => SelectChip(
+                    node: node,
+                    label: s.name,
+                    selected: s.id == seasonId,
+                    onTap: () => setState(() => _seasonId = s.id),
+                  ),
+              ],
             ),
           ),
-        ),
+        if (episodes.isNotEmpty)
+          FocusRow(
+            rowIndex: 2,
+            leading: VSpace.safeH,
+            title: seasons.length <= 1 ? '剧集' : null,
+            itemCount: episodes.length,
+            itemExtent: LandscapeCard.width,
+            height: LandscapeCard.height,
+            itemBuilder: (context, i, node) =>
+                mediaLandscapeCard(context, episodes[i], node, onMenu: () => openMediaItem(context, episodes[i])),
+          ),
+        if (optionsAsync != null) ...[
+          const SizedBox(height: 24),
+          SourcesSection(
+            options: options,
+            loading: optionsAsync.isLoading,
+            selected: selected,
+            onSelect: (o) => setState(() => _sourceKey = sourceKeyOf(o)),
+            onPlay: play,
+            firstRow: 3,
+            caption: playTarget?.episodeLabel,
+          ),
+        ],
+        if (tmdb != null) ...[const SizedBox(height: 24), ...tmdbExtraRows(tmdb, firstRow: 3 + SourcesSection.rows)],
+        const EndOfPage(leading: VSpace.safeH),
       ],
     );
   }

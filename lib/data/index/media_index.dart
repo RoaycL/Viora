@@ -42,7 +42,7 @@ class MediaIndex {
       );
     ''');
     // v2：索引多了剧集的 DateLastMediaAdded（最近入库按新集排序）→ 下次同步时每台服务器全量重建一次
-    final version = _db.select('PRAGMA user_version').first.values.first as int;
+    final version = _db.select('PRAGMA user_version').first['user_version'] as int;
     if (version < 2) {
       _db.execute('UPDATE sync_state SET full_at = NULL');
       _db.execute('PRAGMA user_version = 2');

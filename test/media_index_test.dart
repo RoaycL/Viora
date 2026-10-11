@@ -1,4 +1,6 @@
 import 'package:flutter_test/flutter_test.dart';
+import 'package:viora/data/config/app_config.dart';
+import 'package:viora/data/aggregate/tmdb_link.dart';
 import 'package:viora/data/aggregate/sources.dart';
 import 'package:viora/data/index/media_index.dart';
 import 'package:viora/data/index/title_norm.dart';
@@ -139,5 +141,32 @@ void main() {
     expect(recent[6].primary.id, 'show');
     expect(recent.last.primary.id, '2');
     index.close();
+  });
+
+  test('聚合搜索比对：双方都有的 ID 优先，没有 ID 时按中文名 / 原名 + 年份 ±1', () {
+    final probe = TitleProbe(kind: MediaKind.movie, titles: ['沙丘', 'Dune'], year: 2021, tmdbId: '438631');
+    expect(probe.terms, ['沙丘', 'Dune']);
+    expect(probe.matches(movie('b', '1', 'Dune: Part One', tmdb: '438631')), isTrue);
+    expect(probe.matches(movie('b', '2', '沙丘', year: 1984, tmdb: '841')), isFalse);
+    expect(probe.matches(movie('b', '3', 'Dune', year: 2022)), isTrue);
+    expect(probe.matches(movie('b', '4', 'Dune', year: 1984)), isFalse);
+    expect(probe.matches(series('b', '5', '沙丘', year: 2021)), isFalse);
+  });
+
+  test('服务器默认参与聚合搜索，旧配置没有这个字段也一样', () {
+    const s = ServerConfig(id: 'a', type: ServerType.emby, name: 'a', lines: [], username: 'u');
+    expect(s.aggregate, isTrue);
+    final json = s.toJson()..remove('aggregate');
+    expect(ServerConfig.fromJson(json).aggregate, isTrue);
+    final off = s.copyWith(aggregate: false);
+    expect(ServerConfig.fromJson(off.toJson()).aggregate, isFalse);
+    final config = AppConfig(
+      servers: [
+        s,
+        off.copyWith(),
+        const ServerConfig(id: 'c', type: ServerType.jellyfin, name: 'c', lines: [], username: 'u', aggregate: false),
+      ],
+    );
+    expect(config.aggregateServerIds, {'a'});
   });
 }

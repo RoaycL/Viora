@@ -58,41 +58,92 @@ typedef TmdbSearchKey = ({bool isTv, int id, String title, String? originalTitle
 TmdbSearchKey searchKeyOf(TmdbTitle t) =>
     (isTv: t.isTv, id: t.id, title: t.title, originalTitle: t.originalTitle, year: t.year);
 
-/// 进入 TMDB 详情页时才做的聚合搜索：本地索引 + 到每台服务器按中文名 / 原名实时搜索，
-/// 按 TMDB ID 匹配（服务器条目没有 TMDB ID 时按标题 + 年份 ±1）。首页、推荐行不触发（docs/04-aggregation.md §7）。
-final tmdbLibrarySearchProvider = FutureProvider.autoDispose.family<List<MediaItem>, TmdbSearchKey>((ref, key) async {
-  final found = <String, MediaItem>{
-    for (final c in ref.read(libraryCopiesProvider((isTv: key.isTv, id: key.id)))) '${c.serverId}/${c.id}': c,
-  };
-  final kind = key.isTv ? MediaKind.series : MediaKind.movie;
-  final names = {key.title, ?key.originalTitle}.map(normalizeTitle).where((n) => n.isNotEmpty).toSet();
+/// 要在各服务器上找的作品：有 ID 时按 ID 比对（双方都有才比），否则按中文名 / 原名 + 年份 ±1
+class TitleProbe {
+  TitleProbe({
+    required this.kind,
+    required Iterable<String?> titles,
+    this.year,
+    String? tmdbId,
+    String? imdbId,
+    String? tvdbId,
+  }) : terms = {
+         for (final t in titles)
+           if (t != null && t.trim().isNotEmpty) t.trim(),
+       }.toList(),
+       names = {
+         for (final t in titles)
+           if (t != null && normalizeTitle(t).isNotEmpty) normalizeTitle(t),
+       },
+       ids = [_blank(tmdbId), _blank(imdbId), _blank(tvdbId)];
+
+  final MediaKind kind;
+  final int? year;
+
+  /// 到服务器上搜索用的关键词
+  final List<String> terms;
+  final Set<String> names;
+  final List<String?> ids;
+
+  static String? _blank(String? v) => v == null || v.trim().isEmpty ? null : v.trim();
+
   bool matches(MediaItem it) {
     if (it.kind != kind) return false;
-    final tmdb = it.tmdbId?.trim();
-    if (tmdb != null && tmdb.isNotEmpty) return tmdb == '${key.id}';
-    final titles = {it.name, ?it.originalTitle}.map(normalizeTitle);
-    if (!titles.any(names.contains)) return false;
-    return key.year == null || it.year == null || (key.year! - it.year!).abs() <= 1;
+    final theirs = [_blank(it.tmdbId), _blank(it.imdbId), _blank(it.tvdbId)];
+    for (var i = 0; i < ids.length; i++) {
+      if (ids[i] != null && theirs[i] != null) return ids[i] == theirs[i];
+    }
+    if (!{it.name, ?it.originalTitle}.map(normalizeTitle).any(names.contains)) return false;
+    return year == null || it.year == null || (year! - it.year!).abs() <= 1;
   }
+}
 
-  final terms = {key.title, ?key.originalTitle}.where((t) => t.trim().isNotEmpty);
+/// 到 [serverIds] 每台服务器上按关键词实时搜索（每台每个关键词 1 次请求、8 秒超时），返回匹配 [probe] 的条目
+Future<List<MediaItem>> searchServersFor(Ref ref, TitleProbe probe, Iterable<String> serverIds) async {
+  final found = <String, MediaItem>{};
+  final config = ref.read(configProvider);
   await Future.wait([
-    for (final s in ref.read(configProvider).servers)
-      if (s.loggedIn)
+    for (final id in serverIds)
+      if (config.server(id)?.loggedIn ?? false)
         () async {
-          final client = ref.read(serverClientProvider(s.id));
+          final client = ref.read(serverClientProvider(id));
           if (client == null) return;
-          for (final term in terms) {
+          for (final term in probe.terms) {
             try {
               final page = await client
-                  .items(searchTerm: term, types: key.isTv ? 'Series' : 'Movie', limit: 20)
+                  .items(searchTerm: term, types: probe.kind == MediaKind.series ? 'Series' : 'Movie', limit: 20)
                   .timeout(const Duration(seconds: 8));
               for (final it in page.items) {
-                if (matches(it)) found['${it.serverId}/${it.id}'] = it;
+                if (probe.matches(it) && itemVisible(config, it)) found['${it.serverId}/${it.id}'] = it;
               }
             } catch (_) {}
           }
         }(),
   ]);
+  return found.values.toList();
+}
+
+/// 参与聚合搜索的服务器变化时刷新依赖它的 provider
+String watchAggregateServers(Ref ref) =>
+    ref.watch(configProvider.select((c) => (c.aggregateServerIds.toList()..sort()).join(',')));
+
+/// 进入 TMDB 详情页时才做的聚合搜索：本地索引 + 到每台参与聚合搜索的服务器按中文名 / 原名实时搜索，
+/// 按 TMDB ID 匹配（服务器条目没有 TMDB ID 时按标题 + 年份 ±1）。首页、推荐行不触发（docs/04-aggregation.md §7）。
+final tmdbLibrarySearchProvider = FutureProvider.autoDispose.family<List<MediaItem>, TmdbSearchKey>((ref, key) async {
+  watchAggregateServers(ref);
+  final servers = ref.read(configProvider).aggregateServerIds;
+  final found = <String, MediaItem>{
+    for (final c in ref.read(libraryCopiesProvider((isTv: key.isTv, id: key.id))))
+      if (servers.contains(c.serverId)) '${c.serverId}/${c.id}': c,
+  };
+  final probe = TitleProbe(
+    kind: key.isTv ? MediaKind.series : MediaKind.movie,
+    titles: [key.title, key.originalTitle],
+    year: key.year,
+    tmdbId: '${key.id}',
+  );
+  for (final it in await searchServersFor(ref, probe, servers)) {
+    found['${it.serverId}/${it.id}'] = it;
+  }
   return found.values.toList();
 });

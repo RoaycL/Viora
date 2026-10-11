@@ -85,13 +85,34 @@ final sourceOptionsProvider = FutureProvider.family<List<SourceOption>, SourcesK
   final target = await home.item(key.itemId);
   final index = await ref.read(mediaIndexProvider.future);
 
-  // 1. 找到每台服务器上对应的条目
+  // 1. 找到每台服务器上对应的条目：本地索引 + 到参与聚合搜索的服务器上实时搜索（索引里没对上的也能找到）
+  watchAggregateServers(ref);
+  final others = ref.read(configProvider).aggregateServerIds..remove(target.serverId);
+  Future<List<MediaItem>> copiesOf(MediaItem title) async {
+    final probe = TitleProbe(
+      kind: title.kind,
+      titles: [title.name, title.originalTitle],
+      year: title.year,
+      tmdbId: title.tmdbId,
+      imdbId: title.imdbId,
+      tvdbId: title.tvdbId,
+    );
+    final found = <String, MediaItem>{
+      for (final c in index?.matches(title) ?? const <MediaItem>[])
+        if (others.contains(c.serverId)) '${c.serverId}/${c.id}': c,
+    };
+    for (final it in await searchServersFor(ref, probe, others)) {
+      found.putIfAbsent('${it.serverId}/${it.id}', () => it);
+    }
+    return found.values.toList();
+  }
+
   final perServer = <MediaItem>[target];
   MediaItem titleItem = target;
   if (target.kind == MediaKind.episode && target.seriesId != null) {
     final series = await home.item(target.seriesId!);
     titleItem = series;
-    final copies = (index?.matches(series) ?? const <MediaItem>[]).where((c) => c.serverId != target.serverId);
+    final copies = await copiesOf(series);
     final found = await Future.wait(
       copies.map((c) async {
         final client = ref.read(serverClientProvider(c.serverId));
@@ -108,7 +129,7 @@ final sourceOptionsProvider = FutureProvider.family<List<SourceOption>, SourcesK
     );
     perServer.addAll(found.whereType<MediaItem>());
   } else if (target.kind == MediaKind.movie) {
-    perServer.addAll((index?.matches(target) ?? const <MediaItem>[]).where((c) => c.serverId != target.serverId));
+    perServer.addAll(await copiesOf(target));
   }
 
   // 每台服务器只取一个条目（同一台服务器上重复入库的也保留，作为不同版本）

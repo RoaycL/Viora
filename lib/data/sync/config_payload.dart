@@ -49,6 +49,7 @@ Map<String, dynamic> buildSyncPayload(
           'password': s.password,
           'userAgent': s.userAgent,
           'adult': s.adult,
+          'aggregate': s.aggregate,
         },
     ],
   if (sections.contains(SyncSection.network)) ...{
@@ -145,6 +146,7 @@ SyncMergeResult mergeSyncPayload(AppConfig c, Map<String, dynamic> p) {
           userAgent: ua?.isEmpty ?? true ? null : ua,
           clearUserAgent: ua?.isEmpty ?? true,
           adult: raw['adult'] as bool?,
+          aggregate: raw['aggregate'] as bool?,
           clearActiveLine: true,
           clearSession: credentials,
         );
@@ -160,6 +162,7 @@ SyncMergeResult mergeSyncPayload(AppConfig c, Map<String, dynamic> p) {
           password: password,
           userAgent: ua?.isEmpty ?? true ? null : ua,
           adult: raw['adult'] as bool? ?? false,
+          aggregate: raw['aggregate'] as bool? ?? true,
         );
         list.add(s);
         changed.add(s.id);

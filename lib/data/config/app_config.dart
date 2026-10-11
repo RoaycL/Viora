@@ -63,6 +63,7 @@ class ServerConfig {
     this.activeLineId,
     this.userAgent,
     this.adult = false,
+    this.aggregate = true,
     this.note,
     this.lastAccessAt,
     this.movieCount,
@@ -106,6 +107,9 @@ class ServerConfig {
   /// 覆盖全局播放 UA
   final String? userAgent;
   final bool adult;
+
+  /// 参与聚合搜索（详情页的播放资源、TMDB 详情页找资源）；关掉后只在它自己的条目里使用它
+  final bool aggregate;
   final String? note;
   final DateTime? lastAccessAt;
   final int? movieCount;
@@ -125,6 +129,7 @@ class ServerConfig {
     String? userAgent,
     bool clearUserAgent = false,
     bool? adult,
+    bool? aggregate,
     String? note,
     DateTime? lastAccessAt,
     int? movieCount,
@@ -142,6 +147,7 @@ class ServerConfig {
     activeLineId: clearActiveLine ? null : (activeLineId ?? this.activeLineId),
     userAgent: clearUserAgent ? null : (userAgent ?? this.userAgent),
     adult: adult ?? this.adult,
+    aggregate: aggregate ?? this.aggregate,
     note: note ?? this.note,
     lastAccessAt: lastAccessAt ?? this.lastAccessAt,
     movieCount: movieCount ?? this.movieCount,
@@ -160,6 +166,7 @@ class ServerConfig {
     'activeLineId': activeLineId,
     'userAgent': userAgent,
     'adult': adult,
+    'aggregate': aggregate,
     'note': note,
     'lastAccessAt': lastAccessAt?.toIso8601String(),
     'movieCount': movieCount,
@@ -178,6 +185,7 @@ class ServerConfig {
     activeLineId: j['activeLineId'] as String?,
     userAgent: j['userAgent'] as String?,
     adult: j['adult'] as bool? ?? false,
+    aggregate: j['aggregate'] as bool? ?? true,
     note: j['note'] as String?,
     lastAccessAt: DateTime.tryParse(j['lastAccessAt'] as String? ?? ''),
     movieCount: j['movieCount'] as int?,
@@ -601,6 +609,12 @@ class AppConfig {
   final ParentalConfig parental;
 
   /// 所有服务器的连接键（只在登录、线路、代理、UA 等变化时改变）
+  /// 参与聚合搜索的服务器（已登录、未被儿童模式隐藏）
+  Set<String> get aggregateServerIds => {
+    for (final s in servers)
+      if (s.aggregate) s.id,
+  };
+
   String get serversKey => [for (final s in servers) '${s.id}#${s.connectionKey}'].join('\u0002');
 
   /// 某台服务器客户端依赖的全部配置

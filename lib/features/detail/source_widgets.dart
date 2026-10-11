@@ -107,7 +107,7 @@ class _SourcesSectionState extends State<SourcesSection> {
         children: [
           header,
           Padding(
-            padding: const EdgeInsets.symmetric(horizontal: VSpace.safeH),
+            padding: const EdgeInsets.fromLTRB(VSpace.safeH, 0, VSpace.safeH, 32),
             child: Text(widget.emptyText!, style: VText.label.copyWith(color: VColors.textTertiary)),
           ),
         ],

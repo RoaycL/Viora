@@ -17,6 +17,7 @@ import '../../ui/widgets/buttons.dart';
 import '../../ui/widgets/tmdb_image.dart';
 import '../../ui/focus/focusable.dart';
 import '../browse/media_cards.dart';
+import '../detail/detail_layout.dart';
 import '../detail/source_widgets.dart';
 import '../library/library_page.dart' show ServerTypeLogo;
 import 'tmdb_cards.dart';
@@ -112,181 +113,138 @@ class _TmdbDetailState extends ConsumerState<_TmdbDetail> {
     ].join('  •  ');
     final title = Text(t.title, maxLines: 2, overflow: TextOverflow.ellipsis, style: VText.titleFor(t.title));
 
-    return Stack(
-      children: [
-        Positioned.fill(
-          child: TmdbImage(
-            path: t.backdropPath,
-            kind: TmdbImageKind.backdrop,
-            width: 1920,
-            fallbackSeed: t.key,
-            alignment: Alignment.topRight,
-          ),
-        ),
-        const Positioned.fill(
-          child: DecoratedBox(
-            decoration: BoxDecoration(
-              gradient: LinearGradient(
-                stops: [0, 0.32, 0.62, 1],
-                colors: [Color(0xCC07080B), Color(0xA607080B), Color(0x3307080B), Color(0x0007080B)],
+    return DetailLayout(
+      seed: t.key,
+      backdrop: TmdbImage(
+        path: t.backdropPath,
+        kind: TmdbImageKind.backdrop,
+        width: 1920,
+        fallbackSeed: t.key,
+        alignment: Alignment.topRight,
+        transparentFallback: true,
+      ),
+      info: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          if (t.logoPath != null)
+            SizedBox(
+              height: 160,
+              width: 640,
+              child: TmdbImage(
+                path: t.logoPath,
+                kind: TmdbImageKind.logo,
+                width: 640,
+                fit: BoxFit.contain,
+                alignment: Alignment.centerLeft,
+                transparentFallback: true,
               ),
-            ),
-          ),
-        ),
-        const Positioned.fill(
-          child: DecoratedBox(
-            decoration: BoxDecoration(
-              gradient: LinearGradient(
-                begin: Alignment.topCenter,
-                end: Alignment.bottomCenter,
-                stops: [0.45, 0.85],
-                colors: [Color(0x0007080B), VColors.background],
-              ),
-            ),
-          ),
-        ),
-        Positioned.fill(
-          child: RowFocusScope(
-            child: SingleChildScrollView(
-              padding: const EdgeInsets.only(top: 130, bottom: 24),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
+            )
+          else
+            title,
+          if (t.originalTitle != null && t.originalTitle != t.title) ...[
+            const SizedBox(height: 10),
+            Text(t.originalTitle!, style: VText.label.copyWith(color: VColors.textSecondary)),
+          ],
+          const SizedBox(height: 22),
+          Text(meta, style: const TextStyle(fontSize: 22, color: Color(0xD1FFFFFF))),
+          if (t.rating != null)
+            Padding(
+              padding: const EdgeInsets.only(top: 14),
+              child: Row(
                 children: [
-                  Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: VSpace.safeH),
-                    child: SizedBox(
-                      width: 1000,
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          if (t.logoPath != null)
-                            SizedBox(
-                              height: 160,
-                              width: 640,
-                              child: TmdbImage(
-                                path: t.logoPath,
-                                kind: TmdbImageKind.logo,
-                                width: 640,
-                                fit: BoxFit.contain,
-                                alignment: Alignment.centerLeft,
-                                transparentFallback: true,
-                              ),
-                            )
-                          else
-                            title,
-                          if (t.originalTitle != null && t.originalTitle != t.title) ...[
-                            const SizedBox(height: 10),
-                            Text(t.originalTitle!, style: VText.label.copyWith(color: VColors.textSecondary)),
-                          ],
-                          const SizedBox(height: 22),
-                          Text(meta, style: const TextStyle(fontSize: 22, color: Color(0xD1FFFFFF))),
-                          if (t.rating != null)
-                            Padding(
-                              padding: const EdgeInsets.only(top: 14),
-                              child: Row(
-                                children: [
-                                  const Icon(Icons.star_rounded, color: VColors.rating, size: 26),
-                                  const SizedBox(width: 6),
-                                  Text(
-                                    t.rating!.toStringAsFixed(1),
-                                    style: const TextStyle(
-                                      fontSize: 24,
-                                      fontWeight: FontWeight.w600,
-                                      color: VColors.rating,
-                                    ),
-                                  ),
-                                  const SizedBox(width: 8),
-                                  Text('TMDB', style: VText.small.copyWith(color: VColors.textTertiary)),
-                                ],
-                              ),
-                            ),
-                          if (t.tagline != null) ...[
-                            const SizedBox(height: 18),
-                            Text(t.tagline!, style: VText.label.copyWith(fontStyle: FontStyle.italic)),
-                          ],
-                          if (t.overview.isNotEmpty) ...[
-                            const SizedBox(height: 18),
-                            Text(
-                              t.overview,
-                              maxLines: 4,
-                              overflow: TextOverflow.ellipsis,
-                              style: VText.body.copyWith(color: const Color(0xCCFFFFFF), height: 1.65),
-                            ),
-                          ],
-                        ],
-                      ),
-                    ),
+                  const Icon(Icons.star_rounded, color: VColors.rating, size: 26),
+                  const SizedBox(width: 6),
+                  Text(
+                    t.rating!.toStringAsFixed(1),
+                    style: const TextStyle(fontSize: 24, fontWeight: FontWeight.w600, color: VColors.rating),
                   ),
-                  const SizedBox(height: 36),
-                  const RowAutoFocus(),
-                  Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: VSpace.safeH),
-                    child: FocusButtonRow(
-                      rowIndex: 0,
-                      scrollToTop: true,
-                      children: [
-                        // 查找中、没找到时按钮也在：遥控器焦点停在这里，页面不会滚到演职员行把标题顶出屏幕
-                        (node) => PillButton(
-                          focusNode: node,
-                          large: true,
-                          busy: loading && !found,
-                          icon: found ? Icons.play_arrow_rounded : Icons.block_rounded,
-                          label: found
-                              ? (t.isTv
-                                    ? '去选集观看'
-                                    : resumeAt > Duration.zero
-                                    ? '继续 · ${formatClock(resumeAt)}'
-                                    : '播放')
-                              : loading
-                              ? '正在加载'
-                              : '暂无可播放资源',
-                          onPressed: !found
-                              ? null
-                              : t.isTv
-                              ? () => context.push('/item/${copies.first.serverId}/${copies.first.id}')
-                              : () => _play(selected!),
-                        ),
-                        if (!t.isTv && selected != null && resumeAt > Duration.zero)
-                          (node) => PillButton(
-                            focusNode: node,
-                            icon: Icons.replay_rounded,
-                            label: '从头播放',
-                            onPressed: () {
-                              rememberSource(selected.item, selected.serverId);
-                              context.push(selected.playRoute());
-                            },
-                          ),
-                        if (!t.isTv && selected != null)
-                          (node) => CircleIconButton(
-                            focusNode: node,
-                            icon: Icons.video_library_outlined,
-                            tooltip: '媒体库详情',
-                            onPressed: () => context.push('/item/${selected.serverId}/${selected.item.id}'),
-                          ),
-                      ],
-                    ),
-                  ),
-                  const SizedBox(height: 48),
-                  if (t.isTv)
-                    _SeriesCopies(copies: copies, loading: loading, emptyText: emptyText)
-                  else
-                    SourcesSection(
-                      options: options,
-                      loading: loading,
-                      selected: selected,
-                      onSelect: (o) => setState(() => _sourceKey = sourceKeyOf(o)),
-                      onPlay: _play,
-                      firstRow: 1,
-                      emptyText: emptyText,
-                    ),
-                  const SizedBox(height: 24),
-                  ...tmdbExtraRows(t, firstRow: 1 + SourcesSection.rows),
-                  const EndOfPage(leading: VSpace.safeH),
+                  const SizedBox(width: 8),
+                  Text('TMDB', style: VText.small.copyWith(color: VColors.textTertiary)),
                 ],
               ),
             ),
+          if (t.tagline != null) ...[
+            const SizedBox(height: 18),
+            Text(t.tagline!, style: VText.label.copyWith(fontStyle: FontStyle.italic)),
+          ],
+          if (t.overview.isNotEmpty) ...[
+            const SizedBox(height: 18),
+            Text(
+              t.overview,
+              maxLines: 4,
+              overflow: TextOverflow.ellipsis,
+              style: VText.body.copyWith(color: const Color(0xCCFFFFFF), height: 1.65),
+            ),
+          ],
+        ],
+      ),
+      buttons: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const RowAutoFocus(),
+          FocusButtonRow(
+            rowIndex: 0,
+            scrollToTop: true,
+            children: [
+              // 查找中、没找到时按钮也在：遥控器焦点停在这里，页面不会滚到演职员行把标题顶出屏幕
+              (node) => PillButton(
+                focusNode: node,
+                large: true,
+                busy: loading && !found,
+                icon: found ? Icons.play_arrow_rounded : Icons.block_rounded,
+                label: found
+                    ? (t.isTv
+                          ? '去选集观看'
+                          : resumeAt > Duration.zero
+                          ? '继续 · ${formatClock(resumeAt)}'
+                          : '播放')
+                    : loading
+                    ? '正在加载'
+                    : '暂无可播放资源',
+                onPressed: !found
+                    ? null
+                    : t.isTv
+                    ? () => context.push('/item/${copies.first.serverId}/${copies.first.id}')
+                    : () => _play(selected!),
+              ),
+              if (!t.isTv && selected != null && resumeAt > Duration.zero)
+                (node) => PillButton(
+                  focusNode: node,
+                  icon: Icons.replay_rounded,
+                  label: '从头播放',
+                  onPressed: () {
+                    rememberSource(selected.item, selected.serverId);
+                    context.push(selected.playRoute());
+                  },
+                ),
+              if (!t.isTv && selected != null)
+                (node) => CircleIconButton(
+                  focusNode: node,
+                  icon: Icons.video_library_outlined,
+                  tooltip: '媒体库详情',
+                  onPressed: () => context.push('/item/${selected.serverId}/${selected.item.id}'),
+                ),
+            ],
           ),
-        ),
+        ],
+      ),
+      below: [
+        const SizedBox(height: 48),
+        if (t.isTv)
+          _SeriesCopies(copies: copies, loading: loading, emptyText: emptyText)
+        else
+          SourcesSection(
+            options: options,
+            loading: loading,
+            selected: selected,
+            onSelect: (o) => setState(() => _sourceKey = sourceKeyOf(o)),
+            onPlay: _play,
+            firstRow: 1,
+            emptyText: emptyText,
+          ),
+        const SizedBox(height: 24),
+        ...tmdbExtraRows(t, firstRow: 1 + SourcesSection.rows),
+        const EndOfPage(leading: VSpace.safeH),
       ],
     );
   }
@@ -316,7 +274,7 @@ class _SeriesCopies extends ConsumerWidget {
             const SourceSkeletonRow()
           else
             Padding(
-              padding: const EdgeInsets.symmetric(horizontal: VSpace.safeH),
+              padding: const EdgeInsets.fromLTRB(VSpace.safeH, 0, VSpace.safeH, 32),
               child: Text(emptyText, style: VText.label.copyWith(color: VColors.textTertiary)),
             ),
         ],
