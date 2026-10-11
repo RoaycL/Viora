@@ -76,6 +76,13 @@ class WebDavSync {
           if (prev != null && _identity(prev.webdav) != _identity(next.webdav)) {
             await resetState();
             _scheduleAuto(delay: const Duration(seconds: 2), checkRemote: true);
+          } else if (prev != null && !prev.webdav.active && next.webdav.active) {
+            // 重新打开：看看关闭期间两边各改了什么（按记录的状态合并，不当作第一次同步）
+            _autoPausedUntil = null;
+            _scheduleAuto(delay: const Duration(seconds: 2), checkRemote: true);
+          } else if (prev != null && prev.webdav.active && !next.webdav.active) {
+            // 关闭：取消还没执行的自动同步
+            _debounce?.cancel();
           } else {
             _scheduleAuto();
           }
@@ -99,7 +106,7 @@ class WebDavSync {
   /// [checkRemote]：启动时即使本机没改也要看看云端有没有更新
   void _scheduleAuto({Duration delay = const Duration(seconds: 8), bool checkRemote = false}) {
     final c = _container.read(configProvider).webdav;
-    if (!c.configured || !c.autoSync) return;
+    if (!c.active || !c.autoSync) return;
     final pendingCheck = _pendingCheck || checkRemote;
     _pendingCheck = pendingCheck;
     _debounce?.cancel();
@@ -205,6 +212,7 @@ class WebDavSync {
   Future<String> _sync(WebDavSyncMode mode) async {
     final config = _container.read(configProvider).webdav;
     if (!config.configured) throw const WebDavException('还没有填写 WebDAV 地址');
+    if (!config.enabled) throw const WebDavException('WebDAV 同步已关闭');
     final client = WebDavClient(config);
     final local = await _payload();
     final localHash = hashOf(local);

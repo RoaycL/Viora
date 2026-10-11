@@ -602,6 +602,7 @@ class WebDavConfig {
     this.path = defaultPath,
     this.passphrase = '',
     this.autoSync = true,
+    this.enabled = true,
   });
 
   static const defaultPath = 'Viora/viora-config.json';
@@ -622,7 +623,13 @@ class WebDavConfig {
   /// 启动时和配置变化后自动同步
   final bool autoSync;
 
+  /// 总开关：关闭后不再同步（自动和手动都不同步），地址、账号等保留，再打开就能继续用
+  final bool enabled;
+
   bool get configured => url.trim().isNotEmpty;
+
+  /// 填了地址并且开着
+  bool get active => enabled && configured;
 
   WebDavConfig copyWith({
     String? url,
@@ -631,6 +638,7 @@ class WebDavConfig {
     String? path,
     String? passphrase,
     bool? autoSync,
+    bool? enabled,
   }) => WebDavConfig(
     url: url ?? this.url,
     username: username ?? this.username,
@@ -638,6 +646,7 @@ class WebDavConfig {
     path: path ?? this.path,
     passphrase: passphrase ?? this.passphrase,
     autoSync: autoSync ?? this.autoSync,
+    enabled: enabled ?? this.enabled,
   );
 
   Map<String, dynamic> toJson() => {
@@ -647,6 +656,7 @@ class WebDavConfig {
     'path': path,
     'passphrase': passphrase,
     'autoSync': autoSync,
+    'enabled': enabled,
   };
 
   factory WebDavConfig.fromJson(Map<String, dynamic> j) => WebDavConfig(
@@ -656,6 +666,7 @@ class WebDavConfig {
     path: (j['path'] as String?)?.trim().isNotEmpty == true ? (j['path'] as String).trim() : defaultPath,
     passphrase: j['passphrase'] as String? ?? '',
     autoSync: j['autoSync'] as bool? ?? true,
+    enabled: j['enabled'] as bool? ?? true,
   );
 }
 
