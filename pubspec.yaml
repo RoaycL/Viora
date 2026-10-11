@@ -39,6 +39,7 @@ dependencies:
 
   flutter_riverpod: ^3.4.3
   flutter_secure_storage: ^11.2.0
+  flutter_svg: ^2.3.0
   go_router: ^18.0.2
   lpinyin: ^2.0.3
   media_kit: ^1.2.6
@@ -78,6 +79,7 @@ flutter:
     - assets/images/app_icon.png
     - assets/images/tmdb_logo.png
     - assets/images/emby_logo.png
+    - assets/brands/
     - assets/images/jellyfin_logo.png
 
   # An image asset can refer to one or more resolution-specific "variants", see

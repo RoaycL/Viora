@@ -77,6 +77,13 @@ class ExternalRating {
       ? '${value.round()}%'
       : '${scale == 10 ? value.toStringAsFixed(1) : value.round()}/${scale.round()}';
 
+  /// 图标旁边显示的短分数：烂番茄 87%，满分 10 分的 8.0，满分 100 的 74
+  String get short => source == RatingSource.rottenTomatoes
+      ? '${value.round()}%'
+      : scale == 10
+      ? value.toStringAsFixed(1)
+      : '${value.round()}';
+
   Map<String, Object?> toJson() => {
     'source': source.name,
     'value': value,

@@ -5,6 +5,7 @@ import '../../app/theme.dart';
 import '../../domain/models/external_rating.dart';
 import '../../domain/models/ratings_settings.dart';
 import '../../ui/panels/form_dialog.dart';
+import '../../ui/widgets/brand_badges.dart';
 import 'ratings_service.dart';
 
 /// Shared by both detail pages. Provider requests have independent states.
@@ -35,27 +36,26 @@ class ExternalRatings extends ConsumerWidget {
         : kind == RatingMediaKind.episode
         ? '单集'
         : null;
-    void badge(String label, String value, {bool stale = false, int? votes}) {
+    // 官方图标 + 分数；票数、是否旧缓存放在悬停提示里，旧缓存的评分半透明
+    void badge(RatingBrand brand, String value, {bool stale = false, int? votes, String? label}) {
+      final tip = [label ?? brand.label, value, if (votes != null) '$votes 票', if (stale) '旧缓存'].join(' · ');
       badges.add(
-        Container(
-          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
-          decoration: BoxDecoration(color: const Color(0x14FFFFFF), borderRadius: BorderRadius.circular(8)),
-          child: Text(
-            '$label $value${votes == null ? '' : ' · $votes 票'}${stale ? ' · 旧缓存' : ''}',
-            style: VText.small.copyWith(color: VColors.rating),
-          ),
+        Opacity(
+          opacity: stale ? 0.6 : 1,
+          child: RatingBadge(brand: brand, value: value, tooltip: tip),
         ),
       );
     }
 
     if (serverRating != null && serverRating!.isFinite && serverRating! > 0) {
-      badge('媒体库', '${serverRating!.toStringAsFixed(1)}/10');
+      badge(RatingBrand.library, serverRating!.toStringAsFixed(1));
     }
     if (criticRating != null && criticRating!.isFinite && criticRating! > 0) {
-      badge('媒体库影评人', '${criticRating!.round()}%');
+      // 媒体库的影评人评分来自烂番茄
+      badge(RatingBrand.rottenTomatoes, '${criticRating!.round()}%', label: '烂番茄（媒体库）');
     }
     if (tmdbRating != null && tmdbRating!.isFinite && tmdbRating! > 0) {
-      badge('TMDB', '${tmdbRating!.toStringAsFixed(1)}/10');
+      badge(RatingBrand.tmdb, tmdbRating!.toStringAsFixed(1));
     }
     var loading = false;
     String? certification;
@@ -76,7 +76,7 @@ class ExternalRatings extends ConsumerWidget {
         }
         if (result == null) continue;
         for (final r in result.data.ratings) {
-          badge(r.source.label, r.formatted, stale: result.stale, votes: r.votes);
+          badge(RatingBrand.of(r.source), r.short, stale: result.stale, votes: r.votes);
         }
         if (serverCertification == null && result.data.certification != null) {
           certification = 'OMDb 年龄分级：${result.data.certification}${result.stale ? '（旧缓存）' : ''}';
@@ -100,7 +100,7 @@ class ExternalRatings extends ConsumerWidget {
               padding: const EdgeInsets.only(bottom: 6),
               child: Text('$scope评分', style: VText.small.copyWith(color: VColors.textTertiary)),
             ),
-          if (badges.isNotEmpty) Wrap(spacing: 10, runSpacing: 8, children: badges),
+          if (badges.isNotEmpty) Wrap(spacing: 22, runSpacing: 10, children: badges),
           if (certification != null) Text(certification, style: VText.small.copyWith(color: VColors.textSecondary)),
           if (loading) Text('外部评分加载中…', style: VText.small.copyWith(color: VColors.textTertiary)),
           for (final message in status) Text(message, style: VText.small.copyWith(color: VColors.textTertiary)),

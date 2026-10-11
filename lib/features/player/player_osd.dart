@@ -13,6 +13,7 @@ import '../../data/config/config_store.dart';
 import '../../data/media/media_models.dart';
 import '../../domain/models/segment.dart';
 import '../../player/engine.dart';
+import '../../ui/widgets/brand_badges.dart';
 import '../../ui/focus/focus_auto_scroll.dart';
 import '../../ui/focus/focusable.dart';
 import '../../ui/rows/cards.dart';
@@ -741,7 +742,7 @@ class _SourceCard extends StatelessWidget {
             Row(
               children: [
                 Expanded(
-                  child: Text(s.rangeLabel, style: const TextStyle(fontSize: 28, fontWeight: FontWeight.w700)),
+                  child: Align(alignment: Alignment.centerLeft, child: VideoFormatBadges.of(s, height: 30)),
                 ),
                 Icon(
                   current ? Icons.check_circle_rounded : Icons.radio_button_unchecked_rounded,
