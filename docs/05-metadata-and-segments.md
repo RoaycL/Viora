@@ -10,7 +10,7 @@
 | 演职员 | 媒体库 People | TMDB `credits` / `aggregate_credits` |
 | 剧照 | 媒体库 Backdrops | TMDB `images.backdrops` |
 | 相似作品 | — | TMDB `recommendations`，回落 `similar` |
-| 评分 | 媒体库 CommunityRating | TMDB `vote_average`；外部评分（豆瓣/IMDb/烂番茄）后续版本 |
+| 评分 | 媒体库 CommunityRating | TMDB `vote_average`；OMDb（IMDb/烂番茄/Metacritic）、Trakt 独立展示；豆瓣待确认数据源 |
 | 分级 | 媒体库 OfficialRating | TMDB `release_dates` / `content_ratings` |
 | 家长指南 | — | 后续版本（TMDB 无此数据，需另找数据源） |
 | 季/集标题与简介 | 媒体库 | TMDB `/tv/{id}/season/{n}` |
@@ -18,6 +18,8 @@
 "primary"条目选择：多台服务器都有时，选元数据最完整（有简介 + 有 Logo + 有中文标题）的那一份。
 
 媒体库没有 tmdbId 的条目不调用 TMDB，避免错配。
+
+豆瓣、IMDb、Trakt 评分及内容家长指南的已实现协议、设置与 ID 匹配见 [13 · 外部评分与家长指南接入方案](13-external-ratings-and-parents-guide.md)。当前年龄分级与儿童模式不等同于内容家长指南。
 
 ## 2. TMDB 接入
 

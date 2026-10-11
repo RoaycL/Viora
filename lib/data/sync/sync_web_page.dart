@@ -68,6 +68,14 @@ String syncWebPage({required String deviceName}) {
   </section>
 
   <section>
+    <h2>外部评分</h2>
+    <label>OMDb API Key（也可粘贴示例链接）</label>
+    <input id="omdb" type="password" autocapitalize="off" autocomplete="off">
+    <label>Trakt Client ID</label>
+    <input id="trakt" autocapitalize="off" autocomplete="off">
+  </section>
+
+  <section>
     <h2>弹幕服务器</h2>
     <label>danmu_api 地址，一行一个（最多 3 个）</label>
     <textarea id="danmu" placeholder="https://danmu.example.com/87654321"></textarea>
@@ -141,6 +149,10 @@ String syncWebPage({required String deviceName}) {
     if (val('proxy')) p.proxy = { baseUrl: val('proxy') };
     if (val('ua')) p.playback = { userAgent: val('ua') };
     if (val('tmdb')) p.tmdb = { apiKey: val('tmdb') };
+    const ratingKeys = {};
+    if (val('omdb')) ratingKeys.omdb = val('omdb');
+    if (val('trakt')) ratingKeys.trakt = val('trakt');
+    if (Object.keys(ratingKeys).length) p.ratings = { keys: ratingKeys };
     const danmu = val('danmu').split(/\\n+/).map((s) => s.trim()).filter(Boolean).slice(0, 3);
     if (danmu.length) p.danmaku = { servers: danmu };
     const keys = {};

@@ -34,4 +34,4 @@
 | 5 | ~~默认主题~~ 已确认：深色 | — |
 | 6 | 首页推荐默认是否隐藏"无资源"的 TMDB 条目 | 06 §4 |
 | 7 | Android TV 最低版本（建议 Android 7.0 / API 24） | 兼容性与 ExoPlayer 能力 |
-| 8 | 外部评分（豆瓣 / IMDb / 烂番茄）与家长指南的数据源 | 详情页后续版本 |
+| 8 | OMDb（IMDb / 烂番茄 / Metacritic）与 Trakt 已接入；豆瓣和详细家长指南待确认数据源（见 [13-external-ratings-and-parents-guide.md](13-external-ratings-and-parents-guide.md)） | 详情页评分已实现，指南待接入 |
