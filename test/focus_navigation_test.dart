@@ -141,7 +141,9 @@ void main() {
     expect(find.text('连接并登录'), findsOneWidget);
     expect(focused, 'VTextField');
 
-    // 输入框里按 ↓ 离开输入框
+    // 输入框里按 ↓ 离开输入框：先到「使用 HTTPS」开关，再到用户名
+    await press(tester, LogicalKeyboardKey.arrowDown);
+    expect(focused, 'VFocusable');
     await press(tester, LogicalKeyboardKey.arrowDown);
     expect(focused, 'VTextField');
 

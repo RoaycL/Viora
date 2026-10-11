@@ -94,6 +94,8 @@ class SyncMergeResult {
   bool get isEmpty => summary.isEmpty;
 }
 
+String _withScheme(String url) => url.contains('://') ? url : 'http://$url';
+
 String _norm(String url) => url.trim().toLowerCase().replaceAll(RegExp(r'/+$'), '');
 
 /// 把收到的配置合并进本机配置：服务器按「类型 + 第一条地址 + 用户名」对上的更新，其余新增；
@@ -115,7 +117,8 @@ SyncMergeResult mergeSyncPayload(AppConfig c, Map<String, dynamic> p) {
             ServerLine(
               id: newId(),
               name: (l['name'] as String?)?.trim().isNotEmpty == true ? l['name'] as String : '线路 ${i + 1}',
-              url: (l['url'] as String).trim(),
+              // 没写协议时按 http（和添加服务器页「使用 HTTPS」关闭时一致）
+              url: _withScheme((l['url'] as String).trim()),
               proxied: l['proxied'] as bool? ?? false,
             ),
       ];

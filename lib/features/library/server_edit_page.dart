@@ -37,6 +37,9 @@ class _ServerEditPageState extends ConsumerState<ServerEditPage> {
   final _ua = TextEditingController();
   ServerType _type = ServerType.emby;
   bool _proxied = false;
+
+  /// 使用 HTTPS：打开时所有线路用 https://，关闭用 http://（地址里写了协议时开关跟着变）
+  bool _https = false;
   bool _adult = false;
   bool _busy = false;
   String? _error;
@@ -49,6 +52,9 @@ class _ServerEditPageState extends ConsumerState<ServerEditPage> {
     var lan = false;
     _lines.addListener(() {
       if (_hasLanLine != lan && mounted) setState(() => lan = _hasLanLine);
+      // 输入或粘贴了带协议的地址：开关跟着地址走
+      final scheme = RegExp(r'(?:^|[|\s])(https?)://', caseSensitive: false).firstMatch(_lines.text)?[1]?.toLowerCase();
+      if (scheme != null && (scheme == 'https') != _https && mounted) setState(() => _https = scheme == 'https');
     });
     final id = widget.serverId;
     _existing = id == null ? null : ref.read(configProvider).server(id);
@@ -56,7 +62,9 @@ class _ServerEditPageState extends ConsumerState<ServerEditPage> {
     if (s != null) {
       _type = s.type;
       _name.text = s.name;
-      _lines.text = s.lines.map((l) => '${l.name} | ${l.url}').join('\n');
+      // 地址不带协议显示，协议由「使用 HTTPS」开关决定
+      _https = s.lines.isNotEmpty && s.lines.first.url.trim().toLowerCase().startsWith('https://');
+      _lines.text = s.lines.map((l) => '${l.name} | ${_stripScheme(l.url)}').join('\n');
       _user.text = s.username;
       _pass.text = s.password;
       _ua.text = s.userAgent ?? '';
@@ -81,7 +89,8 @@ class _ServerEditPageState extends ConsumerState<ServerEditPage> {
       final parts = raw[i].split('|');
       var name = parts.length > 1 ? parts.first.trim() : (i == 0 ? '主线路' : '线路 ${i + 1}');
       var url = (parts.length > 1 ? parts.sublist(1).join('|') : parts.first).trim();
-      if (!url.contains('://')) url = 'http://$url';
+      // 协议统一由开关决定
+      url = '${_https ? 'https' : 'http'}://${_stripScheme(url)}';
       url = url.replaceAll(RegExp(r'/+$'), '');
       if (Uri.tryParse(url)?.host.isEmpty ?? true) throw FormatException('线路地址无效：${raw[i]}');
       if (name.isEmpty) name = '线路 ${i + 1}';
@@ -91,6 +100,8 @@ class _ServerEditPageState extends ConsumerState<ServerEditPage> {
     if (result.isEmpty) throw const FormatException('请至少填写一个服务器地址');
     return result;
   }
+
+  static String _stripScheme(String url) => url.trim().replaceFirst(RegExp(r'^[a-zA-Z][a-zA-Z0-9+.-]*://'), '');
 
   /// 填写的地址里有内网地址
   bool get _hasLanLine => _lines.text.split(RegExp(r'[\n;；]')).any((raw) {
@@ -181,9 +192,16 @@ class _ServerEditPageState extends ConsumerState<ServerEditPage> {
                     label: '服务器地址（多条线路换行或用分号分隔，可写成"名称 | 地址"）',
                     controller: _lines,
                     autofocus: !editing,
-                    hint: 'https://emby.example.com:8920',
+                    hint: _https ? 'emby.example.com:8920' : '192.168.1.10:8096',
                     keyboardType: TextInputType.url,
-                    helper: 'Emby 会自动补 /emby 路径；没写协议时默认 http://',
+                    helper: 'Emby 会自动补 /emby 路径；端口按地址里写的（Emby 默认 HTTP 8096 / HTTPS 8920）',
+                  ),
+                  const SizedBox(height: 16),
+                  VToggle(
+                    label: '使用 HTTPS',
+                    subtitle: _https ? '所有线路使用 https://（外网域名、反代通常用这个）' : '所有线路使用 http://（内网地址通常用这个）',
+                    value: _https,
+                    onChanged: (v) => setState(() => _https = v),
                   ),
                   const SizedBox(height: 24),
                   Row(
