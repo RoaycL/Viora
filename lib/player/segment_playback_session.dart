@@ -1,6 +1,7 @@
 import '../domain/models/segment.dart';
 import '../domain/models/segment_settings.dart';
 import '../domain/usecases/segment_resolver.dart';
+import 'manual_segments.dart';
 import 'segment_skip_controller.dart';
 
 /// Adapter for the planned PlaySession: begin after engine.open, feed position
@@ -33,19 +34,38 @@ class SegmentPlaybackSession {
   bool _hasPosition = false;
   bool _inFlight = false;
 
+  /// 数据源解析出的片段，和手动标记（优先）
+  List<Segment> _resolved = const [];
+  List<Segment> _manual = const [];
+
   /// [position]：当前确定的播放位置（还没开始播放时传 null，等第一次 [onPosition]）
-  void begin(SegmentQuery query, SegmentSettings settings, {bool hasNextEpisode = false, Duration? position}) {
+  /// [manual]：手动标记的片段，优先于数据源（同类型替换）
+  void begin(
+    SegmentQuery query,
+    SegmentSettings settings, {
+    bool hasNextEpisode = false,
+    Duration? position,
+    List<Segment> manual = const [],
+  }) {
     final generation = ++_generation;
     _position = position ?? Duration.zero;
     _hasPosition = position != null;
     _inFlight = false;
+    _resolved = const [];
+    _manual = manual;
     final controller = SegmentSkipController(query: query, settings: settings, hasNextEpisode: hasNextEpisode);
     _controller = controller;
     onPrompt(null);
+    if (manual.isNotEmpty) {
+      controller.segments = manual;
+      onResolution?.call(SegmentResolution(segments: manual));
+    }
     void apply(SegmentResolution result) {
       if (generation != _generation) return;
-      controller.segments = result.segments;
-      onResolution?.call(result);
+      _resolved = result.segments;
+      final merged = mergeManualSegments(_resolved, _manual);
+      controller.segments = merged;
+      onResolution?.call(SegmentResolution(segments: merged, failures: result.failures, fromCache: result.fromCache));
       if (_hasPosition) onPosition(_position);
     }
 
@@ -57,6 +77,21 @@ class SegmentPlaybackSession {
             if (generation == _generation) onActionError?.call(error);
           },
         );
+  }
+
+  /// 播放中修改了手动标记：立即生效。当前位置正好落在新标记的片段里时本次不触发跳过
+  /// （刚标完片尾开始就被自动跳到下一集会很突兀），从下一集 / 下次播放开始生效
+  void setManual(List<Segment> manual) {
+    final controller = _controller;
+    if (controller == null) return;
+    _manual = manual;
+    final merged = mergeManualSegments(_resolved, manual);
+    controller.segments = merged;
+    for (final m in manual.where((m) => m.contains(_position))) {
+      controller.markHandled(SegmentSkipAction(segment: m, kind: SegmentSkipActionKind.seek, automatic: false));
+    }
+    onResolution?.call(SegmentResolution(segments: merged));
+    if (_hasPosition) onPosition(_position);
   }
 
   void onPosition(Duration position) {
