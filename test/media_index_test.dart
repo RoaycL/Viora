@@ -104,4 +104,40 @@ void main() {
     expect(ranked.map((o) => o.serverId), ['c', 'b', 'a']);
     expect(rankSources(ranked, preferredServerId: 'a').first.serverId, 'a');
   });
+
+  test('最近入库：新内容多的服务器不会把其他服务器挤掉；剧集按最近更新新集排序', () async {
+    final index = (await MediaIndex.open(path: ':memory:'))!;
+    MediaItem at(String server, String id, DateTime t, {MediaKind kind = MediaKind.movie, DateTime? newEpisode}) =>
+        MediaItem(
+          serverId: server,
+          id: id,
+          kind: kind,
+          name: '$server-$id',
+          dateCreated: t,
+          lastMediaAdded: newEpisode,
+        );
+    // a：最近一周新增 40 部；b：一个月前的 3 部，外加一部老剧昨天更新了新集
+    final now = DateTime(2026, 10, 10);
+    index.upsert('a', [for (var i = 0; i < 40; i++) at('a', '$i', now.subtract(Duration(hours: i)))]);
+    index.upsert('b', [
+      for (var i = 0; i < 3; i++) at('b', '$i', now.subtract(Duration(days: 30 + i))),
+      at(
+        'b',
+        'show',
+        DateTime(2024),
+        kind: MediaKind.series,
+        newEpisode: now.subtract(const Duration(hours: 5, minutes: 30)),
+      ),
+    ]);
+    // 以前只取全局最新：b 一部都排不进前 24
+    expect(groupTitles(index.latest(limit: 60)).take(24).where((g) => g.primary.serverId == 'b').length, 1);
+
+    final recent = balancedLatest(index.latestPerServer(perServer: 30));
+    expect(recent.length, 24);
+    expect(recent.where((g) => g.primary.serverId == 'b').length, 4);
+    // 仍按时间倒序：更新了新集的老剧排在第 7 位
+    expect(recent[6].primary.id, 'show');
+    expect(recent.last.primary.id, '2');
+    index.close();
+  });
 }

@@ -281,7 +281,8 @@ class EmbyClient {
 
   /// 聚合索引用的精简字段：不要用户数据（播放进度等），服务器不用逐条查用户状态
   static const indexFields =
-      'ProductionYear,PremiereDate,ProviderIds,Overview,Genres,CommunityRating,DateCreated,OriginalTitle,OfficialRating';
+      'ProductionYear,PremiereDate,ProviderIds,Overview,Genres,CommunityRating,DateCreated,DateLastMediaAdded,'
+      'OriginalTitle,OfficialRating';
 
   /// 儿童模式：让服务器按分级过滤（Emby / Jellyfin 都支持 MaxOfficialRating），本地再按分级二次过滤
   Map<String, String> get _parentalQuery =>
@@ -674,6 +675,7 @@ class EmbyClient {
       position: ticksToDuration(user['PlaybackPositionTicks'] as num?),
       playedPercentage: (user['PlayedPercentage'] as num?)?.toDouble(),
       dateCreated: DateTime.tryParse(j['DateCreated'] as String? ?? ''),
+      lastMediaAdded: DateTime.tryParse(j['DateLastMediaAdded'] as String? ?? ''),
       lastPlayed: DateTime.tryParse(user['LastPlayedDate'] as String? ?? ''),
     );
   }

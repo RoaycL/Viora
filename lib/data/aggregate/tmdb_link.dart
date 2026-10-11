@@ -43,9 +43,10 @@ final recentlyAddedProvider = Provider<List<AggregatedTitle>>((ref) {
   final config = ref.read(configProvider);
   final servers = {for (final s in config.servers) s.id};
   try {
-    return groupTitles(index.latest(limit: 60).where((c) => servers.contains(c.serverId) && itemVisible(config, c)))
-        .take(24)
-        .toList();
+    return balancedLatest([
+      for (final c in index.latestPerServer(perServer: 30))
+        if (servers.contains(c.serverId) && itemVisible(config, c)) c,
+    ]);
   } catch (_) {
     return const [];
   }

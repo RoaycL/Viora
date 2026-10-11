@@ -82,6 +82,7 @@ class MediaItem {
     this.position = Duration.zero,
     this.playedPercentage,
     this.dateCreated,
+    this.lastMediaAdded,
     this.lastPlayed,
   });
 
@@ -121,6 +122,14 @@ class MediaItem {
   final double? playedPercentage;
   final DateTime? dateCreated;
 
+  /// 剧集最近一次有新集入库的时间（服务器的 DateLastMediaAdded）
+  final DateTime? lastMediaAdded;
+
+  /// 「最近入库」排序用：剧集按最近一次更新新集，电影按入库时间
+  DateTime? get addedAt => lastMediaAdded != null && (dateCreated == null || lastMediaAdded!.isAfter(dateCreated!))
+      ? lastMediaAdded
+      : dateCreated;
+
   /// 上次播放时间（继续观看跨服务器排序）
   final DateTime? lastPlayed;
 
@@ -150,6 +159,7 @@ class MediaItem {
     'l': logo?.toJson(),
     'c': childCount,
     'd': dateCreated?.millisecondsSinceEpoch,
+    'la': lastMediaAdded?.millisecondsSinceEpoch,
     'ov': overview,
   };
 
@@ -170,6 +180,7 @@ class MediaItem {
     logo: ImageRef.fromJson(j['l']),
     childCount: j['c'] as int?,
     dateCreated: j['d'] == null ? null : DateTime.fromMillisecondsSinceEpoch(j['d'] as int),
+    lastMediaAdded: j['la'] == null ? null : DateTime.fromMillisecondsSinceEpoch(j['la'] as int),
     overview: j['ov'] as String?,
   );
 
