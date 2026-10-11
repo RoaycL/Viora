@@ -185,4 +185,23 @@ void main() {
       throwsA(isA<WebDavException>().having((e) => e.message, 'message', contains('只读'))),
     );
   });
+
+  test('关闭 WebDAV 同步后不再同步，设置保留；重新打开后照常同步', () async {
+    final webdav = WebDavConfig(url: dav.url, username: 'me', password: 'pw');
+    final (a, syncA) = await device('a', AppConfig(servers: [_server('1', 'home')], webdav: webdav));
+    await a.read(configProvider.notifier).update((c) => c.copyWith(webdav: c.webdav.copyWith(enabled: false)));
+    await expectLater(
+      syncA.sync(),
+      throwsA(isA<WebDavException>().having((e) => e.message, 'message', contains('已关闭'))),
+    );
+    expect(dav.puts, 0);
+    expect(a.read(configProvider).webdav.url, dav.url);
+    expect(WebDavConfig.fromJson(a.read(configProvider).webdav.toJson()).enabled, isFalse);
+
+    await a.read(configProvider.notifier).update((c) => c.copyWith(webdav: c.webdav.copyWith(enabled: true)));
+    expect(await syncA.sync(), contains('已上传'));
+    expect(dav.puts, 1);
+    // 旧配置没有这个字段：默认打开
+    expect(WebDavConfig.fromJson(const {'url': 'https://x'}).active, isTrue);
+  });
 }

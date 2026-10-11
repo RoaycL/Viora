@@ -119,6 +119,8 @@ class WebDavEntry extends ConsumerWidget {
         title: 'WebDAV 同步',
         subtitle: !c.configured
             ? '把全部配置存到 WebDAV（坚果云、群晖、Alist 等），多台设备自动保持一致'
+            : !c.enabled
+            ? '已关闭，不再同步（${Uri.tryParse(c.url)?.host ?? c.url}，设置保留，打开开关即可继续）'
             : [
                 Uri.tryParse(c.url)?.host ?? c.url,
                 c.autoSync ? '自动同步' : '手动同步',
@@ -127,7 +129,7 @@ class WebDavEntry extends ConsumerWidget {
               ].join(' · '),
         status: s.running ? '同步中…' : null,
         trailing: [
-          if (c.configured) ...[
+          if (c.active) ...[
             SmallIconButton(
               icon: Icons.sync_rounded,
               label: '立即同步',
@@ -147,6 +149,16 @@ class WebDavEntry extends ConsumerWidget {
                     ),
             ),
           ],
+          if (c.configured)
+            SmallSwitch(
+              value: c.enabled,
+              onChanged: (v) async {
+                await ref
+                    .read(configProvider.notifier)
+                    .update((x) => x.copyWith(webdav: x.webdav.copyWith(enabled: v)));
+                showToast(v ? '已打开 WebDAV 同步' : '已关闭 WebDAV 同步，不再同步');
+              },
+            ),
         ],
         onConfigure: () => showWebDavDialog(context, ref),
       ),
@@ -220,6 +232,8 @@ Future<void> showWebDavDialog(BuildContext context, WidgetRef ref) async {
         path: path.text.trim().isEmpty ? WebDavConfig.defaultPath : path.text.trim(),
         passphrase: phrase.text,
         autoSync: auto,
+        // 保存设置时保留开关状态；第一次填写时默认打开
+        enabled: c.configured ? c.enabled : true,
       );
       if (next.configured) {
         try {
@@ -236,6 +250,10 @@ Future<void> showWebDavDialog(BuildContext context, WidgetRef ref) async {
       await ref.read(configProvider.notifier).update((x) => x.copyWith(webdav: next));
       if (!next.configured) {
         showToast('已关闭 WebDAV 同步');
+        return true;
+      }
+      if (!next.enabled) {
+        showToast('已保存（WebDAV 同步当前是关闭的）');
         return true;
       }
       unawaited(WebDavSync.instance?.sync().then(showToast, onError: (Object e) => showToast('$e')));
