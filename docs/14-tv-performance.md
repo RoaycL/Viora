@@ -18,7 +18,9 @@ flutter build apk --profile --dart-define=VIORA_FRAME_STATS=true
 
 需要构建默认 TMDB Token 时沿用项目既有的 `VIORA_TMDB_TOKEN` 构建配置。
 
-新版本 main 的 CI 同时生成 `android-tv-performance` Artifact，包含优化版 `android-profile.apk` 和对照版 `android-profile-baseline.apk`；从对应 Actions 运行页下载。它们单独保存，不进入 Release 自动更新资产。正式版和测量版使用相同应用 ID，可覆盖安装；完成测量后安装正式 APK。
+CI 同时生成 `android-tv-performance` Artifact，包含优化版 `android-profile.apk` 和对照版 `android-profile-baseline.apk`；从对应 Actions 运行页下载。它们单独保存，不进入 Release 自动更新资产。正式版和测量版使用相同应用 ID 与签名，可覆盖安装；CI 使用 `apksigner` 验证三个包的证书一致后才上传测量包。完成测量后安装正式 APK。
+
+v0.15.2 首次发布时的测量 Artifact 有签名配置遗漏，Profile 继承的默认调试证书无法覆盖正式包。请使用修复后的 CI Artifact，保留原应用和数据，不需要卸载。
 
 对照版在相同源码和帧统计下，通过额外的 `--dart-define=VIORA_TV_PERF_BASELINE=true` 关闭本批的 TV 行懒加载、横排预构建缩小、图片连接复用 / 并发限制及图片缓存预算。既有 TV 优化和鉴权缓存隔离仍保留，所以它是本批优化的对照模式，并非旧版本的完整复刻。这个开关只对非 Release 的 TV 构建有效。
 

@@ -49,6 +49,11 @@ android {
         debug {
             signingConfig = signingConfigs.getByName("release")
         }
+        getByName("profile") {
+            // Flutter 在应用本文件前已从默认 debug 类型复制 profile；
+            // 后续修改 debug 不会同步它的证书，必须显式设置以支持覆盖安装。
+            signingConfig = signingConfigs.getByName("release")
+        }
     }
 }
 
