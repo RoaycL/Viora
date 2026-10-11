@@ -124,9 +124,12 @@ class RatingsData {
 }
 
 class RatingsResult {
-  const RatingsResult(this.data, {this.fetchedAt, this.stale = false, this.error});
+  const RatingsResult(this.data, {this.fetchedAt, this.stale = false, this.error, this.unsupported = false});
   final RatingsData data;
   final DateTime? fetchedAt;
   final bool stale;
   final String? error;
+
+  /// 缺少可查询的 ID（不是故障，详情页不提示、不显示重试）
+  final bool unsupported;
 }

@@ -270,8 +270,13 @@ Future<String> applySyncPayload(
     }
   }
   if (result.ratingKeys.isNotEmpty || result.ratingSettings != null) {
-    final current = await ref.read(ratingsSettingsProvider.future);
-    await ref.read(ratingsSettingsProvider.notifier).save(applyRatingsSync(current, result));
+    // 评分设置存不进系统安全存储时只记日志，不影响服务器等其他配置的导入
+    try {
+      final current = await ref.read(ratingsSettingsProvider.future);
+      await ref.read(ratingsSettingsProvider.notifier).save(applyRatingsSync(current, result));
+    } catch (e) {
+      log('外部评分设置保存失败：$e');
+    }
   }
   final message = '已导入：${result.summary.join('、')}';
   log(message);
@@ -536,7 +541,9 @@ Future<void> showSendDialog(BuildContext context, WidgetRef ref) async {
       }
       RatingsSettings? ratings;
       if (form.sections.contains(SyncSection.ratings)) {
-        ratings = await ref.read(ratingsSettingsProvider.future);
+        try {
+          ratings = await ref.read(ratingsSettingsProvider.future);
+        } catch (_) {}
       }
       final name = config.playback.deviceName.trim().isNotEmpty
           ? config.playback.deviceName.trim()

@@ -81,15 +81,14 @@ class ExternalRatings extends ConsumerWidget {
         if (serverCertification == null && result.data.certification != null) {
           certification = 'OMDb 年龄分级：${result.data.certification}${result.stale ? '（旧缓存）' : ''}';
         }
-        if (result.error != null) {
+        // 缺少 ID、没有评分都不是故障：详情页首屏不显示这类提示，只在真正失败时提示并可重试
+        if (result.error != null && !result.unsupported) {
           status.add('${p.id.label}：${result.error}');
           retry.add(key);
-        } else if (result.data.ratings.isEmpty) {
-          status.add('${p.id.label}：暂无评分');
         }
       }
     }
-    if (settings.hasError) status.add('外部评分设置暂不可用');
+    // 评分设置读不出来（系统安全存储不可用）只在设置页提示，详情页不显示
     if (badges.isEmpty && status.isEmpty && !loading && certification == null) return const SizedBox.shrink();
     return Padding(
       padding: const EdgeInsets.only(top: 14),

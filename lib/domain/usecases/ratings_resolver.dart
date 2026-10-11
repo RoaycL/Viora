@@ -35,7 +35,11 @@ class RatingsResolver {
     if (provider == null) return Future.value(const RatingsResult(RatingsData()));
     if (!provider.supports(query)) {
       return Future.value(
-        RatingsResult(const RatingsData(), error: id == RatingProviderId.omdb ? '缺少 IMDb ID，无法查询' : '缺少作品 ID 或剧集季集信息'),
+        RatingsResult(
+          const RatingsData(),
+          error: id == RatingProviderId.omdb ? '缺少 IMDb ID，无法查询' : '缺少作品 ID 或剧集季集信息',
+          unsupported: true,
+        ),
       );
     }
     final key = sha256.convert(utf8.encode('$namespace/${id.name}/${query.identity}')).toString();

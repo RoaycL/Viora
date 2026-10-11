@@ -11,6 +11,7 @@ import '../../data/config/config_store.dart';
 import '../../data/net/request_composer.dart';
 import '../../data/sync/config_payload.dart';
 import '../../data/sync/webdav_sync.dart';
+import '../../domain/models/ratings_settings.dart';
 import '../../domain/models/segment_settings.dart';
 import '../segments/segment_service.dart';
 import '../metadata/ratings_service.dart';
@@ -110,6 +111,15 @@ class WebDavSync {
     });
   }
 
+  /// 评分设置读不出来（部分电视盒子的系统安全存储不可用）时不带评分设置，不影响其他配置同步
+  Future<RatingsSettings?> _ratings() async {
+    try {
+      return await _container.read(ratingsSettingsProvider.future);
+    } catch (_) {
+      return null;
+    }
+  }
+
   Future<SegmentSettings?> _segments() async {
     try {
       return await _container.read(segmentSettingsProvider.future);
@@ -122,7 +132,7 @@ class WebDavSync {
     _container.read(configProvider),
     sections: {...SyncSection.values}..remove(SyncSection.webdav),
     segments: await _segments(),
-    ratings: await _container.read(ratingsSettingsProvider.future),
+    ratings: await _ratings(),
     from: defaultDeviceName(),
   );
 

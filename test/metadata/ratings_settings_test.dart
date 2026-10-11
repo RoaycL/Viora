@@ -169,4 +169,21 @@ void main() {
     expect(fromPhone.providers.last.apiKey, '9sample');
     expect(fromPhone.providers.last.enabled, isTrue);
   });
+
+  test('同步凭据时只发送自己填写的 Key，空 Key 不会清掉对方已填的', () {
+    // 本机只填了 OMDb，没填 Trakt
+    final partial = configured('mine').copyWith(syncKeys: true);
+    final payload = buildSyncPayload(const AppConfig(), sections: {SyncSection.ratings}, ratings: partial);
+    final keys = (payload['ratings'] as Map<String, dynamic>)['keys'] as Map<String, dynamic>;
+    expect(keys.keys, ['omdb']);
+    const theirs = RatingsSettings(
+      providers: [
+        RatingProviderSettings(id: RatingProviderId.omdb, apiKey: 'theirs', enabled: true),
+        RatingProviderSettings(id: RatingProviderId.trakt, apiKey: 'theirs', enabled: true),
+      ],
+    );
+    final receiver = applyRatingsSync(theirs, mergeSyncPayload(const AppConfig(), payload));
+    expect(receiver.providers.firstWhere((p) => p.id == RatingProviderId.trakt).apiKey, 'theirs');
+    expect(receiver.providers.firstWhere((p) => p.id == RatingProviderId.omdb).apiKey, 'mine');
+  });
 }

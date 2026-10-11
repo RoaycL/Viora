@@ -78,7 +78,13 @@ Map<String, dynamic> buildSyncPayload(
   if (sections.contains(SyncSection.ratings) && ratings != null)
     'ratings': {
       'settings': {...ratings.toJson()}..remove('syncKeys'),
-      if (ratings.syncKeys) 'keys': {for (final p in ratings.providers) p.id.name: p.apiKey},
+      // 只发送自己填写的 Key：空值在接收端表示「清除」，发出去会把对方已填的 Key 清掉
+      // （WebDAV 两台设备第一次合并时尤其明显）
+      if (ratings.syncKeys)
+        'keys': {
+          for (final p in ratings.providers)
+            if (p.apiKey.isNotEmpty) p.id.name: p.apiKey,
+        },
     },
 };
 
