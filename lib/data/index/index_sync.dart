@@ -77,7 +77,9 @@ class IndexSyncController extends Notifier<Map<String, SyncStatus>> {
           userData: false,
         );
         total = page.total;
-        index.upsert(serverId, page.items, gen: gen);
+        // 拼音、标题归一化、JSON 在后台算（16 台服务器同步时不卡界面），主线程只写库
+        final rows = await compute(prepareIndexRows, page.items);
+        index.upsertPrepared(serverId, rows, gen: gen);
         start += page.items.length;
         _set(serverId, SyncStatus(running: true, done: start, total: total, count: index.count(serverId)));
         if (page.items.isEmpty || start >= total) break;

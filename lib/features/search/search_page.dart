@@ -33,6 +33,9 @@ class SearchPage extends ConsumerStatefulWidget {
 }
 
 class _SearchPageState extends ConsumerState<SearchPage> {
+  /// 最多显示的作品数：结果网格不是懒加载，几百张海报一起构建、下载会拖垮电视
+  static const maxResults = 120;
+
   final _query = TextEditingController();
   Timer? _debounce;
   int _generation = 0;
@@ -68,37 +71,56 @@ class _SearchPageState extends ConsumerState<SearchPage> {
       setState(() => _results = const []);
       return;
     }
-    // 1. 本地索引
+    // 1. 本地索引（一个字母能匹配上万条，只取前 100 条）
     final index = await ref.read(mediaIndexProvider.future);
     final config = ref.read(configProvider);
     final local = [
-      for (final it in index?.search(q) ?? const <MediaItem>[])
+      for (final it in index?.search(q, limit: 100) ?? const <MediaItem>[])
         if (itemVisible(config, it)) it,
     ];
     if (gen != _generation || !mounted) return;
-    var groups = groupTitles(local);
+    final all = [...local];
     setState(() {
-      _results = groups;
-      _searchingRemote = true;
+      _results = groupTitles(all).take(maxResults).toList();
+      _searchingRemote = false;
+      _pendingServers = 0;
     });
 
-    // 2. 各服务器实时搜索（单台 5 秒超时），回来一台合并一台
+    // 2. 各服务器实时搜索：只有一个字母时不查（结果太多也没意义，16 台服务器一起查会把电视卡死）
+    if (q.characters.length < 2) return;
     final servers = ref.read(configProvider).servers.toList();
-    setState(() => _pendingServers = servers.length);
+    setState(() {
+      _searchingRemote = true;
+      _pendingServers = servers.length;
+    });
+    // 服务器陆续返回：合并后重新分组，最多每 300 毫秒刷新一次界面
+    Timer? regroup;
+    void scheduleRegroup() {
+      regroup ??= Timer(const Duration(milliseconds: 300), () {
+        regroup = null;
+        if (gen != _generation || !mounted) return;
+        setState(() => _results = groupTitles(all).take(maxResults).toList());
+      });
+    }
+
     await Future.wait(
       servers.map((s) async {
         final client = ref.read(serverClientProvider(s.id));
         try {
-          final page = await client!.items(searchTerm: q, limit: 40).timeout(const Duration(seconds: 5));
+          final page = await client!.items(searchTerm: q, limit: 20).timeout(const Duration(seconds: 5));
           if (gen != _generation || !mounted) return;
-          groups = groupTitles([for (final g in groups) ...g.copies, ...page.items]);
-          setState(() => _results = groups);
+          all.addAll(page.items);
+          scheduleRegroup();
         } catch (_) {
         } finally {
           if (gen == _generation && mounted) setState(() => _pendingServers--);
         }
       }),
     );
+    regroup?.cancel();
+    if (gen == _generation && mounted) {
+      setState(() => _results = groupTitles(all).take(maxResults).toList());
+    }
     if (gen == _generation && mounted) setState(() => _searchingRemote = false);
   }
 

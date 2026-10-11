@@ -209,4 +209,47 @@ void main() {
     );
     expect(pickStartEpisode([ep(1, 1), ep(1, 2, played: true, at: DateTime(2026)), ep(2, 1)]), (2, 1));
   });
+
+  test('分组：大量条目时结果与逐个比较一致，且不会卡住', () {
+    // 逐个比较的参考实现（旧算法）
+    List<List<String>> reference(List<MediaItem> items) {
+      final groups = <List<MediaItem>>[];
+      for (final it in items) {
+        final g = groups.where((g) => g.any((c) => sameTitle(c, it))).firstOrNull;
+        if (g == null) {
+          groups.add([it]);
+        } else if (!g.any((c) => c.serverId == it.serverId && c.id == it.id)) {
+          g.add(it);
+        }
+      }
+      return [
+        for (final g in groups) [for (final c in g) '${c.serverId}/${c.id}'],
+      ];
+    }
+
+    final items = <MediaItem>[
+      for (var s = 0; s < 16; s++)
+        for (var i = 0; i < 60; i++)
+          movie(
+            's$s',
+            '$i',
+            '电影${(i * 7 + s) % 90}',
+            year: 2000 + (i % 5),
+            tmdb: (i + s) % 3 == 0 ? '${(i * 7 + s) % 90}' : null,
+          ),
+    ];
+    final sw = Stopwatch()..start();
+    final groups = groupTitles(items);
+    sw.stop();
+    expect([
+      for (final g in groups) [for (final c in g.copies) '${c.serverId}/${c.id}'],
+    ], reference(items));
+    expect(sw.elapsedMilliseconds, lessThan(500));
+  });
+
+  test('索引行可以单独算好再写入', () async {
+    final rows = prepareIndexRows([movie('a', '1', '沙丘', tmdb: '438631'), series('a', '2', '繁花')]);
+    expect(rows.length, 2);
+    expect(rows.first[7], '438631');
+  });
 }
