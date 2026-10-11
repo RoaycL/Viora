@@ -103,7 +103,11 @@ jobs:
           build_tools=$(find "$ANDROID_HOME/build-tools" -mindepth 1 -maxdepth 1 -type d | sort -V | tail -n 1)
           apksigner="$build_tools/apksigner"
           certificate() {
-            "$apksigner" verify --print-certs "$1" | sed -n 's/^Signer #1 certificate SHA-256 digest: //p'
+            local report
+            report=$("$apksigner" verify --verbose --print-certs "$1")
+            printf '%s\n' "$report" >&2
+            # 新版 build-tools 会在 Signer 后附加 SDK 范围，不能固定行首格式。
+            printf '%s\n' "$report" | sed -n 's/.*certificate SHA-256 digest: //p' | sort -u
           }
           release_cert=$(certificate "dist/Viora-${{ needs.prepare.outputs.version }}-android.apk")
           test -n "$release_cert"
