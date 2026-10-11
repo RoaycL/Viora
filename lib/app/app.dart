@@ -8,6 +8,7 @@ import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
+import '../core/log/app_log.dart';
 import '../data/config/config_store.dart';
 import '../data/media/server_registry.dart';
 import '../player/playback_cache.dart';
@@ -43,6 +44,7 @@ class VioraApp extends ConsumerStatefulWidget {
 class _VioraAppState extends ConsumerState<VioraApp> with WidgetsBindingObserver {
   late final GoRouter _router = buildRouter(observers: [_BackObserver(_updateCanGoBackAfterFrame)]);
   DateTime? _lastExitHint;
+  String? _lastLoggedPath;
   WebDavSync? _webdav;
 
   /// 电视：长按返回键 3 秒弹出「退出 Viora？」，确认后才退出（不再"首页连按两次返回退出"，容易误退）
@@ -94,6 +96,12 @@ class _VioraAppState extends ConsumerState<VioraApp> with WidgetsBindingObserver
 
   /// 路由通知时导航器还没把新页面压进去（canPop 仍是 false），等这一帧建完再算
   void _scheduleCanGoBack() {
+    // 记下当前页面（只有路径里的 ID，没有个人信息）：闪退时知道停在哪个页面
+    final path = _router.routerDelegate.currentConfiguration.uri.path;
+    if (path != _lastLoggedPath) {
+      _lastLoggedPath = path;
+      AppLog.add('[nav] $path');
+    }
     _updateCanGoBack();
     _updateCanGoBackAfterFrame();
   }

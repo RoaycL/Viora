@@ -1,11 +1,14 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:media_kit/media_kit.dart';
 import 'package:package_info_plus/package_info_plus.dart';
+import 'package:path_provider/path_provider.dart';
 
 import 'app/app.dart';
 import 'app/window_frame.dart';
 import 'core/log/app_log.dart';
+import 'core/log/memory_watch.dart';
 import 'data/config/config_store.dart';
 import 'data/history/play_history.dart';
 import 'data/media/server_registry.dart';
@@ -14,6 +17,13 @@ import 'data/segments/segment_http.dart';
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   AppLog.install();
+  // 日志实时写文件、记录内存：闪退后重新打开导出日志，能看到闪退前的情况
+  if (!kIsWeb) {
+    try {
+      await AppLog.attachFile(await getApplicationSupportDirectory());
+    } catch (_) {}
+  }
+  MemoryWatch.instance.start();
   MediaKit.ensureInitialized();
   await initDesktopWindow();
   try {

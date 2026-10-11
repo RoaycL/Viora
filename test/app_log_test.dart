@@ -37,4 +37,24 @@ void main() {
     addTearDown(() => fresh.close(force: true));
     await expectLater(fresh.get('127.0.0.1', port, server.path).then((r) => r.close()), throwsA(anything));
   });
+
+  test('日志实时写文件；下次启动导出时附上上次运行的日志（闪退前的情况）', () async {
+    final dir = await Directory.systemTemp.createTemp('viora-log');
+    addTearDown(() => dir.delete(recursive: true));
+    await AppLog.detachFileForTesting();
+    await AppLog.attachFile(dir);
+    AppLog.add('[mem] tick rss=900MB');
+    AppLog.add('[nav] /tmdb/tv/1');
+    AppLog.flush();
+    await Future<void>.delayed(const Duration(milliseconds: 50));
+    // 模拟闪退：不正常关闭，直接重新启动
+    await AppLog.detachFileForTesting();
+    await AppLog.attachFile(dir);
+    AppLog.add('restarted');
+    final text = AppLog.dump(appVersion: 't');
+    expect(text, contains('restarted'));
+    expect(text, contains('上次运行的日志'));
+    expect(text.indexOf('[nav] /tmdb/tv/1'), greaterThan(text.indexOf('上次运行的日志')));
+    await AppLog.detachFileForTesting();
+  });
 }
