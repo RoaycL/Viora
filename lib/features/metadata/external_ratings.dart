@@ -50,14 +50,11 @@ class ExternalRatings extends ConsumerWidget {
     if (serverRating != null && serverRating!.isFinite && serverRating! > 0) {
       badge(RatingBrand.library, serverRating!.toStringAsFixed(1));
     }
-    if (criticRating != null && criticRating!.isFinite && criticRating! > 0) {
-      // 媒体库的影评人评分来自烂番茄
-      badge(RatingBrand.rottenTomatoes, '${criticRating!.round()}%', label: '烂番茄（媒体库）');
-    }
     if (tmdbRating != null && tmdbRating!.isFinite && tmdbRating! > 0) {
       badge(RatingBrand.tmdb, tmdbRating!.toStringAsFixed(1));
     }
     var loading = false;
+    var externalTomato = false;
     String? certification;
     if (query != null) {
       for (final p in settings.value?.providers ?? const <RatingProviderSettings>[]) {
@@ -76,6 +73,7 @@ class ExternalRatings extends ConsumerWidget {
         }
         if (result == null) continue;
         for (final r in result.data.ratings) {
+          if (r.source == RatingSource.rottenTomatoes) externalTomato = true;
           badge(RatingBrand.of(r.source), r.short, stale: result.stale, votes: r.votes);
         }
         if (serverCertification == null && result.data.certification != null) {
@@ -87,6 +85,10 @@ class ExternalRatings extends ConsumerWidget {
           retry.add(key);
         }
       }
+    }
+    // 媒体库的影评人评分就是烂番茄新鲜度：OMDb 已经给了烂番茄时不重复显示
+    if (!externalTomato && criticRating != null && criticRating!.isFinite && criticRating! > 0) {
+      badge(RatingBrand.rottenTomatoes, '${criticRating!.round()}%', label: '烂番茄（媒体库）');
     }
     // 评分设置读不出来（系统安全存储不可用）只在设置页提示，详情页不显示
     if (badges.isEmpty && status.isEmpty && !loading && certification == null) return const SizedBox.shrink();
