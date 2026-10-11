@@ -4,7 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../app/theme.dart';
 import '../../data/aggregate/sources.dart';
 import '../../data/config/config_store.dart';
-import '../../data/media/media_models.dart';
+import '../../ui/widgets/brand_badges.dart';
 import '../../ui/focus/focusable.dart';
 import '../../ui/focus/row_focus.dart';
 import '../../ui/rows/focus_row.dart';
@@ -227,12 +227,6 @@ class SelectChip extends StatelessWidget {
   }
 }
 
-Color _rangeColor(VideoRange? r) => switch (r) {
-  VideoRange.dolbyVision => VColors.dolbyVision,
-  VideoRange.hdr10 || VideoRange.hdr10Plus || VideoRange.hlg => VColors.rating,
-  _ => Colors.white,
-};
-
 String _gb(int bytes) =>
     bytes >= 1 << 30 ? '${(bytes / (1 << 30)).toStringAsFixed(2)} GB' : '${(bytes / (1 << 20)).toStringAsFixed(0)} MB';
 
@@ -291,12 +285,7 @@ class SourceCard extends ConsumerWidget {
             Row(
               children: [
                 Expanded(
-                  child: Text(
-                    '${source.resolutionLabel}  ${source.rangeLabel}',
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: TextStyle(fontSize: 26, fontWeight: FontWeight.w700, color: _rangeColor(v?.range)),
-                  ),
+                  child: Align(alignment: Alignment.centerLeft, child: VideoFormatBadges.of(source, height: 30)),
                 ),
                 if (selected)
                   const Icon(Icons.check_circle_rounded, size: 30, color: Colors.white)
