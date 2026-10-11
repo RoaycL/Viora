@@ -10,6 +10,7 @@ import '../../data/aggregate/tmdb_link.dart';
 import '../../data/config/config_store.dart';
 import '../../data/media/media_models.dart';
 import '../../data/tmdb/tmdb_client.dart';
+import '../../domain/models/external_rating.dart';
 import '../../ui/focus/row_focus.dart';
 import '../../ui/rows/cards.dart';
 import '../../ui/rows/focus_row.dart';
@@ -18,6 +19,7 @@ import '../../ui/widgets/tmdb_image.dart';
 import '../browse/media_cards.dart';
 import '../detail/detail_layout.dart';
 import '../detail/source_widgets.dart';
+import '../metadata/external_ratings.dart';
 import '../../ui/widgets/server_image.dart' show placeholderArt;
 import 'tmdb_cards.dart';
 
@@ -174,22 +176,14 @@ class _TmdbDetailState extends ConsumerState<_TmdbDetail> {
           ],
           const SizedBox(height: 22),
           Text(meta, style: const TextStyle(fontSize: 22, color: Color(0xD1FFFFFF))),
-          if (t.rating != null)
-            Padding(
-              padding: const EdgeInsets.only(top: 14),
-              child: Row(
-                children: [
-                  const Icon(Icons.star_rounded, color: VColors.rating, size: 26),
-                  const SizedBox(width: 6),
-                  Text(
-                    t.rating!.toStringAsFixed(1),
-                    style: const TextStyle(fontSize: 24, fontWeight: FontWeight.w600, color: VColors.rating),
-                  ),
-                  const SizedBox(width: 8),
-                  Text('TMDB', style: VText.small.copyWith(color: VColors.textTertiary)),
-                ],
-              ),
+          ExternalRatings(
+            query: RatingQuery(
+              kind: t.isTv ? RatingMediaKind.series : RatingMediaKind.movie,
+              imdbId: t.imdbId,
+              tmdbId: t.id,
             ),
+            tmdbRating: t.rating,
+          ),
           if (t.tagline != null) ...[
             const SizedBox(height: 18),
             Text(t.tagline!, style: VText.label.copyWith(fontStyle: FontStyle.italic)),

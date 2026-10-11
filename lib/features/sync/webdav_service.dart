@@ -13,6 +13,7 @@ import '../../data/sync/config_payload.dart';
 import '../../data/sync/webdav_sync.dart';
 import '../../domain/models/segment_settings.dart';
 import '../segments/segment_service.dart';
+import '../metadata/ratings_service.dart';
 import 'sync_settings_section.dart' show applySyncPayload;
 
 /// 同步方向
@@ -75,7 +76,8 @@ class WebDavSync {
           }
         }),
       )
-      ..add(_container.listen(segmentSettingsProvider, (_, _) => _scheduleAuto()));
+      ..add(_container.listen(segmentSettingsProvider, (_, _) => _scheduleAuto()))
+      ..add(_container.listen(ratingsSettingsProvider, (_, _) => _scheduleAuto()));
     _scheduleAuto(delay: const Duration(seconds: 3), checkRemote: true);
   }
 
@@ -120,6 +122,7 @@ class WebDavSync {
     _container.read(configProvider),
     sections: {...SyncSection.values}..remove(SyncSection.webdav),
     segments: await _segments(),
+    ratings: await _container.read(ratingsSettingsProvider.future),
     from: defaultDeviceName(),
   );
 

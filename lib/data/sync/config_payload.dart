@@ -1,4 +1,5 @@
 import '../../domain/models/segment_settings.dart';
+import '../../domain/models/ratings_settings.dart';
 import '../config/app_config.dart';
 
 /// 局域网同步配置（docs/11-sync.md）：电视开一个临时入口，手机网页或 Windows 把配置推过去。
@@ -19,6 +20,7 @@ enum SyncSection {
   tmdb('TMDB', 'API Key、自定义地址'),
   danmaku('弹幕', '弹幕服务器、屏蔽词（字号、条数等显示设置每台设备各自设置）'),
   segments('片头片尾', '数据源开关与 API Key'),
+  ratings('外部评分', '数据源开关与地址；凭据需在元数据设置中允许同步'),
   webdav('WebDAV 同步', '地址、账号、加密口令（电视收到后即可自动同步）');
 
   const SyncSection(this.label, this.detail);
@@ -33,6 +35,7 @@ Map<String, dynamic> buildSyncPayload(
   AppConfig c, {
   required Set<SyncSection> sections,
   SegmentSettings? segments,
+  RatingsSettings? ratings,
   String from = '',
 }) => {
   'viora': syncPayloadVersion,
@@ -72,6 +75,11 @@ Map<String, dynamic> buildSyncPayload(
           if (p.apiKey.isNotEmpty) p.id: p.apiKey,
       },
     },
+  if (sections.contains(SyncSection.ratings) && ratings != null)
+    'ratings': {
+      'settings': {...ratings.toJson()}..remove('syncKeys'),
+      if (ratings.syncKeys) 'keys': {for (final p in ratings.providers) p.id.name: p.apiKey},
+    },
 };
 
 /// 合并结果
@@ -82,6 +90,8 @@ class SyncMergeResult {
     required this.summary,
     this.segmentKeys = const {},
     this.segmentSettings,
+    this.ratingKeys = const {},
+    this.ratingSettings,
   });
 
   final AppConfig config;
@@ -93,6 +103,8 @@ class SyncMergeResult {
   final List<String> summary;
   final Map<String, String> segmentKeys;
   final Map<String, dynamic>? segmentSettings;
+  final Map<String, String> ratingKeys;
+  final Map<String, dynamic>? ratingSettings;
 
   bool get isEmpty => summary.isEmpty;
 }
@@ -237,6 +249,20 @@ SyncMergeResult mergeSyncPayload(AppConfig c, Map<String, dynamic> p, {bool repl
   };
   final segSettings = seg?['settings'] as Map<String, dynamic>?;
   if (keys.isNotEmpty || segSettings != null) summary.add('片头片尾');
+  final ratingSection = section('ratings');
+  final ratingKeys = <String, String>{};
+  final incomingKeys = ratingSection?['keys'];
+  if (incomingKeys is Map) {
+    for (final id in RatingProviderId.values) {
+      final value = incomingKeys[id.name];
+      if (value is String) ratingKeys[id.name] = normalizeRatingKey(id, value);
+    }
+  }
+  final ratingSettings = ratingSection?['settings'];
+  if (ratingSettings != null && ratingSettings is! Map<String, dynamic>) {
+    throw const FormatException('外部评分设置格式错误');
+  }
+  if (ratingKeys.isNotEmpty || ratingSettings != null) summary.add('外部评分');
 
   return SyncMergeResult(
     config: config,
@@ -244,6 +270,29 @@ SyncMergeResult mergeSyncPayload(AppConfig c, Map<String, dynamic> p, {bool repl
     summary: summary,
     segmentKeys: keys,
     segmentSettings: segSettings,
+    ratingKeys: ratingKeys,
+    ratingSettings: ratingSettings as Map<String, dynamic>?,
+  );
+}
+
+/// Missing keys preserve local credentials; an explicit empty key clears one.
+/// Permission to export keys is a local preference, never granted by a peer.
+RatingsSettings applyRatingsSync(RatingsSettings current, SyncMergeResult result) {
+  final settings = result.ratingSettings == null ? current : RatingsSettings.fromJson(result.ratingSettings!);
+  return settings.copyWith(
+    syncKeys: current.syncKeys,
+    providers: [
+      for (final p in settings.providers)
+        p.copyWith(
+          apiKey:
+              result.ratingKeys[p.id.name] ??
+              current.providers.where((old) => old.id == p.id).firstOrNull?.apiKey ??
+              '',
+          enabled: result.ratingSettings == null && result.ratingKeys.containsKey(p.id.name)
+              ? result.ratingKeys[p.id.name]!.isNotEmpty
+              : p.enabled,
+        ),
+    ],
   );
 }
 

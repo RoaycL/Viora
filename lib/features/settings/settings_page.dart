@@ -20,6 +20,7 @@ import '../../player/playback_cache.dart';
 import '../../ui/panels/form_dialog.dart';
 import '../danmaku/danmaku_settings_section.dart';
 import '../segments/segment_settings_section.dart';
+import '../metadata/ratings_settings_section.dart';
 import '../parental/parental_settings_section.dart';
 import '../sync/sync_settings_section.dart';
 import 'support_actions.dart';
@@ -333,7 +334,7 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
 
       // ───────── 元数据 ─────────
       _Section(
-        title: '元数据 · TMDB',
+        title: '元数据与评分',
         children: [
           Text(
             TmdbConfig.builtinToken.isEmpty
@@ -358,6 +359,8 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
             onChanged: (v) =>
                 ref.read(configProvider.notifier).update((c) => c.copyWith(tmdb: c.tmdb.copyWith(useProxy: v))),
           ),
+          const SizedBox(height: 36),
+          const RatingsSettingsSection(),
         ],
       ),
 
