@@ -99,6 +99,34 @@ void main() {
       expect(r.config.servers.single.id, 'a');
     });
 
+    test('弹幕只同步服务器和屏蔽词等，上限、字号等显示设置每台设备各自保留', () {
+      final windows = AppConfig(
+        danmaku: const DanmakuConfig(
+          servers: ['https://d.example.com/t'],
+          blockWords: '剧透',
+          maxCount: 0,
+          fontSize: 44,
+          area: 1,
+        ),
+      );
+      final payload = buildSyncPayload(windows, sections: {SyncSection.danmaku});
+      final sent = payload['danmaku'] as Map<String, dynamic>;
+      expect(sent.keys.toSet(), DanmakuConfig.syncedKeys);
+
+      final tv = AppConfig(danmaku: const DanmakuConfig(maxCount: 3000, fontSize: 30, area: 0.33));
+      final r = mergeSyncPayload(tv, payload);
+      expect(r.config.danmaku.servers, ['https://d.example.com/t']);
+      expect(r.config.danmaku.blockWords, '剧透');
+      expect(r.config.danmaku.maxCount, 3000);
+      expect(r.config.danmaku.fontSize, 30);
+      expect(r.config.danmaku.area, 0.33);
+
+      // 旧版本发来的完整设置：显示设置同样不覆盖
+      final old = mergeSyncPayload(tv, {'viora': 1, 'danmaku': windows.danmaku.toJson()});
+      expect(old.config.danmaku.maxCount, 3000);
+      expect(old.config.danmaku.servers, ['https://d.example.com/t']);
+    });
+
     test('片头片尾 Key：填了的数据源同时打开，其他保留本机设置', () {
       final r = mergeSyncPayload(base, {
         'viora': 1,
