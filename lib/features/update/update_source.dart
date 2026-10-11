@@ -63,11 +63,17 @@ bool matchesPlatformAsset(String name, UpdatePlatform platform) {
 
 /// GitHub Releases（包含预发布版本）。仓库需要是公开的，客户端才能匿名访问。
 class GitHubReleasesSource implements UpdateSource {
-  GitHubReleasesSource(this.owner, this.repo, {required this.userAgent});
+  GitHubReleasesSource(this.owner, this.repo, {required this.userAgent, this.rewrite});
 
   final String owner;
   final String repo;
   final String userAgent;
+
+  /// 改写请求地址（经反向代理访问 GitHub）
+  final Uri Function(Uri)? rewrite;
+
+  /// 项目主页
+  Uri get homepage => Uri.https('github.com', '/$owner/$repo');
 
   @override
   String get description => 'GitHub Releases · $owner/$repo';
@@ -77,6 +83,7 @@ class GitHubReleasesSource implements UpdateSource {
     final json = await getJson(
       Uri.https('api.github.com', '/repos/$owner/$repo/releases', {'per_page': '20'}),
       userAgent: userAgent,
+      rewrite: rewrite,
       headers: {'Accept': 'application/vnd.github+json'},
     );
     UpdateInfo? best;
@@ -118,17 +125,18 @@ class GitHubReleasesSource implements UpdateSource {
 /// }
 /// ```
 class ManifestSource implements UpdateSource {
-  ManifestSource(this.url, {required this.userAgent});
+  ManifestSource(this.url, {required this.userAgent, this.rewrite});
 
   final Uri url;
   final String userAgent;
+  final Uri Function(Uri)? rewrite;
 
   @override
   String get description => '自定义地址 · ${url.host}';
 
   @override
   Future<UpdateInfo?> latest(UpdatePlatform platform) async {
-    final json = await getJson(url, userAgent: userAgent) as Map<String, dynamic>;
+    final json = await getJson(url, userAgent: userAgent, rewrite: rewrite) as Map<String, dynamic>;
     final version = AppVersion.tryParse(json['version'] as String? ?? '');
     final asset = (json['assets'] as Map<String, dynamic>?)?[platform.name] as Map<String, dynamic>?;
     if (version == null || asset == null) return null;
@@ -145,15 +153,18 @@ class ManifestSource implements UpdateSource {
   }
 }
 
-Future<Object?> getJson(Uri url, {required String userAgent, Map<String, String> headers = const {}}) async {
+Future<Object?> getJson(
+  Uri url, {
+  required String userAgent,
+  Map<String, String> headers = const {},
+  Uri Function(Uri)? rewrite,
+}) async {
   final client = HttpClient()
     ..userAgent = userAgent
     ..connectionTimeout = const Duration(seconds: 10);
   try {
-    final request = await client.getUrl(url);
-    headers.forEach(request.headers.set);
-    final response = await request.close().timeout(const Duration(seconds: 20));
-    final body = await response.transform(utf8.decoder).join();
+    final response = await openFollowingRedirects(client, url, headers: headers, rewrite: rewrite);
+    final body = await response.transform(utf8.decoder).join().timeout(const Duration(seconds: 20));
     if (response.statusCode != 200) {
       throw HttpException(
         response.statusCode == 404 ? '找不到更新信息（404），仓库可能是私有的' : 'HTTP ${response.statusCode}',
@@ -164,4 +175,26 @@ Future<Object?> getJson(Uri url, {required String userAgent, Map<String, String>
   } finally {
     client.close(force: true);
   }
+}
+
+/// GET 并手动跟随跳转：每一跳都经 [rewrite] 改写。
+/// GitHub 的安装包下载会跳到 objects.githubusercontent.com，经反向代理时这一跳也要走代理
+Future<HttpClientResponse> openFollowingRedirects(
+  HttpClient client,
+  Uri url, {
+  Map<String, String> headers = const {},
+  Uri Function(Uri)? rewrite,
+}) async {
+  var next = url;
+  for (var i = 0; i < 6; i++) {
+    final request = await client.getUrl(rewrite == null ? next : rewrite(next));
+    request.followRedirects = false;
+    headers.forEach(request.headers.set);
+    final response = await request.close().timeout(const Duration(seconds: 20));
+    final location = response.headers.value(HttpHeaders.locationHeader);
+    if (!response.isRedirect || location == null) return response;
+    await response.drain<void>();
+    next = next.resolve(location);
+  }
+  throw HttpException('跳转次数过多', uri: url);
 }
