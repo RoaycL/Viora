@@ -17,7 +17,7 @@ enum SyncSection {
   servers('媒体服务器', '地址、线路、账号密码'),
   network('反向代理与播放 UA', '反代地址、播放 UA、客户端名称'),
   tmdb('TMDB', 'API Key、自定义地址'),
-  danmaku('弹幕', '弹幕服务器、显示设置、屏蔽词'),
+  danmaku('弹幕', '弹幕服务器、屏蔽词（字号、条数等显示设置每台设备各自设置）'),
   segments('片头片尾', '数据源开关与 API Key'),
   webdav('WebDAV 同步', '地址、账号、加密口令（电视收到后即可自动同步）');
 
@@ -62,7 +62,7 @@ Map<String, dynamic> buildSyncPayload(
     },
   },
   if (sections.contains(SyncSection.tmdb)) 'tmdb': c.tmdb.toJson(),
-  if (sections.contains(SyncSection.danmaku)) 'danmaku': c.danmaku.toJson(),
+  if (sections.contains(SyncSection.danmaku)) 'danmaku': c.danmaku.toSyncJson(),
   if (sections.contains(SyncSection.webdav) && c.webdav.configured) 'webdav': c.webdav.toJson(),
   if (sections.contains(SyncSection.segments) && segments != null)
     'segments': {
@@ -222,7 +222,12 @@ SyncMergeResult mergeSyncPayload(AppConfig c, Map<String, dynamic> p, {bool repl
     summary.add('WebDAV 同步');
   }
   if (section('danmaku') case final m?) {
-    config = config.copyWith(danmaku: DanmakuConfig.fromJson({...config.danmaku.toJson(), ...m}));
+    // 只取共用的字段：旧版本发来的完整设置里的上限、字号等显示设置不覆盖本机
+    final shared = {
+      for (final e in m.entries)
+        if (DanmakuConfig.syncedKeys.contains(e.key)) e.key: e.value,
+    };
+    config = config.copyWith(danmaku: DanmakuConfig.fromJson({...config.danmaku.toJson(), ...shared}));
     summary.add('弹幕');
   }
   final seg = section('segments');

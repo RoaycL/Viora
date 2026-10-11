@@ -1,9 +1,11 @@
 import 'package:flutter/material.dart';
+
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../app/theme.dart';
 import '../../data/segments/segment_http.dart';
 import '../../domain/models/segment_settings.dart';
+import '../../player/manual_segments.dart';
 import '../../ui/panels/form_dialog.dart';
 import '../../ui/widgets/form.dart';
 import '../../ui/widgets/toast.dart';
@@ -26,6 +28,8 @@ class SegmentSettingsSection extends ConsumerStatefulWidget {
 }
 
 class _SegmentSettingsSectionState extends ConsumerState<SegmentSettingsSection> {
+  Future<int> _manualCount = ManualSegmentStore.count();
+
   /// 返回是否保存成功（失败时弹窗不关闭，保留已输入的内容）
   Future<bool> _save(SegmentSettings s, {String? done}) async {
     try {
@@ -176,6 +180,29 @@ class _SegmentSettingsSectionState extends ConsumerState<SegmentSettingsSection>
         const SizedBox(height: 36),
         Text('数据来源（从上到下优先）', style: VText.rowTitle.copyWith(fontSize: 26)),
         const SizedBox(height: 16),
+        FutureBuilder<int>(
+          future: _manualCount,
+          builder: (context, snap) => SettingsEntry(
+            title: '⓪ 手动标记（最优先）',
+            subtitle: (snap.data ?? 0) == 0
+                ? '播放时在菜单 →「片头片尾标记」里以当前位置标记片头 / 片尾，剧集同一季各集通用'
+                : '已标记 ${snap.data} 部剧 / 电影。播放时在菜单 →「片头片尾标记」里修改或清除',
+            trailing: [
+              if ((snap.data ?? 0) > 0)
+                SmallIconButton(
+                  icon: Icons.delete_outline_rounded,
+                  label: '全部清除',
+                  onPressed: () async {
+                    await ManualSegmentStore.clearAll();
+                    showToast('已清除所有手动标记');
+                    setState(() => _manualCount = ManualSegmentStore.count());
+                  },
+                ),
+            ],
+            onConfigure: () => showToast('在播放时打开菜单 →「片头片尾标记」，以当前播放位置标记'),
+          ),
+        ),
+        const SizedBox(height: 12),
         VToggle(
           label: '① 媒体服务器标记',
           subtitle: 'Emby 4.8+ 的章节标记、Jellyfin 10.10+ 的媒体片段（含 Intro Skipper 插件）。最准确，始终最优先',

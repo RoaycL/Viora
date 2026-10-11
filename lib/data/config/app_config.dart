@@ -479,6 +479,15 @@ class DanmakuConfig {
     searchBlockWords: searchBlockWords ?? this.searchBlockWords,
   );
 
+  /// 跨设备同步的字段（弹幕服务器、屏蔽词、繁简与颜色处理）。
+  /// 上限、字号、透明度、显示区域、速度等显示设置跟屏幕和性能有关，每台设备各自设置（docs/11-sync.md）
+  static const syncedKeys = {'servers', 'convert', 'colorMode', 'blockWords', 'searchBlockWords'};
+
+  Map<String, dynamic> toSyncJson() => {
+    for (final e in toJson().entries)
+      if (syncedKeys.contains(e.key)) e.key: e.value,
+  };
+
   Map<String, dynamic> toJson() => {
     'enabled': enabled,
     'servers': servers,

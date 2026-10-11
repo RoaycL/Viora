@@ -12,7 +12,10 @@ enum TmdbImageKind {
   poster([92, 154, 185, 342, 500, 780]),
   backdrop([300, 780, 1280]),
   profile([45, 185]),
-  logo([45, 92, 154, 185, 300, 500]);
+  logo([45, 92, 154, 185, 300, 500]),
+
+  /// 剧集单集剧照
+  still([92, 185, 300]);
 
   const TmdbImageKind(this.widths);
 

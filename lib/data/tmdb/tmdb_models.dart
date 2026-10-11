@@ -20,6 +20,7 @@ class TmdbTitle {
     this.logoPath,
     this.runtimeMinutes,
     this.seasons,
+    this.seasonList = const [],
     this.imdbId,
     this.tagline,
     this.cast = const [],
@@ -42,6 +43,9 @@ class TmdbTitle {
   final String? logoPath;
   final int? runtimeMinutes;
   final int? seasons;
+
+  /// 剧集的各季（详情接口才有；含第 0 季「特别篇」）
+  final List<TmdbSeason> seasonList;
   final String? imdbId;
   final String? tagline;
   final List<TmdbPerson> cast;
@@ -83,6 +87,10 @@ class TmdbTitle {
           j['runtime'] as int? ??
           ((j['episode_run_time'] as List?)?.isNotEmpty == true ? (j['episode_run_time'] as List).first as int : null),
       seasons: j['number_of_seasons'] as int?,
+      seasonList: [
+        for (final x in (j['seasons'] as List? ?? const []))
+          if ((x as Map)['season_number'] is int) TmdbSeason.fromJson(x.cast<String, dynamic>()),
+      ],
       imdbId: j['imdb_id'] as String? ?? ((j['external_ids'] as Map?)?['imdb_id'] as String?),
       tagline: (j['tagline'] as String?)?.trim().isEmpty == true ? null : j['tagline'] as String?,
       cast: [
@@ -200,3 +208,66 @@ const tmdbGenreNames = <int, String>{
   10767: '脱口秀',
   10768: '战争政治',
 };
+
+/// 剧集的一季
+@immutable
+class TmdbSeason {
+  const TmdbSeason({required this.number, required this.name, this.episodeCount = 0, this.airDate, this.posterPath});
+
+  final int number;
+  final String name;
+  final int episodeCount;
+  final DateTime? airDate;
+  final String? posterPath;
+
+  factory TmdbSeason.fromJson(Map<String, dynamic> j) {
+    final n = j['season_number'] as int;
+    final name = (j['name'] as String?)?.trim() ?? '';
+    return TmdbSeason(
+      number: n,
+      name: name.isNotEmpty ? name : (n == 0 ? '特别篇' : '第 $n 季'),
+      episodeCount: j['episode_count'] as int? ?? 0,
+      airDate: DateTime.tryParse(j['air_date'] as String? ?? ''),
+      posterPath: j['poster_path'] as String?,
+    );
+  }
+}
+
+/// 一集
+@immutable
+class TmdbEpisode {
+  const TmdbEpisode({
+    required this.season,
+    required this.number,
+    required this.name,
+    this.overview = '',
+    this.stillPath,
+    this.airDate,
+    this.runtimeMinutes,
+  });
+
+  final int season;
+  final int number;
+  final String name;
+  final String overview;
+  final String? stillPath;
+  final DateTime? airDate;
+  final int? runtimeMinutes;
+
+  /// 还没播出
+  bool get upcoming => airDate != null && airDate!.isAfter(DateTime.now());
+
+  factory TmdbEpisode.fromJson(Map<String, dynamic> j) {
+    final n = j['episode_number'] as int? ?? 0;
+    final name = (j['name'] as String?)?.trim() ?? '';
+    return TmdbEpisode(
+      season: j['season_number'] as int? ?? 0,
+      number: n,
+      name: name.isNotEmpty ? name : '第 $n 集',
+      overview: j['overview'] as String? ?? '',
+      stillPath: j['still_path'] as String?,
+      airDate: DateTime.tryParse(j['air_date'] as String? ?? ''),
+      runtimeMinutes: j['runtime'] as int?,
+    );
+  }
+}

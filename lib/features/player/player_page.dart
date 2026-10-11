@@ -23,6 +23,7 @@ import '../../player/exo_engine.dart';
 import '../../player/mpv_engine.dart';
 import '../../player/playback_cache.dart';
 import '../../player/preload.dart';
+import '../../player/manual_segments.dart';
 import '../../player/segment_playback_session.dart';
 import '../../player/segment_skip_controller.dart';
 import '../../domain/models/segment.dart';
@@ -300,9 +301,14 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
   /// 片头片尾查询的代次：换源 / 换集后，旧的查询结果作废
   int _segmentGen = 0;
 
+  /// 当前播放的片段查询（手动标记按它的「剧 + 季」/ 电影保存）与这一季 / 这部电影的手动标记
+  SegmentQuery? _segmentQuery;
+  ManualMark _manualMark = const ManualMark();
+
   /// 换源开始时立即停用旧版本的跳过规则、提示和进度条标记（新版本的时间轴可能不同）
   void _resetSegments() {
     _segmentGen++;
+    _segmentQuery = null;
     _segments?.dispose();
     _segments = null;
     if (mounted) {
@@ -344,25 +350,35 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
         sourceKey: '${widget.serverId}/${source.id}',
       );
       final resolver = await playbackSegmentResolver(ref, client, item.id);
+      final mark = await ManualSegmentStore.load(query) ?? const ManualMark();
       if (!mounted || gen != _segmentGen || _source?.id != source.id) return;
+      _segmentQuery = query;
+      _manualMark = mark;
       _segments?.dispose();
-      _segments = SegmentPlaybackSession(
-        resolver: resolver,
-        seek: (to) async => _engine?.seek(to),
-        nextEpisode: () async {
-          final next = _nextEpisode;
-          if (next != null && mounted) _handoffTo('/play/${widget.serverId}/${next.id}?pos=0');
-        },
-        onPrompt: (action) {
-          if (!mounted || _samePrompt(action, _skipPrompt)) return;
-          setState(() => _skipPrompt = action);
-        },
-        onResolution: (r) {
-          if (mounted) setState(() => _segmentList = r.segments);
-        },
-        onAutoSkip: (action) => showToast(_autoSkipText(action)),
-        onActionError: (e) => debugPrint('segments: $e'),
-      )..begin(query, settings, hasNextEpisode: hasNext, position: _started ? _state.position : null);
+      _segments =
+          SegmentPlaybackSession(
+            resolver: resolver,
+            seek: (to) async => _engine?.seek(to),
+            nextEpisode: () async {
+              final next = _nextEpisode;
+              if (next != null && mounted) _handoffTo('/play/${widget.serverId}/${next.id}?pos=0');
+            },
+            onPrompt: (action) {
+              if (!mounted || _samePrompt(action, _skipPrompt)) return;
+              setState(() => _skipPrompt = action);
+            },
+            onResolution: (r) {
+              if (mounted) setState(() => _segmentList = r.segments);
+            },
+            onAutoSkip: (action) => showToast(_autoSkipText(action)),
+            onActionError: (e) => debugPrint('segments: $e'),
+          )..begin(
+            query,
+            settings,
+            hasNextEpisode: hasNext,
+            position: _started ? _state.position : null,
+            manual: mark.segmentsFor(duration),
+          );
     } catch (e) {
       debugPrint('segments unavailable: $e');
     }
@@ -1062,6 +1078,75 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
     }
   }
 
+  /// 手动标记片头 / 片尾：以当前播放位置为准，剧集同一季各集通用
+  Future<void> _openMarkMenu() => _menu(() {
+    final query = _segmentQuery;
+    if (query == null) return Future.value();
+    final pos = _state.position;
+    final duration = query.duration;
+    final m = _manualMark;
+    final scope = query.kind == SegmentMediaKind.episode ? '第 ${query.season ?? 0} 季各集通用' : '这部电影';
+    String clock(Duration d) => formatClock(d);
+    return showContextMenu(
+      context,
+      title: '片头片尾标记（$scope）',
+      actions: [
+        MenuAction(
+          '片头到这里结束（${clock(pos)}）${m.introEnd == null ? '' : '  · 现为 ${clock(m.introEnd!)}'}',
+          Icons.first_page_rounded,
+          () {
+            if (pos <= (m.introStart ?? Duration.zero)) {
+              showToast('片头结束要在片头开始之后');
+              return;
+            }
+            _saveMark(m.copyWith(introEnd: pos), '片头 ${clock(m.introStart ?? Duration.zero)}–${clock(pos)}');
+          },
+        ),
+        MenuAction(
+          '片头从这里开始（${clock(pos)}）${m.introStart == null ? '  · 默认从 00:00' : '  · 现为 ${clock(m.introStart!)}'}',
+          Icons.start_rounded,
+          () {
+            // 有些剧先放一段正片再进片头：片头开始后移；已有的结束点在它之前就作废
+            final end = m.introEnd;
+            final next = end != null && end <= pos
+                ? ManualMark(introStart: pos, creditsFromEnd: m.creditsFromEnd)
+                : m.copyWith(introStart: pos);
+            _saveMark(next, '片头从 ${clock(pos)} 开始${next.introEnd == null ? '，请再标记片头结束' : ''}');
+          },
+        ),
+        MenuAction(
+          '片尾从这里开始（${clock(pos)}）${m.creditsFromEnd == null ? '' : '  · 现为结尾前 ${clock(m.creditsFromEnd!)}'}',
+          Icons.last_page_rounded,
+          () {
+            if (pos >= duration || (m.introEnd != null && pos <= m.introEnd!)) {
+              showToast('片尾开始要在片头之后、结尾之前');
+              return;
+            }
+            _saveMark(m.copyWith(creditsFromEnd: duration - pos), '片尾从结尾前 ${clock(duration - pos)} 开始');
+          },
+        ),
+        if (m.introEnd != null || m.introStart != null)
+          MenuAction('清除片头标记', Icons.backspace_outlined, () => _saveMark(m.copyWith(clearIntro: true), '已清除片头标记')),
+        if (m.creditsFromEnd != null)
+          MenuAction('清除片尾标记', Icons.backspace_outlined, () => _saveMark(m.copyWith(clearCredits: true), '已清除片尾标记')),
+      ],
+    );
+  });
+
+  Future<void> _saveMark(ManualMark mark, String what) async {
+    final query = _segmentQuery;
+    if (query == null) return;
+    setState(() => _manualMark = mark);
+    _segments?.setManual(mark.segmentsFor(query.duration));
+    try {
+      await ManualSegmentStore.save(query, mark);
+      final scope = query.kind == SegmentMediaKind.episode ? '，本季其他集自动沿用' : '';
+      showToast(what.startsWith('已') ? what : '已标记：$what$scope');
+    } catch (e) {
+      showToast('保存标记失败：$e');
+    }
+  }
+
   Future<void> _openRateMenu() => _menu(() {
     final rate = _state.rate;
     return showContextMenu(
@@ -1089,6 +1174,8 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
         if (_item?.kind == MediaKind.episode)
           MenuAction('选集', Icons.video_library_outlined, () => _openPanel(OsdPanel.episodes)),
         MenuAction('倍速 · ${s.rate}x', Icons.speed_rounded, _openRateMenu),
+        if (_segmentQuery != null)
+          MenuAction('片头片尾标记${_manualMark.isEmpty ? '' : ' · 已标记'}', Icons.bookmark_add_outlined, _openMarkMenu),
         if (ExoEngine.supported && engine != null)
           MenuAction(
             '播放内核 · ${engine.kind.label}（切换到 ${engine.kind == EngineKind.exo ? 'mpv' : 'ExoPlayer'}）',

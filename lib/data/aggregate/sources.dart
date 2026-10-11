@@ -180,3 +180,38 @@ final tmdbSourceOptionsProvider = FutureProvider.autoDispose.family<List<SourceO
 /// 播放某个版本时记下偏好服务器
 Future<void> rememberSource(MediaItem titleItem, String serverId) =>
     PreferredServers.set(titleKeyOf(titleItem), serverId);
+
+/// TMDB 详情页（剧集）：聚合搜索找到的每个副本（各服务器上的这部剧）的全部单集。
+/// 选中某一季某一集时，在这里按季号 + 集号对上各服务器的单集
+final tmdbSeriesEpisodesProvider = FutureProvider.autoDispose.family<List<MediaItem>, TmdbSearchKey>((ref, key) async {
+  final copies = await ref.watch(tmdbLibrarySearchProvider(key).future);
+  if (!key.isTv || copies.isEmpty) return const [];
+  final lists = await Future.wait(
+    copies.map((c) async {
+      final client = ref.read(serverClientProvider(c.serverId));
+      if (client == null) return const <MediaItem>[];
+      try {
+        return await client.episodes(c.id).timeout(const Duration(seconds: 10));
+      } catch (_) {
+        return const <MediaItem>[];
+      }
+    }),
+  );
+  return [for (final l in lists) ...l];
+});
+
+typedef TmdbEpisodeKey = ({TmdbSearchKey title, int season, int episode});
+
+/// TMDB 详情页（剧集）：选中的那一集在各服务器上的所有版本（已排序）
+final tmdbEpisodeSourcesProvider = FutureProvider.autoDispose.family<List<SourceOption>, TmdbEpisodeKey>((
+  ref,
+  key,
+) async {
+  final all = await ref.watch(tmdbSeriesEpisodesProvider(key.title).future);
+  final matches = all.where((e) => e.seasonNumber == key.season && e.episodeNumber == key.episode).toList();
+  if (matches.isEmpty) return const [];
+  final options = await _optionsOf(ref, matches);
+  final copies = await ref.watch(tmdbLibrarySearchProvider(key.title).future);
+  final preferred = copies.isEmpty ? null : await PreferredServers.get(titleKeyOf(copies.first));
+  return rankSources(options, preferredServerId: preferred);
+});
