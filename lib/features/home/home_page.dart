@@ -6,6 +6,8 @@ import 'package:go_router/go_router.dart';
 
 import '../../app/input/back_handler.dart';
 import '../../app/theme.dart';
+import '../../app/tv_performance.dart';
+import '../../core/net/image_request_pool.dart';
 import '../../data/aggregate/tmdb_link.dart';
 import '../../data/config/config_store.dart';
 import '../../data/index/media_index.dart';
@@ -16,6 +18,7 @@ import '../../ui/focus/input_mode.dart';
 import '../../ui/focus/row_focus.dart';
 import '../../ui/rows/cards.dart';
 import '../../ui/rows/focus_row.dart';
+import '../../ui/rows/deferred_focus_row.dart';
 import '../../ui/widgets/art.dart';
 import '../../ui/widgets/backdrop.dart';
 import '../../ui/widgets/buttons.dart';
@@ -97,13 +100,21 @@ class _HomeBodyState extends ConsumerState<_HomeBody> {
         await Future.wait([
           if (t.backdropPath != null)
             precacheImage(
-              netImage(client.image(t.backdropPath!, size: TmdbImageKind.backdrop.sizeFor(bg)), cacheWidth: bg),
+              netImage(
+                client.image(t.backdropPath!, size: TmdbImageKind.backdrop.sizeFor(bg)),
+                cacheWidth: bg,
+                priority: ImageRequestPriority.prefetch,
+              ),
               context,
               onError: (_, _) {},
             ),
           if (logo != null)
             precacheImage(
-              netImage(client.image(logo, size: TmdbImageKind.logo.sizeFor(logoPx)), cacheWidth: logoPx),
+              netImage(
+                client.image(logo, size: TmdbImageKind.logo.sizeFor(logoPx)),
+                cacheWidth: logoPx,
+                priority: ImageRequestPriority.prefetch,
+              ),
               context,
               onError: (_, _) {},
             ),
@@ -294,11 +305,10 @@ class _HomeBodyState extends ConsumerState<_HomeBody> {
     final resume = servers.isEmpty ? const <MediaItem>[] : dedupeWatched(resumeAsync.value ?? const <MediaItem>[]);
     final resumeLoading = servers.isNotEmpty && resumeAsync.isLoading && resume.isEmpty;
     final recent = ref.watch(recentlyAddedProvider);
-    List<TmdbTitle> row(TmdbRow r) => ref.watch(tmdbRowProvider(r)).value ?? const [];
-    bool rowLoading(TmdbRow r) => tmdbOn && ref.watch(tmdbRowProvider(r)).isLoading;
-    final heroes = _heroes(row(TmdbRow.trendingDay), recent);
+    final trending = ref.watch(tmdbRowProvider(TmdbRow.trendingDay));
+    final heroes = _heroes(trending.value ?? const [], recent);
     // 与 _heroes 里的 TMDB 轮播项一一对应
-    final heroTitles = row(TmdbRow.trendingDay).where((t) => t.backdropPath != null).take(8).toList();
+    final heroTitles = (trending.value ?? const <TmdbTitle>[]).where((t) => t.backdropPath != null).take(8).toList();
     if (heroTitles.isNotEmpty) {
       final next = heroTitles[(_heroIndex + 1) % heroTitles.length].key;
       if (!_readyHeroes.contains(next) && !_warming.contains(next)) {
@@ -307,19 +317,50 @@ class _HomeBodyState extends ConsumerState<_HomeBody> {
         });
       }
     }
-    final heroLoading = rowLoading(TmdbRow.trendingDay) || (servers.isNotEmpty && !tmdbOn && recent.isEmpty);
-    final peopleAsync = ref.watch(tmdbPeopleProvider);
-    final people = peopleAsync.value ?? const <TmdbPerson>[];
+    final heroLoading = (tmdbOn && trending.isLoading) || (servers.isNotEmpty && !tmdbOn && recent.isEmpty);
     final heroIndex = heroes.isEmpty ? 0 : _heroIndex % heroes.length;
     final preview = _preview;
     final backdrop = _backdrop ?? (heroes.isEmpty ? null : heroes[heroIndex].$2);
     // 没配置 TMDB 时，推荐行显示占位并说明
     const tmdbHint = '配置 TMDB 后显示（设置 → 元数据）';
 
+    Widget deferred(
+      int index,
+      String title,
+      double height,
+      Widget Function(BuildContext, WidgetRef, FocusRowMemory?) builder,
+    ) {
+      if (!TvPerformance.enabled) return Consumer(builder: (context, rowRef, _) => builder(context, rowRef, null));
+      // Fixed shells preserve vertical geometry while their content is evicted.
+      Widget shell(Widget child) => SizedBox(height: height + FocusRow.focusBleed * 2 + 40, child: child);
+      return DeferredFocusRow(
+        key: ValueKey((index, ref.watch(tmdbClientProvider))),
+        rowIndex: index,
+        scrollController: _scroll,
+        placeholder: shell(
+          Padding(
+            padding: const EdgeInsets.only(left: VSpace.contentLeft),
+            child: Text(title, style: VText.rowTitle.copyWith(color: VColors.textSecondary)),
+          ),
+        ),
+        builder: (context, memory) =>
+            shell(Consumer(builder: (context, rowRef, _) => builder(context, rowRef, memory))),
+      );
+    }
+
     Widget tmdbRow(int index, String title, TmdbRow r) {
       if (!tmdbOn) return _SkeletonRow(title: title, note: tmdbHint, animate: false);
-      if (rowLoading(r)) return _SkeletonRow(title: title);
-      return _tmdbRow(index, title, row(r));
+      return deferred(index, title, PosterCard.height, (context, rowRef, memory) {
+        final result = rowRef.watch(tmdbRowProvider(r));
+        if (result.isLoading && !result.hasValue) {
+          DeferredFocusRow.reportEmpty(context, false);
+          return _SkeletonRow(title: title, animate: !TvPerformance.enabled);
+        }
+        final items = result.value ?? const <TmdbTitle>[];
+        DeferredFocusRow.reportEmpty(context, items.isEmpty);
+        if (items.isEmpty) return const SizedBox.shrink();
+        return _tmdbRow(index, title, items, memory: memory);
+      });
     }
 
     return BackHandler(
@@ -388,43 +429,56 @@ class _HomeBodyState extends ConsumerState<_HomeBody> {
                   if (resumeLoading)
                     const _SkeletonRow(title: '继续观看', landscape: true)
                   else if (resume.isNotEmpty)
-                    FocusRow(
-                      rowIndex: 1,
-                      title: '继续观看',
-                      itemCount: resume.length,
-                      itemExtent: LandscapeCard.width,
-                      height: LandscapeCard.height,
-                      onItemFocused: (i) {
-                        final server = serverNames[resume[i].serverId] ?? '未知服务器';
-                        _setBackdrop(_itemBackdrop(resume[i], badge: '继续观看', server: server));
-                        _preloadResume(resume[i]);
-                      },
-                      itemBuilder: (context, i, node) => _hoverTrack(
-                        mediaLandscapeCard(
-                          context,
-                          resume[i],
-                          node,
-                          // 和 Rex 一致：图上"看到 26:16"，下面"5 小时前 · 服务器名"
-                          watchedOn: serverNames[resume[i].serverId] ?? '未知服务器',
-                          onMenu: () => openMediaItem(context, resume[i]),
+                    deferred(
+                      1,
+                      '继续观看',
+                      LandscapeCard.height,
+                      (context, rowRef, memory) => FocusRow(
+                        memory: memory,
+                        rowIndex: 1,
+                        title: '继续观看',
+                        itemCount: resume.length,
+                        itemExtent: LandscapeCard.width,
+                        height: LandscapeCard.height,
+                        onItemFocused: (i) {
+                          final server = serverNames[resume[i].serverId] ?? '未知服务器';
+                          _setBackdrop(_itemBackdrop(resume[i], badge: '继续观看', server: server));
+                          _preloadResume(resume[i]);
+                        },
+                        itemBuilder: (context, i, node) => _hoverTrack(
+                          mediaLandscapeCard(
+                            context,
+                            resume[i],
+                            node,
+                            // 和 Rex 一致：图上"看到 26:16"，下面"5 小时前 · 服务器名"
+                            watchedOn: serverNames[resume[i].serverId] ?? '未知服务器',
+                            onMenu: () => openMediaItem(context, resume[i]),
+                          ),
                         ),
                       ),
                     ),
                   if (recent.isNotEmpty)
-                    FocusRow(
-                      rowIndex: 2,
-                      title: '最近入库',
-                      itemCount: recent.length,
-                      itemExtent: PosterCard.width,
-                      height: PosterCard.height,
-                      onItemFocused: (i) => _setBackdrop(
-                        _itemBackdrop(
-                          recent[i].primary,
-                          badge: '最近入库',
-                          server: serverNames[recent[i].primary.serverId],
+                    deferred(
+                      2,
+                      '最近入库',
+                      PosterCard.height,
+                      (context, rowRef, memory) => FocusRow(
+                        memory: memory,
+                        rowIndex: 2,
+                        title: '最近入库',
+                        itemCount: recent.length,
+                        itemExtent: PosterCard.width,
+                        height: PosterCard.height,
+                        onItemFocused: (i) => _setBackdrop(
+                          _itemBackdrop(
+                            recent[i].primary,
+                            badge: '最近入库',
+                            server: serverNames[recent[i].primary.serverId],
+                          ),
                         ),
+                        itemBuilder: (context, i, node) =>
+                            _hoverTrack(mediaPosterCard(context, recent[i].primary, node)),
                       ),
-                      itemBuilder: (context, i, node) => _hoverTrack(mediaPosterCard(context, recent[i].primary, node)),
                     ),
                   tmdbRow(3, '正在热映', TmdbRow.nowPlaying),
                   tmdbRow(4, '正在播出', TmdbRow.onTheAir),
@@ -432,42 +486,56 @@ class _HomeBodyState extends ConsumerState<_HomeBody> {
                   tmdbRow(6, '今日动漫', TmdbRow.animeToday),
                   if (!tmdbOn)
                     const _SkeletonRow(title: '热门人物', note: tmdbHint, circle: true, animate: false)
-                  else if (peopleAsync.isLoading && people.isEmpty)
-                    const _SkeletonRow(title: '热门人物', circle: true)
-                  else if (people.isNotEmpty)
-                    FocusRow(
-                      rowIndex: 7,
-                      title: '热门人物',
-                      itemCount: people.length,
-                      itemExtent: PersonCard.size,
-                      gap: 40,
-                      height: PersonCard.height,
-                      itemBuilder: (context, i, node) => TmdbPersonCard(person: people[i], node: node),
-                    ),
+                  else
+                    deferred(7, '热门人物', PersonCard.height, (context, rowRef, memory) {
+                      final peopleAsync = rowRef.watch(tmdbPeopleProvider);
+                      final people = peopleAsync.value ?? const <TmdbPerson>[];
+                      DeferredFocusRow.reportEmpty(context, !peopleAsync.isLoading && people.isEmpty);
+                      if (peopleAsync.isLoading && people.isEmpty) {
+                        return _SkeletonRow(title: '热门人物', circle: true, animate: !TvPerformance.enabled);
+                      }
+                      if (people.isEmpty) return const SizedBox.shrink();
+                      return FocusRow(
+                        memory: memory,
+                        rowIndex: 7,
+                        title: '热门人物',
+                        itemCount: people.length,
+                        itemExtent: PersonCard.size,
+                        gap: 40,
+                        height: PersonCard.height,
+                        itemBuilder: (context, i, node) => TmdbPersonCard(person: people[i], node: node),
+                      );
+                    }),
                   if (tmdbOn)
-                    FocusRow(
-                      rowIndex: 8,
-                      title: '播出平台',
-                      itemCount: tmdbNetworks.length,
-                      itemExtent: BrandCard.width,
-                      height: BrandCard.height,
-                      itemBuilder: (context, i, node) {
-                        final n = tmdbNetworks[i];
-                        return BrandCard(
-                          node: node,
-                          art: placeholderArt(n.name),
-                          name: n.name,
-                          logo: TmdbImage(
-                            path: n.logoPath,
-                            kind: TmdbImageKind.logo,
-                            width: 190,
-                            fit: BoxFit.contain,
-                            transparentFallback: true,
-                            color: Colors.white,
-                          ),
-                          onActivate: () => context.push('/tmdb/network/${n.id}?name=${Uri.encodeComponent(n.name)}'),
-                        );
-                      },
+                    deferred(
+                      8,
+                      '播出平台',
+                      BrandCard.height,
+                      (context, rowRef, memory) => FocusRow(
+                        memory: memory,
+                        rowIndex: 8,
+                        title: '播出平台',
+                        itemCount: tmdbNetworks.length,
+                        itemExtent: BrandCard.width,
+                        height: BrandCard.height,
+                        itemBuilder: (context, i, node) {
+                          final n = tmdbNetworks[i];
+                          return BrandCard(
+                            node: node,
+                            art: placeholderArt(n.name),
+                            name: n.name,
+                            logo: TmdbImage(
+                              path: n.logoPath,
+                              kind: TmdbImageKind.logo,
+                              width: 190,
+                              fit: BoxFit.contain,
+                              transparentFallback: true,
+                              color: Colors.white,
+                            ),
+                            onActivate: () => context.push('/tmdb/network/${n.id}?name=${Uri.encodeComponent(n.name)}'),
+                          );
+                        },
+                      ),
                     ),
                   tmdbRow(9, '高分剧集', TmdbRow.topRatedTv),
                   const EndOfPage(),
@@ -480,9 +548,10 @@ class _HomeBodyState extends ConsumerState<_HomeBody> {
     );
   }
 
-  Widget _tmdbRow(int rowIndex, String title, List<TmdbTitle> items) {
+  Widget _tmdbRow(int rowIndex, String title, List<TmdbTitle> items, {FocusRowMemory? memory}) {
     if (items.isEmpty) return const SizedBox.shrink();
     return FocusRow(
+      memory: memory,
       rowIndex: rowIndex,
       title: title,
       itemCount: items.length,
