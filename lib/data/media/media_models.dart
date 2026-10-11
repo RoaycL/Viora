@@ -195,6 +195,16 @@ class MediaStreamInfo {
     this.frameRate,
     this.range = VideoRange.sdr,
     this.deliveryUrl,
+    this.streamTitle,
+    this.profile,
+    this.level,
+    this.colorPrimaries,
+    this.colorSpace,
+    this.colorTransfer,
+    this.channelLayout,
+    this.sampleRate,
+    this.bitrate,
+    this.aspectRatio,
   });
 
   final int index;
@@ -213,6 +223,19 @@ class MediaStreamInfo {
   final double? frameRate;
   final VideoRange range;
   final String? deliveryUrl;
+
+  // 以下只用于详情页「展开媒体信息」
+  /// 流自带的标题（[title] 优先用服务器拼好的 DisplayTitle）
+  final String? streamTitle;
+  final String? profile;
+  final double? level;
+  final String? colorPrimaries;
+  final String? colorSpace;
+  final String? colorTransfer;
+  final String? channelLayout;
+  final int? sampleRate;
+  final int? bitrate;
+  final String? aspectRatio;
 
   String get displayName {
     final parts = <String>[

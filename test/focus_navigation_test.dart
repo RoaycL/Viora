@@ -167,9 +167,10 @@ void main() {
     await press(tester, LogicalKeyboardKey.arrowDown);
     await press(tester, LogicalKeyboardKey.arrowDown);
     await press(tester, LogicalKeyboardKey.select);
-    // 没有资源时只显示"暂未找到资源"，不再有关键词搜索按钮；页面底部是「已经到底了」
-    // 没找到资源时第 0 行是「重新搜索」按钮（焦点停在这里，页面不滚到底）
-    expect(find.text('暂未找到资源 · 重新搜索'), findsOneWidget);
+    // 没有资源时播放资源区只显示提示，没有搜索按钮；第 0 行的播放按钮仍在（焦点停在这里，页面不滚到底）
+    expect(find.text('暂无可播放资源'), findsOneWidget);
+    expect(find.text('播放资源'), findsOneWidget);
+    expect(find.textContaining('重新搜索'), findsNothing);
     expect(find.text('用关键词搜索'), findsNothing);
     expect(
       find.descendant(of: find.byType(TmdbDetailPage), matching: find.text('已经到底了', skipOffstage: false)),
@@ -177,7 +178,7 @@ void main() {
     );
 
     await press(tester, LogicalKeyboardKey.escape);
-    expect(find.text('暂未找到资源 · 重新搜索'), findsNothing);
+    expect(find.text('暂无可播放资源'), findsNothing);
     expect(focused, 'row4#0');
     await unmount(tester);
   });

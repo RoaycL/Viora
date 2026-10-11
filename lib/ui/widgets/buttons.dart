@@ -18,6 +18,7 @@ class PillButton extends StatelessWidget {
     this.autofocus = false,
     this.onPressed,
     this.large = false,
+    this.busy = false,
   });
 
   final String label;
@@ -29,6 +30,9 @@ class PillButton extends StatelessWidget {
 
   /// 主操作（播放）用大号
   final bool large;
+
+  /// 图标换成转圈（如「正在加载」）
+  final bool busy;
 
   @override
   Widget build(BuildContext context) {
@@ -43,11 +47,20 @@ class PillButton extends StatelessWidget {
       builder: (context, focused) {
         final fg = focused ? _darkInk : Colors.white;
         final content = Padding(
-          padding: EdgeInsets.only(left: icon == null ? 32 : 28, right: large ? 40 : 32),
+          padding: EdgeInsets.only(left: icon == null && !busy ? 32 : 28, right: large ? 40 : 32),
           child: Row(
             mainAxisSize: MainAxisSize.min,
             children: [
-              if (icon != null) ...[Icon(icon, size: large ? 32 : 28, color: fg), const SizedBox(width: 12)],
+              if (busy) ...[
+                SizedBox.square(
+                  dimension: large ? 26 : 22,
+                  child: CircularProgressIndicator(strokeWidth: 3, color: fg),
+                ),
+                const SizedBox(width: 16),
+              ] else if (icon != null) ...[
+                Icon(icon, size: large ? 32 : 28, color: fg),
+                const SizedBox(width: 12),
+              ],
               if (subtitle == null)
                 Text(
                   label,

@@ -684,6 +684,16 @@ class EmbyClient {
           frameRate: ((m['RealFrameRate'] ?? m['AverageFrameRate']) as num?)?.toDouble(),
           range: range,
           deliveryUrl: m['DeliveryUrl'] as String?,
+          streamTitle: m['Title'] as String?,
+          profile: m['Profile'] as String?,
+          level: (m['Level'] as num?)?.toDouble(),
+          colorPrimaries: m['ColorPrimaries'] as String?,
+          colorSpace: m['ColorSpace'] as String?,
+          colorTransfer: m['ColorTransfer'] as String?,
+          channelLayout: m['ChannelLayout'] as String?,
+          sampleRate: (m['SampleRate'] as num?)?.toInt(),
+          bitrate: (m['BitRate'] as num?)?.toInt(),
+          aspectRatio: m['AspectRatio'] as String?,
         ),
       );
     }

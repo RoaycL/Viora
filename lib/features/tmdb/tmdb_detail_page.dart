@@ -5,17 +5,20 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../app/theme.dart';
+import '../../data/aggregate/sources.dart';
 import '../../data/aggregate/tmdb_link.dart';
 import '../../data/config/config_store.dart';
 import '../../data/media/media_models.dart';
-import '../../ui/panels/context_menu.dart';
 import '../../data/tmdb/tmdb_client.dart';
 import '../../ui/focus/row_focus.dart';
 import '../../ui/rows/cards.dart';
 import '../../ui/rows/focus_row.dart';
 import '../../ui/widgets/buttons.dart';
 import '../../ui/widgets/tmdb_image.dart';
+import '../../ui/focus/focusable.dart';
 import '../browse/media_cards.dart';
+import '../detail/source_widgets.dart';
+import '../library/library_page.dart' show ServerTypeLogo;
 import 'tmdb_cards.dart';
 
 /// TMDB 作品详情：媒体库里没有的作品（首页推荐、人物作品、相似推荐点进来）。
@@ -68,19 +71,38 @@ class _Message extends StatelessWidget {
   );
 }
 
-class _TmdbDetail extends ConsumerWidget {
+class _TmdbDetail extends ConsumerStatefulWidget {
   const _TmdbDetail(this.t);
 
   final TmdbTitle t;
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
-    // 进入详情页才到各服务器搜索资源
+  ConsumerState<_TmdbDetail> createState() => _TmdbDetailState();
+}
+
+class _TmdbDetailState extends ConsumerState<_TmdbDetail> {
+  /// 选中的版本（[sourceKeyOf]）；没选时用排在第一的
+  String? _sourceKey;
+
+  void _play(SourceOption o) {
+    rememberSource(o.item, o.serverId);
+    context.push(o.playRoute(position: o.item.position));
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final t = widget.t;
+    // 进入详情页才到各服务器搜索资源；电影再取每个副本的所有版本
     final search = ref.watch(tmdbLibrarySearchProvider(searchKeyOf(t)));
     final copies = search.value ?? const <MediaItem>[];
-    final searching = search.isLoading;
-    final servers = ref.watch(configProvider.select((c) => c.servers));
-    String serverName(String id) => servers.where((s) => s.id == id).firstOrNull?.displayName ?? '服务器';
+    final optionsAsync = t.isTv ? null : ref.watch(tmdbSourceOptionsProvider(searchKeyOf(t)));
+    final options = optionsAsync?.value ?? const <SourceOption>[];
+    final loading = search.isLoading || (optionsAsync?.isLoading ?? false);
+    final selected = options.where((o) => sourceKeyOf(o) == _sourceKey).firstOrNull ?? options.firstOrNull;
+    final hasServers = ref.watch(configProvider.select((c) => c.servers.isNotEmpty));
+    final emptyText = hasServers ? '暂未找到资源' : '还没有添加服务器';
+    final found = t.isTv ? copies.isNotEmpty : selected != null;
+    final resumeAt = selected?.item.position ?? Duration.zero;
     final meta = [
       t.isTv ? '剧集' : '电影',
       if (t.year != null) '${t.year}',
@@ -158,35 +180,26 @@ class _TmdbDetail extends ConsumerWidget {
                           ],
                           const SizedBox(height: 22),
                           Text(meta, style: const TextStyle(fontSize: 22, color: Color(0xD1FFFFFF))),
-                          const SizedBox(height: 14),
-                          Row(
-                            children: [
-                              if (t.rating != null) ...[
-                                const Icon(Icons.star_rounded, color: VColors.rating, size: 26),
-                                const SizedBox(width: 6),
-                                Text(
-                                  t.rating!.toStringAsFixed(1),
-                                  style: const TextStyle(
-                                    fontSize: 24,
-                                    fontWeight: FontWeight.w600,
-                                    color: VColors.rating,
+                          if (t.rating != null)
+                            Padding(
+                              padding: const EdgeInsets.only(top: 14),
+                              child: Row(
+                                children: [
+                                  const Icon(Icons.star_rounded, color: VColors.rating, size: 26),
+                                  const SizedBox(width: 6),
+                                  Text(
+                                    t.rating!.toStringAsFixed(1),
+                                    style: const TextStyle(
+                                      fontSize: 24,
+                                      fontWeight: FontWeight.w600,
+                                      color: VColors.rating,
+                                    ),
                                   ),
-                                ),
-                                const SizedBox(width: 20),
-                              ],
-                              Text(
-                                searching
-                                    ? '正在各服务器搜索资源…'
-                                    : copies.isEmpty
-                                    ? (servers.isEmpty ? '还没有添加服务器' : '暂未找到资源')
-                                    : '找到 ${copies.length} 个资源 · ${copies.map((c) => serverName(c.serverId)).toSet().join('、')}',
-                                style: TextStyle(
-                                  fontSize: 20,
-                                  color: copies.isEmpty ? VColors.textTertiary : const Color(0xFF9AF2B8),
-                                ),
+                                  const SizedBox(width: 8),
+                                  Text('TMDB', style: VText.small.copyWith(color: VColors.textTertiary)),
+                                ],
                               ),
-                            ],
-                          ),
+                            ),
                           if (t.tagline != null) ...[
                             const SizedBox(height: 18),
                             Text(t.tagline!, style: VText.label.copyWith(fontStyle: FontStyle.italic)),
@@ -212,55 +225,174 @@ class _TmdbDetail extends ConsumerWidget {
                       rowIndex: 0,
                       scrollToTop: true,
                       children: [
-                        if (copies.isNotEmpty) ...[
+                        // 查找中、没找到时按钮也在：遥控器焦点停在这里，页面不会滚到演职员行把标题顶出屏幕
+                        (node) => PillButton(
+                          focusNode: node,
+                          large: true,
+                          busy: loading && !found,
+                          icon: found ? Icons.play_arrow_rounded : Icons.block_rounded,
+                          label: found
+                              ? (t.isTv
+                                    ? '去选集观看'
+                                    : resumeAt > Duration.zero
+                                    ? '继续 · ${formatClock(resumeAt)}'
+                                    : '播放')
+                              : loading
+                              ? '正在加载'
+                              : '暂无可播放资源',
+                          onPressed: !found
+                              ? null
+                              : t.isTv
+                              ? () => context.push('/item/${copies.first.serverId}/${copies.first.id}')
+                              : () => _play(selected!),
+                        ),
+                        if (!t.isTv && selected != null && resumeAt > Duration.zero)
                           (node) => PillButton(
                             focusNode: node,
-                            large: true,
-                            icon: Icons.play_arrow_rounded,
-                            label: t.isTv ? '去选集观看' : '播放',
-                            onPressed: () => playTmdbTitle(context, copies.first),
+                            icon: Icons.replay_rounded,
+                            label: '从头播放',
+                            onPressed: () {
+                              rememberSource(selected.item, selected.serverId);
+                              context.push(selected.playRoute());
+                            },
                           ),
-                          (node) => PillButton(
+                        if (!t.isTv && selected != null)
+                          (node) => CircleIconButton(
                             focusNode: node,
                             icon: Icons.video_library_outlined,
-                            label: copies.length > 1 ? '选择资源 · ${copies.length}' : '媒体库详情',
-                            onPressed: () => copies.length == 1
-                                ? context.push('/item/${copies.first.serverId}/${copies.first.id}')
-                                : showContextMenu(
-                                    context,
-                                    title: '选择资源',
-                                    actions: [
-                                      for (final c in copies)
-                                        MenuAction(
-                                          [serverName(c.serverId), c.name, if (c.year != null) '${c.year}'].join(' · '),
-                                          Icons.dns_outlined,
-                                          () => context.push('/item/${c.serverId}/${c.id}'),
-                                        ),
-                                    ],
-                                  ),
-                          ),
-                        ] else
-                          // 没找到资源时也要有一个按钮：遥控器焦点停在这里，页面不会滚到演职员行把标题顶出屏幕；
-                          // 服务器刚恢复在线时可以重新搜一次
-                          (node) => PillButton(
-                            focusNode: node,
-                            large: true,
-                            icon: searching ? Icons.hourglass_top_rounded : Icons.refresh_rounded,
-                            label: searching ? '正在各服务器搜索…' : '暂未找到资源 · 重新搜索',
-                            onPressed: () {
-                              if (!searching) ref.invalidate(tmdbLibrarySearchProvider(searchKeyOf(t)));
-                            },
+                            tooltip: '媒体库详情',
+                            onPressed: () => context.push('/item/${selected.serverId}/${selected.item.id}'),
                           ),
                       ],
                     ),
                   ),
                   const SizedBox(height: 48),
-                  ...tmdbExtraRows(t, firstRow: 1),
+                  if (t.isTv)
+                    _SeriesCopies(copies: copies, loading: loading, emptyText: emptyText)
+                  else
+                    SourcesSection(
+                      options: options,
+                      loading: loading,
+                      selected: selected,
+                      onSelect: (o) => setState(() => _sourceKey = sourceKeyOf(o)),
+                      onPlay: _play,
+                      firstRow: 1,
+                      emptyText: emptyText,
+                    ),
+                  const SizedBox(height: 24),
+                  ...tmdbExtraRows(t, firstRow: 1 + SourcesSection.rows),
                   const EndOfPage(leading: VSpace.safeH),
                 ],
               ),
             ),
           ),
+        ),
+      ],
+    );
+  }
+}
+
+/// 剧集：各服务器上找到的这部剧，点进媒体库详情页选集
+class _SeriesCopies extends ConsumerWidget {
+  const _SeriesCopies({required this.copies, required this.loading, required this.emptyText});
+
+  final List<MediaItem> copies;
+  final bool loading;
+  final String emptyText;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final servers = ref.watch(configProvider.select((c) => c.servers));
+    final header = Padding(
+      padding: const EdgeInsets.fromLTRB(VSpace.safeH, 0, VSpace.safeH, 18),
+      child: Text('播放资源', style: VText.rowTitle.copyWith(color: const Color(0xEBFFFFFF))),
+    );
+    if (copies.isEmpty) {
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          header,
+          if (loading)
+            const SourceSkeletonRow()
+          else
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: VSpace.safeH),
+              child: Text(emptyText, style: VText.label.copyWith(color: VColors.textTertiary)),
+            ),
+        ],
+      );
+    }
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        header,
+        FocusRow(
+          rowIndex: 1,
+          leading: VSpace.safeH,
+          itemCount: copies.length,
+          itemExtent: SourceCard.width,
+          height: SourceCard.height,
+          itemBuilder: (context, i, node) {
+            final c = copies[i];
+            final server = servers.where((s) => s.id == c.serverId).firstOrNull;
+            return VFocusable(
+              focusNode: node,
+              radius: VRadius.card,
+              scale: 1.05,
+              onActivate: () => context.push('/item/${c.serverId}/${c.id}'),
+              builder: (context, focused) => AnimatedContainer(
+                duration: VMotion.focus,
+                width: SourceCard.width,
+                height: SourceCard.height,
+                padding: const EdgeInsets.fromLTRB(24, 20, 20, 18),
+                decoration: BoxDecoration(
+                  color: focused ? const Color(0x29FFFFFF) : const Color(0x12FFFFFF),
+                  borderRadius: BorderRadius.circular(VRadius.card),
+                  border: Border.all(color: const Color(0x1FFFFFFF)),
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      c.name,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(fontSize: 26, fontWeight: FontWeight.w700),
+                    ),
+                    const SizedBox(height: 10),
+                    Text(
+                      [
+                        if (c.year != null) '${c.year}',
+                        if (c.childCount != null) '${c.childCount} 季',
+                        if (c.position > Duration.zero || c.lastPlayed != null) '看过',
+                      ].join('   '),
+                      style: VText.caption,
+                    ),
+                    const Spacer(),
+                    Container(height: 1, color: const Color(0x1AFFFFFF)),
+                    const SizedBox(height: 12),
+                    Row(
+                      children: [
+                        if (server != null) ...[
+                          SizedBox.square(dimension: 24, child: ServerTypeLogo(server.type)),
+                          const SizedBox(width: 10),
+                        ],
+                        Expanded(
+                          child: Text(
+                            server?.displayName ?? '服务器',
+                            style: VText.small.copyWith(fontWeight: FontWeight.w600),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ),
+                        const Icon(Icons.chevron_right_rounded, color: VColors.textTertiary),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+            );
+          },
         ),
       ],
     );

@@ -9,6 +9,7 @@ import '../index/index_sync.dart';
 import '../index/media_index.dart';
 import '../media/media_models.dart';
 import '../media/server_registry.dart';
+import 'tmdb_link.dart';
 import '../../player/preload.dart';
 
 /// 一个可播放的版本：哪台服务器、哪个条目（电影 / 单集）、哪个 MediaSource（docs/04-aggregation.md §5）
@@ -79,7 +80,6 @@ typedef SourcesKey = ({String serverId, String itemId});
 /// 某个电影 / 单集在所有服务器上的可播放版本（已排序）。
 final sourceOptionsProvider = FutureProvider.family<List<SourceOption>, SourcesKey>((ref, key) async {
   ref.watch(indexRevisionProvider);
-  final config = ref.read(configProvider);
   final home = ref.read(serverClientProvider(key.serverId));
   if (home == null) return const [];
   final target = await home.item(key.itemId);
@@ -115,7 +115,14 @@ final sourceOptionsProvider = FutureProvider.family<List<SourceOption>, SourcesK
   final seen = <String>{};
   final targets = perServer.where((it) => seen.add('${it.serverId}/${it.id}')).toList();
 
-  // 2. 并发获取播放信息，先回来的先用；单台超时不拖累整体
+  final options = await _optionsOf(ref, targets);
+  final preferred = await PreferredServers.get(titleKeyOf(titleItem));
+  return rankSources(options, preferredServerId: preferred ?? target.serverId);
+});
+
+/// 并发获取每个条目的播放信息，展开成可播放版本；单台超时 / 失败不拖累整体
+Future<List<SourceOption>> _optionsOf(Ref ref, List<MediaItem> targets) async {
+  final config = ref.read(configProvider);
   final results = await Future.wait(
     targets.map((it) async {
       final client = ref.read(serverClientProvider(it.serverId));
@@ -134,8 +141,19 @@ final sourceOptionsProvider = FutureProvider.family<List<SourceOption>, SourcesK
       }
     }),
   );
-  final preferred = await PreferredServers.get(titleKeyOf(titleItem));
-  return rankSources([for (final r in results) ...r], preferredServerId: preferred ?? target.serverId);
+  return [for (final r in results) ...r];
+}
+
+/// TMDB 详情页（电影）：聚合搜索找到的各服务器副本 → 每个副本的所有版本（已排序）。剧集返回空，到媒体库详情页选集。
+final tmdbSourceOptionsProvider = FutureProvider.autoDispose.family<List<SourceOption>, TmdbSearchKey>((
+  ref,
+  key,
+) async {
+  final copies = await ref.watch(tmdbLibrarySearchProvider(key).future);
+  if (key.isTv || copies.isEmpty) return const [];
+  final options = await _optionsOf(ref, copies);
+  final preferred = await PreferredServers.get(titleKeyOf(copies.first));
+  return rankSources(options, preferredServerId: preferred);
 });
 
 /// 播放某个版本时记下偏好服务器
