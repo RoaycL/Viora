@@ -174,5 +174,4 @@ flutter test
 flutter analyze
 ```
 
-把 `pubspec.yaml` 的 `version` 改大后合并到 main，CI（`.github/workflows/release.yml`）会在 main 上自动构建 APK 与 Windows 安装包并发布预发布版本。
-PR 会先运行静态检查与测试。TV 性能测量使用单独的 Profile APK，下载和日志说明见 [TV 性能优化与测量](docs/14-tv-performance.md)。
+把 `pubspec.yaml` 的 `version` 改大后合并到 main，CI（`.github/workflows/release.yml`，只在 main 上运行）会自动构建 APK 与 Windows 安装包并发布预发布版本。

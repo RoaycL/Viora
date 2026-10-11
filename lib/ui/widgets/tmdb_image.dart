@@ -4,7 +4,6 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../data/tmdb/tmdb_client.dart';
 import 'art.dart';
 import 'cached_image.dart';
-import '../../core/net/image_request_pool.dart';
 import 'image_sizing.dart';
 import 'server_image.dart';
 
@@ -75,11 +74,7 @@ class TmdbImage extends ConsumerWidget {
     if (client == null || path == null || path!.isEmpty) return fallback;
     final px = ImageSizing.physicalWidth(context, width);
     return Image(
-      image: netImage(
-        client.image(path!, size: kind.sizeFor(px)),
-        cacheWidth: px,
-        priority: kind == TmdbImageKind.backdrop ? ImageRequestPriority.visible : ImageRequestPriority.normal,
-      ),
+      image: netImage(client.image(path!, size: kind.sizeFor(px)), cacheWidth: px),
       fit: fit,
       alignment: alignment,
       color: color,

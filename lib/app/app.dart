@@ -9,7 +9,6 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../data/config/config_store.dart';
-import '../core/performance/frame_stats.dart';
 import '../data/media/server_registry.dart';
 import '../player/playback_cache.dart';
 import '../ui/widgets/cached_image.dart';
@@ -95,14 +94,6 @@ class _VioraAppState extends ConsumerState<VioraApp> with WidgetsBindingObserver
 
   /// 路由通知时导航器还没把新页面压进去（canPop 仍是 false），等这一帧建完再算
   void _scheduleCanGoBack() {
-    final path = _router.routerDelegate.currentConfiguration.uri.path;
-    FrameStats.instance.scene(
-      path == '/'
-          ? 'home'
-          : path.startsWith('/play/')
-          ? 'player'
-          : 'page',
-    );
     _updateCanGoBack();
     _updateCanGoBackAfterFrame();
   }
@@ -123,7 +114,6 @@ class _VioraAppState extends ConsumerState<VioraApp> with WidgetsBindingObserver
       HardwareKeyboard.instance.addHandler(_onHardwareKey);
     }
     _router.routerDelegate.addListener(_scheduleCanGoBack);
-    FrameStats.instance.scene('home');
     _autoCheckUpdate();
     // 上次异常退出时残留的播放缓存
     if (ref.read(configProvider).playback.clearCacheOnExit) PlaybackCache.clear();
