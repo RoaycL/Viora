@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../app/platform_profile.dart';
 import '../../app/theme.dart';
+import '../../core/platform/open_url.dart';
 import '../../data/config/app_config.dart';
 import '../../data/config/config_store.dart';
 import '../../data/media/server_registry.dart';
@@ -181,7 +182,7 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
   Future<void> _saveManifest() async {
     final c = ref.read(updateControllerProvider.notifier);
     final url = _manifest.text.trim();
-    await c.saveSettings(UpdateSettings(autoCheck: c.settings.autoCheck, manifestUrl: url.isEmpty ? null : url));
+    await c.saveSettings(c.settings.copyWith(manifestUrl: url.isEmpty ? null : url, clearManifest: url.isEmpty));
     final source = await c.sourceDescription();
     setState(() => _source = source);
     showToast('更新来源已保存');
@@ -442,7 +443,18 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
         title: '关于与更新',
         children: [
           _InfoLine(label: '当前版本', value: _version),
-          _InfoLine(label: '更新来源', value: _source),
+          _InfoLine(
+            label: '更新来源',
+            value: _source,
+            // 自定义清单地址时打开清单所在的网站，否则打开项目主页
+            onTap: () => openExternalUrl(
+              context,
+              updater.settings.manifestUrl == null
+                  ? UpdateController.homepage
+                  : Uri.parse(updater.settings.manifestUrl!).replace(path: '/', query: ''),
+              title: 'Viora 项目主页',
+            ),
+          ),
           const SizedBox(height: 20),
           Row(
             children: [
@@ -465,7 +477,23 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
             label: '启动时自动检查更新',
             value: updater.settings.autoCheck,
             onChanged: (v) async {
-              await updater.saveSettings(UpdateSettings(autoCheck: v, manifestUrl: updater.settings.manifestUrl));
+              await updater.saveSettings(updater.settings.copyWith(autoCheck: v));
+              setState(() {});
+            },
+          ),
+          const SizedBox(height: 12),
+          VToggle(
+            label: '通过反向代理检查和下载更新',
+            subtitle: updater.proxyAvailable
+                ? '电视连不上 GitHub 时打开（使用「反向代理」里的地址）。关闭时直连失败也会自动改走反向代理再试一次'
+                : '需要先在「设置 → 反向代理」填写地址',
+            value: updater.settings.useProxy && updater.proxyAvailable,
+            onChanged: (v) async {
+              if (v && !updater.proxyAvailable) {
+                showToast('请先在「设置 → 反向代理」填写地址');
+                return;
+              }
+              await updater.saveSettings(updater.settings.copyWith(useProxy: v));
               setState(() {});
             },
           ),
@@ -627,13 +655,17 @@ class _Section extends StatelessWidget {
 }
 
 class _InfoLine extends StatelessWidget {
-  const _InfoLine({required this.label, required this.value});
+  const _InfoLine({required this.label, required this.value, this.onTap});
 
   final String label;
   final String value;
 
+  /// 可点击（链接）：遥控器也能聚焦
+  final VoidCallback? onTap;
+
   @override
   Widget build(BuildContext context) {
+    final text = Text(value, style: VText.label);
     return Padding(
       padding: const EdgeInsets.only(bottom: 12),
       child: Row(
@@ -642,7 +674,43 @@ class _InfoLine extends StatelessWidget {
             width: 160,
             child: Text(label, style: VText.label.copyWith(color: VColors.textTertiary)),
           ),
-          Expanded(child: Text(value, style: VText.label)),
+          if (onTap == null)
+            Expanded(child: text)
+          else
+            VFocusable(
+              onActivate: onTap,
+              radius: VRadius.sm,
+              scale: 1.02,
+              showRing: false,
+              alignment: Alignment.centerLeft,
+              builder: (context, focused) => AnimatedContainer(
+                duration: VMotion.focus,
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                decoration: BoxDecoration(
+                  color: focused ? Colors.white : Colors.transparent,
+                  borderRadius: BorderRadius.circular(VRadius.sm),
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(
+                      value,
+                      style: VText.label.copyWith(
+                        color: focused ? const Color(0xFF0B0C10) : VColors.accent,
+                        decoration: focused ? null : TextDecoration.underline,
+                        decorationColor: VColors.accent,
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    Icon(
+                      Icons.open_in_new_rounded,
+                      size: 20,
+                      color: focused ? const Color(0xFF0B0C10) : VColors.accent,
+                    ),
+                  ],
+                ),
+              ),
+            ),
         ],
       ),
     );

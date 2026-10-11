@@ -9,6 +9,8 @@ import 'package:package_info_plus/package_info_plus.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import '../../data/config/config_store.dart';
+import '../../data/net/request_composer.dart';
 import 'app_version.dart';
 import 'update_source.dart';
 
@@ -18,15 +20,27 @@ const defaultUpdateRepo = 'Viora';
 
 /// 更新设置（持久化在 shared_preferences）。
 class UpdateSettings {
-  const UpdateSettings({this.autoCheck = true, this.manifestUrl});
+  const UpdateSettings({this.autoCheck = true, this.manifestUrl, this.useProxy = false});
 
   final bool autoCheck;
 
   /// 非空时使用自定义清单地址，否则使用 GitHub Releases
   final String? manifestUrl;
 
+  /// 检查和下载更新都经反向代理（「设置 → 反向代理」的地址）。
+  /// 关闭时也会在直连失败后自动改走代理再试一次
+  final bool useProxy;
+
   static const _kAutoCheck = 'update.autoCheck';
   static const _kManifest = 'update.manifestUrl';
+  static const _kProxy = 'update.useProxy';
+
+  UpdateSettings copyWith({bool? autoCheck, String? manifestUrl, bool clearManifest = false, bool? useProxy}) =>
+      UpdateSettings(
+        autoCheck: autoCheck ?? this.autoCheck,
+        manifestUrl: clearManifest ? null : (manifestUrl ?? this.manifestUrl),
+        useProxy: useProxy ?? this.useProxy,
+      );
 
   static Future<UpdateSettings> load() async {
     final prefs = await SharedPreferences.getInstance();
@@ -34,6 +48,7 @@ class UpdateSettings {
     return UpdateSettings(
       autoCheck: prefs.getBool(_kAutoCheck) ?? true,
       manifestUrl: url == null || url.isEmpty ? null : url,
+      useProxy: prefs.getBool(_kProxy) ?? false,
     );
   }
 
@@ -41,6 +56,7 @@ class UpdateSettings {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setBool(_kAutoCheck, autoCheck);
     await prefs.setString(_kManifest, manifestUrl ?? '');
+    await prefs.setBool(_kProxy, useProxy);
   }
 }
 
@@ -103,13 +119,30 @@ class UpdateController extends Notifier<UpdateState> {
     return AppVersion.tryParse('${p.version}+${p.buildNumber}') ?? const AppVersion(0, 0, 0);
   }
 
-  Future<UpdateSource> _source() async {
+  /// 经反向代理改写地址；没填反代地址时为 null
+  Uri Function(Uri)? get _proxyRewrite {
+    final proxy = ref.read(configProvider).proxy;
+    if (!proxy.enabled) return null;
+    return (u) => proxify(u, proxy.baseUrl);
+  }
+
+  /// 这次检查 / 下载是否走反代：设置里打开了，或直连失败后的重试
+  bool _viaProxy = false;
+
+  Future<UpdateSource> _source({bool? viaProxy}) async {
     final p = await packageInfo;
     final ua = 'Viora/${p.version} (${Platform.operatingSystem})';
+    final rewrite = (viaProxy ?? _viaProxy) ? _proxyRewrite : null;
     final manifest = settings.manifestUrl;
-    if (manifest != null) return ManifestSource(Uri.parse(manifest), userAgent: ua);
-    return GitHubReleasesSource(defaultUpdateOwner, defaultUpdateRepo, userAgent: ua);
+    if (manifest != null) return ManifestSource(Uri.parse(manifest), userAgent: ua, rewrite: rewrite);
+    return GitHubReleasesSource(defaultUpdateOwner, defaultUpdateRepo, userAgent: ua, rewrite: rewrite);
   }
+
+  /// 项目主页
+  static final homepage = GitHubReleasesSource(defaultUpdateOwner, defaultUpdateRepo, userAgent: '').homepage;
+
+  /// 是否填了反向代理地址（设置页据此决定能不能打开「经反向代理更新」）
+  bool get proxyAvailable => ref.read(configProvider).proxy.enabled;
 
   Future<String> sourceDescription() async => (await _source()).description;
 
@@ -130,7 +163,17 @@ class UpdateController extends Notifier<UpdateState> {
     if (state is UpdateDownloading) return null;
     state = const UpdateChecking();
     try {
-      final latest = await (await _source()).latest(platform);
+      UpdateInfo? latest;
+      _viaProxy = settings.useProxy && _proxyRewrite != null;
+      try {
+        latest = await (await _source()).latest(platform);
+      } catch (e) {
+        // 直连失败（电视连不上 GitHub 很常见）：填了反代地址就改走反代再试一次，下载也跟着走反代
+        if (_viaProxy || _proxyRewrite == null) rethrow;
+        debugPrint('update check direct failed, retry via proxy: $e');
+        _viaProxy = true;
+        latest = await (await _source()).latest(platform);
+      }
       final current = await currentVersion;
       if (latest != null && latest.version > current) {
         state = UpdateAvailable(latest);
@@ -167,8 +210,11 @@ class UpdateController extends Notifier<UpdateState> {
       ..userAgent = 'Viora/${p.version} (${Platform.operatingSystem})'
       ..connectionTimeout = const Duration(seconds: 15);
     try {
-      final request = await client.getUrl(info.downloadUrl);
-      final response = await request.close();
+      final response = await openFollowingRedirects(
+        client,
+        info.downloadUrl,
+        rewrite: _viaProxy ? _proxyRewrite : null,
+      );
       if (response.statusCode != 200) throw HttpException('下载失败：HTTP ${response.statusCode}');
       final total = response.contentLength > 0 ? response.contentLength : info.size;
       final sink = file.openWrite();
