@@ -23,6 +23,41 @@ class CachedNetImage extends ImageProvider<CachedNetImage> {
   static Future<Directory?>? _dir;
   static final _inflight = <String, Future<Uint8List>>{};
 
+  /// 同时下载的图片数（电视 4 张，电脑 8 张）。快速翻动时不会一下子发出几十个请求、
+  /// 同时攒着几十份图片数据等解码（2GB 电视内存峰值的主要来源之一）
+  static int maxDownloads = 8;
+  static int _active = 0;
+
+  /// 排队的下载：后进先出——最新请求的就是现在屏幕上的，翻过去的旧卡片排在后面
+  static final _waiting = <Completer<void>>[];
+
+  /// 共用一个连接池，不再每张图新建连接（省去反复握手，尤其是 HTTPS）
+  static final _client = HttpClient()
+    ..connectionTimeout = const Duration(seconds: 15)
+    ..idleTimeout = const Duration(seconds: 20)
+    ..maxConnectionsPerHost = 6;
+
+  @visibleForTesting
+  static int get activeDownloads => _active;
+
+  static Future<void> _acquire() async {
+    if (_active < maxDownloads) {
+      _active++;
+      return;
+    }
+    final slot = Completer<void>();
+    _waiting.add(slot);
+    await slot.future; // 名额由 _release 直接转交，_active 不变
+  }
+
+  static void _release() {
+    if (_waiting.isNotEmpty) {
+      _waiting.removeLast().complete();
+    } else {
+      _active--;
+    }
+  }
+
   static Future<Directory?> _cacheDir() => _dir ??= () async {
     if (kIsWeb) return null;
     try {
@@ -72,17 +107,25 @@ class CachedNetImage extends ImageProvider<CachedNetImage> {
   }
 
   Future<Uint8List> _download() async {
-    final client = HttpClient()..connectionTimeout = const Duration(seconds: 15);
+    await _acquire();
+    HttpClientRequest? req;
     try {
-      final req = await client.getUrl(Uri.parse(url));
+      req = await _client.getUrl(Uri.parse(url));
       headers.forEach(req.headers.set);
       final res = await req.close().timeout(const Duration(seconds: 30));
-      if (res.statusCode != HttpStatus.ok) throw HttpException('HTTP ${res.statusCode}', uri: Uri.parse(url));
+      if (res.statusCode != HttpStatus.ok) {
+        await res.drain<void>().catchError((_) {});
+        throw HttpException('HTTP ${res.statusCode}', uri: Uri.parse(url));
+      }
       final bytes = await consolidateHttpClientResponseBytes(res).timeout(const Duration(seconds: 60));
       if (bytes.isEmpty) throw const HttpException('empty image');
       return bytes;
+    } catch (_) {
+      // 超时 / 出错时断开这个请求，连接不留在池里
+      req?.abort();
+      rethrow;
     } finally {
-      client.close();
+      _release();
     }
   }
 

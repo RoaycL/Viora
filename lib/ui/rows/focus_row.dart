@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart' show ScrollCacheExtent;
 
+import '../../app/platform_profile.dart';
 import '../../app/theme.dart';
 import '../focus/row_focus.dart';
 import '../focus/input_mode.dart';
@@ -169,7 +170,9 @@ class _FocusRowState extends State<FocusRow> implements FocusRowHandle {
               controller: _scroll,
               scrollDirection: Axis.horizontal,
               clipBehavior: Clip.none,
-              scrollCacheExtent: const ScrollCacheExtent.pixels(1600),
+              // 屏幕外提前构建的范围：电视 800 像素（左右各多两三张卡），电脑 1600。
+              // 电视上每行少建一半屏外卡片，首页十来行加起来少解码几十张海报
+              scrollCacheExtent: ScrollCacheExtent.pixels(PlatformProfile.isTv ? 800 : 1600),
               padding: EdgeInsets.fromLTRB(widget.leading, FocusRow.focusBleed, VSpace.safeH, FocusRow.focusBleed),
               itemCount: widget.itemCount,
               separatorBuilder: (_, _) => SizedBox(width: widget.gap),

@@ -10,11 +10,19 @@ abstract final class ImageSizing {
   /// 媒体服务器（Emby / Jellyfin）每遇到一个新尺寸都要在 NAS 上现场缩放并缓存，档位少可以大幅减少 CPU 负载。
   static const tiers = [240, 360, 480, 720, 1080, 1440, 1920, 2560, 3840];
 
+  /// 电视上全屏背景图的解码宽度
+  static const tvBackdropWidth = 1280;
+
   static int physicalWidth(BuildContext context, double designWidth) {
     final dpr = MediaQuery.maybeDevicePixelRatioOf(context) ?? 1;
     final px = (designWidth * dpr).ceil();
     final w = tiers.firstWhere((t) => t >= px, orElse: () => tiers.last);
-    // 电视界面按 1080P 渲染，图片最多解码到 1920 宽：4K 解码一张背景就要 30MB 以上内存、几百毫秒 CPU
-    return PlatformProfile.isTv && w > 1920 ? 1920 : w;
+    if (!PlatformProfile.isTv) return w;
+    // 电视：全屏背景解码到 1280 宽（压在渐变和压暗下面看不出差别）。1920 宽一张约 8MB、1280 宽约 3.7MB，
+    // 来回切换背景时内存峰值和解码耗时都少一半以上（2GB 电视操作快了会因内存不足闪退）。
+    // TMDB 的背景图本来就是 1280 宽，Emby / Jellyfin 的按这个宽度向服务器要缩小后的图
+    if (designWidth >= 1600) return tvBackdropWidth;
+    // 其他图片最多解码到 1920 宽：4K 解码一张就要 30MB 以上内存、几百毫秒 CPU
+    return w > 1920 ? 1920 : w;
   }
 }

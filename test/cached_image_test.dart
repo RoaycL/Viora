@@ -113,4 +113,41 @@ void main() {
       await server.close(force: true);
     });
   });
+
+  testWidgets('同时下载的图片有上限；排队时最新请求的先下（翻过去的旧卡片排后面）', (tester) async {
+    await tester.runAsync(() async {
+      HttpOverrides.global = null;
+      final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+      var active = 0, peak = 0;
+      final order = <String>[];
+      final gate = Completer<void>();
+      server.listen((req) async {
+        active++;
+        if (active > peak) peak = active;
+        order.add(req.uri.path);
+        if (req.uri.path == '/0.png') await gate.future;
+        await Future<void>.delayed(const Duration(milliseconds: 20));
+        active--;
+        req.response
+          ..headers.contentType = ContentType('image', 'png')
+          ..add(_png);
+        await req.response.close();
+      });
+      final saved = CachedNetImage.maxDownloads;
+      CachedNetImage.maxDownloads = 1;
+      addTearDown(() => CachedNetImage.maxDownloads = saved);
+      final base = 'http://127.0.0.1:${server.port}';
+      // 第 0 张占着唯一的名额，1~3 排队；放行后应先下最新的 3
+      final first = _load(CachedNetImage('$base/0.png'));
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+      final rest = [for (var i = 1; i <= 3; i++) _load(CachedNetImage('$base/$i.png'))];
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+      gate.complete();
+      await Future.wait([first, ...rest]);
+      expect(peak, 1);
+      expect(order, ['/0.png', '/3.png', '/2.png', '/1.png']);
+      expect(CachedNetImage.activeDownloads, 0);
+      await server.close(force: true);
+    });
+  });
 }

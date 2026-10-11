@@ -62,10 +62,17 @@ class ExoController(
             .build()
         // 起播只需缓冲 1 秒（默认 2.5 秒），卡顿后重新缓冲 2.5 秒（默认 5 秒），加快起播与拖动后的恢复。
         // 预读上限按设置的字节数（ExoPlayer 缓冲在内存里，最多用可用内存的 40%，避免电视盒子内存不足）
+        // 低内存设备（系统标记的低内存设备，或总内存不超过 2.5GB 的电视盒子）再封顶 96MB：
+        // ExoPlayer 的缓冲放在 Java 堆里，2GB 盒子上缓冲太大会频繁回收内存、卡顿甚至被系统杀掉
+        val am = context.getSystemService(Context.ACTIVITY_SERVICE) as? android.app.ActivityManager
+        val mem = android.app.ActivityManager.MemoryInfo().also { am?.getMemoryInfo(it) }
+        val lowRam = am?.isLowRamDevice == true || (mem.totalMem in 1..(2560L * 1024 * 1024))
         val target = bufferBytes
             .coerceAtMost((Runtime.getRuntime().maxMemory() * 0.4).toLong())
+            .let { if (lowRam) it.coerceAtMost(96L * 1024 * 1024) else it }
             .coerceIn(32L * 1024 * 1024, Int.MAX_VALUE.toLong())
             .toInt()
+        android.util.Log.i("Viora", "ExoPlayer buffer ${target shr 20}MB (lowRam=$lowRam, total=${mem.totalMem shr 20}MB)")
         val loadControl = DefaultLoadControl.Builder()
             .setBufferDurationsMs(15_000, 60 * 60_000, 1_000, 2_500)
             .setTargetBufferBytes(target)

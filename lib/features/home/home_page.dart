@@ -5,6 +5,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../app/input/back_handler.dart';
+import '../../app/platform_profile.dart';
 import '../../app/theme.dart';
 import '../../data/aggregate/tmdb_link.dart';
 import '../../data/config/config_store.dart';
@@ -170,7 +171,8 @@ class _HomeBodyState extends ConsumerState<_HomeBody> {
   /// 背景（和 Hero 预览）切换加防抖，避免快速移动 / 鼠标划过时频繁闪烁。
   void _setBackdrop(_Backdrop b) {
     _backdropDebounce?.cancel();
-    _backdropDebounce = Timer(const Duration(milliseconds: 220), () {
+    // 电视等焦点停稳一点再换：每次换背景都要下载、解码一张全屏图（遥控器按住方向键时焦点约 150ms 移动一次）
+    _backdropDebounce = Timer(Duration(milliseconds: PlatformProfile.isTv ? 350 : 220), () {
       if (!mounted) return;
       if (b.key != _backdrop?.key || b.hero?.key != _preview?.key) {
         setState(() {
