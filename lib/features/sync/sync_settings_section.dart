@@ -12,6 +12,7 @@ import '../../data/media/server_registry.dart';
 import '../../data/net/request_composer.dart';
 import '../../data/sync/config_payload.dart';
 import '../../domain/models/segment_settings.dart';
+import '../../domain/models/ratings_settings.dart';
 import '../../data/sync/config_receiver.dart';
 import '../../data/sync/config_sender.dart';
 import '../../data/sync/webdav_sync.dart';
@@ -23,6 +24,7 @@ import '../../ui/widgets/buttons.dart';
 import '../../ui/widgets/form.dart';
 import '../../ui/widgets/toast.dart';
 import '../segments/segment_service.dart';
+import '../metadata/ratings_service.dart';
 import '../settings/support_actions.dart';
 import 'webdav_service.dart';
 
@@ -265,6 +267,15 @@ Future<String> applySyncPayload(
       await ref.read(segmentSettingsProvider.notifier).save(applySegmentSync(current, result));
     } catch (e) {
       log('片头片尾设置保存失败：$e');
+    }
+  }
+  if (result.ratingKeys.isNotEmpty || result.ratingSettings != null) {
+    // 评分设置存不进系统安全存储时只记日志，不影响服务器等其他配置的导入
+    try {
+      final current = await ref.read(ratingsSettingsProvider.future);
+      await ref.read(ratingsSettingsProvider.notifier).save(applyRatingsSync(current, result));
+    } catch (e) {
+      log('外部评分设置保存失败：$e');
     }
   }
   final message = '已导入：${result.summary.join('、')}';
@@ -528,10 +539,22 @@ Future<void> showSendDialog(BuildContext context, WidgetRef ref) async {
           segments = await ref.read(segmentSettingsProvider.future);
         } catch (_) {}
       }
+      RatingsSettings? ratings;
+      if (form.sections.contains(SyncSection.ratings)) {
+        try {
+          ratings = await ref.read(ratingsSettingsProvider.future);
+        } catch (_) {}
+      }
       final name = config.playback.deviceName.trim().isNotEmpty
           ? config.playback.deviceName.trim()
           : defaultDeviceName();
-      final payload = buildSyncPayload(config, sections: form.sections, segments: segments, from: 'Windows · $name');
+      final payload = buildSyncPayload(
+        config,
+        sections: form.sections,
+        segments: segments,
+        ratings: ratings,
+        from: 'Windows · $name',
+      );
       try {
         final message = await ConfigSender.send(base, form.code.text, payload);
         showToast('电视$message');

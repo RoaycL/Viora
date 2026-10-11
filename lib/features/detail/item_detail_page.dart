@@ -9,6 +9,7 @@ import '../../data/aggregate/sources.dart';
 import '../../data/media/media_models.dart';
 import '../../data/media/server_registry.dart';
 import '../../data/tmdb/tmdb_client.dart';
+import '../../domain/models/external_rating.dart';
 import '../../player/preload.dart';
 import '../../ui/focus/row_focus.dart';
 import '../../ui/rows/cards.dart';
@@ -17,6 +18,7 @@ import '../../ui/widgets/buttons.dart';
 import '../../ui/widgets/server_image.dart';
 import '../../ui/widgets/toast.dart';
 import '../browse/media_cards.dart';
+import '../metadata/external_ratings.dart';
 import '../tmdb/tmdb_detail_page.dart';
 import 'detail_layout.dart';
 import 'source_widgets.dart';
@@ -124,6 +126,25 @@ class _ItemDetailPageState extends ConsumerState<ItemDetailPage> {
     final tmdb = tmdbId != null && (isSeries || item.kind == MediaKind.movie)
         ? ref.watch(tmdbTitleProvider((isTv: isSeries, id: tmdbId))).value
         : null;
+    final parent = item.kind == MediaKind.episode && item.seriesId != null
+        ? ref.watch(itemProvider((serverId: item.serverId, itemId: item.seriesId!))).value
+        : null;
+    final ratingsQuery = switch (item.kind) {
+      MediaKind.movie || MediaKind.series => RatingQuery(
+        kind: isSeries ? RatingMediaKind.series : RatingMediaKind.movie,
+        imdbId: RatingQuery.validImdb(item.imdbId) ? item.imdbId : tmdb?.imdbId,
+        tmdbId: tmdbId,
+      ),
+      MediaKind.episode => RatingQuery(
+        kind: RatingMediaKind.episode,
+        imdbId: item.imdbId,
+        seriesImdbId: parent?.imdbId,
+        seriesTmdbId: int.tryParse(parent?.tmdbId ?? ''),
+        season: item.seasonNumber,
+        episode: item.episodeNumber,
+      ),
+      _ => null,
+    };
     final favorite = _favorite ?? item.favorite;
     final played = _played ?? item.played;
     final playTarget = isSeries ? (nextUp ?? episodes.firstOrNull) : item;
@@ -185,35 +206,12 @@ class _ItemDetailPageState extends ConsumerState<ItemDetailPage> {
           ],
           const SizedBox(height: 22),
           Text(meta, style: const TextStyle(fontSize: 22, color: Color(0xD1FFFFFF))),
-          if ((item.rating ?? 0) > 0 || (item.criticRating ?? 0) > 0) ...[
-            const SizedBox(height: 14),
-            Row(
-              children: [
-                if ((item.rating ?? 0) > 0) ...[
-                  const Icon(Icons.star_rounded, color: VColors.rating, size: 26),
-                  const SizedBox(width: 6),
-                  Text(
-                    item.rating!.toStringAsFixed(1),
-                    style: const TextStyle(fontSize: 24, fontWeight: FontWeight.w600, color: VColors.rating),
-                  ),
-                  const SizedBox(width: 28),
-                ],
-                // 烂番茄新鲜度：≥ 60% 新鲜（红番茄），否则烂番茄（绿）
-                if ((item.criticRating ?? 0) > 0) ...[
-                  Text(item.criticRating! >= 60 ? '🍅' : '🤢', style: const TextStyle(fontSize: 22)),
-                  const SizedBox(width: 6),
-                  Text(
-                    '烂番茄 ${item.criticRating!.round()}%',
-                    style: TextStyle(
-                      fontSize: 22,
-                      fontWeight: FontWeight.w600,
-                      color: item.criticRating! >= 60 ? const Color(0xFFFF6B5B) : const Color(0xFF8BC34A),
-                    ),
-                  ),
-                ],
-              ],
-            ),
-          ],
+          ExternalRatings(
+            query: ratingsQuery,
+            serverRating: item.rating,
+            criticRating: item.criticRating,
+            serverCertification: item.officialRating,
+          ),
           if (zh.overview?.isNotEmpty == true) ...[
             const SizedBox(height: 18),
             Text(

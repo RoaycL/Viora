@@ -8,7 +8,7 @@
 1. 电视：设置 → 同步配置 → 接收配置。在 8090（被占用时用 8091–8093）端口开一个 HTTP 入口，
    屏幕上显示二维码（`http://<电视IP>:<端口>/?code=<配对码>`）、地址和 4 位配对码。
 2. 手机扫码打开配置网页（电视直接提供，不依赖外部资源），填写服务器（可多台、多线路）、
-   反向代理、播放 UA、TMDB Key、弹幕服务器、片头片尾 Key，点「发送到电视」。可以多次提交。
+   反向代理、播放 UA、TMDB Key、外部评分凭据、弹幕服务器、片头片尾 Key，点「发送到电视」。可以多次提交。
 3. 或者 Windows：设置 → 同步配置 → 发送到电视。扫描本机所在网段（/24，每个地址只试 8090，64 路并发，约 2–4 秒）
    找到开着接收入口的电视；没找到时手动输入电视上显示的地址。输入配对码，勾选要发送的部分后发送。
 4. 电视收到后合并配置，并在后台对新增 / 修改的服务器测速、登录、同步索引；窗口里显示进度。
@@ -21,7 +21,7 @@
 | GET | `/viora/ping` | `{"app":"viora","name":"Viora · 客厅电视","version":"0.11.2"}`，Windows 扫描用 |
 | POST | `/viora/import` | `{"code":"4827","payload":{…}}`，返回 `{"ok":true,"message":"已导入：…"}` 或 `{"error":"…"}` |
 
-`payload` 格式见 `lib/data/sync/config_payload.dart`：`servers`、`proxy`、`playback`、`tmdb`、`danmaku`、`segments` 都可以省略。
+`payload` 格式见 `lib/data/sync/config_payload.dart`：`servers`、`proxy`、`playback`、`tmdb`、`danmaku`、`segments`、`ratings` 都可以省略。
 
 ## 3. 合并规则
 
@@ -60,3 +60,7 @@
 
 - `test/sync/config_sync_test.dart`：合并规则、打包后再合并、接收端 + 发送端真实端口往返（网页、配对码、错码换码、停止后连不上）。
 - `test/sync/receive_dialog_test.dart`：接收窗口开启 / 关闭。
+
+## 外部评分
+
+评分来源开关、顺序和 API 地址支持同步；在「设置 → 元数据」开启「同步评分凭据」后才导出自行填写的 OMDb Key / Trakt Client ID。接收端不会自动开启凭据导出；未传 Key 保留本机值，显式空 Key 清除。评分缓存不同步。手机网页可直接填两个凭据，接收后开启相应来源。
