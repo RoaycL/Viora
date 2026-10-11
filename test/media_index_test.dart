@@ -185,4 +185,28 @@ void main() {
     expect(nextEpisodeAfter(all, ep('s2e1', 2, 1)), isNull);
     expect(nextEpisodeAfter(all, ep('sp1', 0, 1))?.id, 'sp2');
   });
+
+  test('剧集详情默认选中：最近看的那集没看完就是它，看完了是下一集（跨季），没看过返回 null', () {
+    MediaItem ep(int season, int episode, {bool played = false, int? minutes, DateTime? at}) => MediaItem(
+      serverId: 'a',
+      id: 's${season}e$episode',
+      kind: MediaKind.episode,
+      name: '',
+      seasonNumber: season,
+      episodeNumber: episode,
+      played: played,
+      position: Duration(minutes: minutes ?? 0),
+      lastPlayed: at,
+    );
+    expect(pickStartEpisode([ep(1, 1), ep(1, 2)]), isNull);
+    expect(
+      pickStartEpisode([
+        ep(1, 1, played: true, at: DateTime(2026)),
+        ep(1, 2, minutes: 10, at: DateTime(2026, 2)),
+        ep(1, 3),
+      ]),
+      (1, 2),
+    );
+    expect(pickStartEpisode([ep(1, 1), ep(1, 2, played: true, at: DateTime(2026)), ep(2, 1)]), (2, 1));
+  });
 }

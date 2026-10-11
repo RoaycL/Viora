@@ -15,11 +15,10 @@ import '../../ui/rows/cards.dart';
 import '../../ui/rows/focus_row.dart';
 import '../../ui/widgets/buttons.dart';
 import '../../ui/widgets/tmdb_image.dart';
-import '../../ui/focus/focusable.dart';
 import '../browse/media_cards.dart';
 import '../detail/detail_layout.dart';
 import '../detail/source_widgets.dart';
-import '../library/library_page.dart' show ServerTypeLogo;
+import '../../ui/widgets/server_image.dart' show placeholderArt;
 import 'tmdb_cards.dart';
 
 /// TMDB 作品详情：媒体库里没有的作品（首页推荐、人物作品、相似推荐点进来）。
@@ -85,25 +84,53 @@ class _TmdbDetailState extends ConsumerState<_TmdbDetail> {
   /// 选中的版本（[sourceKeyOf]）；没选时用排在第一的
   String? _sourceKey;
 
-  void _play(SourceOption o) {
-    rememberSource(o.item, o.serverId);
-    context.push(o.playRoute(position: o.item.position));
+  /// 剧集：用户选中的季 / 集（没选时按观看进度自动定位）
+  int? _season;
+  int? _episode;
+
+  void _play(SourceOption o, {bool fromStart = false}) {
+    // 记住这部作品用的服务器（剧集按剧记，下次默认还用这台）
+    final copies = ref.read(tmdbLibrarySearchProvider(searchKeyOf(widget.t))).value ?? const <MediaItem>[];
+    rememberSource(copies.where((c) => c.serverId == o.serverId).firstOrNull ?? o.item, o.serverId);
+    context.push(o.playRoute(position: fromStart ? Duration.zero : o.item.position));
   }
 
   @override
   Widget build(BuildContext context) {
     final t = widget.t;
-    // 进入详情页才到各服务器搜索资源；电影再取每个副本的所有版本
-    final search = ref.watch(tmdbLibrarySearchProvider(searchKeyOf(t)));
+    final key = searchKeyOf(t);
+    // 进入详情页才到各服务器搜索资源；电影取每个副本的所有版本，剧集取选中那一集的所有版本
+    final search = ref.watch(tmdbLibrarySearchProvider(key));
     final copies = search.value ?? const <MediaItem>[];
-    final optionsAsync = t.isTv ? null : ref.watch(tmdbSourceOptionsProvider(searchKeyOf(t)));
-    final options = optionsAsync?.value ?? const <SourceOption>[];
-    final loading = search.isLoading || (optionsAsync?.isLoading ?? false);
+    final libraryEpisodes = t.isTv ? ref.watch(tmdbSeriesEpisodesProvider(key)) : null;
+    final episodes = libraryEpisodes?.value ?? const <MediaItem>[];
+    final seasons = [...t.seasonList.where((x) => x.number > 0), ...t.seasonList.where((x) => x.number == 0)];
+    final start = pickStartEpisode(episodes);
+    final season = _season ?? start?.$1 ?? seasons.firstOrNull?.number ?? 1;
+    final seasonEps = t.isTv ? ref.watch(tmdbSeasonProvider((tvId: t.id, season: season))).value : null;
+    final episode =
+        _episode ?? (start != null && start.$1 == season ? start.$2 : null) ?? seasonEps?.firstOrNull?.number ?? 1;
+    final optionsAsync = t.isTv
+        ? ref.watch(tmdbEpisodeSourcesProvider((title: key, season: season, episode: episode)))
+        : ref.watch(tmdbSourceOptionsProvider(key));
+    final options = optionsAsync.value ?? const <SourceOption>[];
+    final loading = search.isLoading || (libraryEpisodes?.isLoading ?? false) || optionsAsync.isLoading;
     final selected = options.where((o) => sourceKeyOf(o) == _sourceKey).firstOrNull ?? options.firstOrNull;
     final hasServers = ref.watch(configProvider.select((c) => c.servers.isNotEmpty));
-    final emptyText = hasServers ? '暂未找到资源' : '还没有添加服务器';
-    final found = t.isTv ? copies.isNotEmpty : selected != null;
+    final emptyText = !hasServers
+        ? '还没有添加服务器'
+        : t.isTv && copies.isNotEmpty
+        ? '各服务器上都没有第 $season 季第 $episode 集'
+        : '暂未找到资源';
+    final found = selected != null;
     final resumeAt = selected?.item.position ?? Duration.zero;
+    final epLabel = 'S${season}E$episode';
+    String playLabel() {
+      if (!found) return loading ? '正在加载' : '暂无可播放资源';
+      final what = t.isTv ? ' $epLabel' : '';
+      return resumeAt > Duration.zero ? '继续$what · ${formatClock(resumeAt)}' : '播放$what';
+    }
+
     final meta = [
       t.isTv ? '剧集' : '电影',
       if (t.year != null) '${t.year}',
@@ -192,37 +219,25 @@ class _TmdbDetailState extends ConsumerState<_TmdbDetail> {
                 large: true,
                 busy: loading && !found,
                 icon: found ? Icons.play_arrow_rounded : Icons.block_rounded,
-                label: found
-                    ? (t.isTv
-                          ? '去选集观看'
-                          : resumeAt > Duration.zero
-                          ? '继续 · ${formatClock(resumeAt)}'
-                          : '播放')
-                    : loading
-                    ? '正在加载'
-                    : '暂无可播放资源',
-                onPressed: !found
-                    ? null
-                    : t.isTv
-                    ? () => context.push('/item/${copies.first.serverId}/${copies.first.id}')
-                    : () => _play(selected!),
+                label: playLabel(),
+                onPressed: !found ? null : () => _play(selected),
               ),
-              if (!t.isTv && selected != null && resumeAt > Duration.zero)
+              if (selected != null && resumeAt > Duration.zero)
                 (node) => PillButton(
                   focusNode: node,
                   icon: Icons.replay_rounded,
                   label: '从头播放',
-                  onPressed: () {
-                    rememberSource(selected.item, selected.serverId);
-                    context.push(selected.playRoute());
-                  },
+                  onPressed: () => _play(selected, fromStart: true),
                 ),
-              if (!t.isTv && selected != null)
+              if (copies.isNotEmpty)
                 (node) => CircleIconButton(
                   focusNode: node,
                   icon: Icons.video_library_outlined,
                   tooltip: '媒体库详情',
-                  onPressed: () => context.push('/item/${selected.serverId}/${selected.item.id}'),
+                  onPressed: () {
+                    final c = copies.where((c) => c.serverId == selected?.serverId).firstOrNull ?? copies.first;
+                    context.push('/item/${c.serverId}/${c.id}');
+                  },
                 ),
             ],
           ),
@@ -230,129 +245,154 @@ class _TmdbDetailState extends ConsumerState<_TmdbDetail> {
       ),
       below: [
         const SizedBox(height: 48),
-        if (t.isTv)
-          _SeriesCopies(copies: copies, loading: loading, emptyText: emptyText)
-        else
-          SourcesSection(
-            options: options,
-            loading: loading,
-            selected: selected,
-            onSelect: (o) => setState(() => _sourceKey = sourceKeyOf(o)),
-            onPlay: _play,
-            firstRow: 1,
-            emptyText: emptyText,
+        if (t.isTv && seasons.isNotEmpty) ...[
+          if (seasons.length > 1)
+            Padding(
+              padding: const EdgeInsets.only(left: VSpace.safeH, bottom: 8),
+              child: FocusButtonRow(
+                rowIndex: 1,
+                spacing: 12,
+                children: [
+                  for (final x in seasons)
+                    (node) => SelectChip(
+                      node: node,
+                      label: x.name,
+                      selected: x.number == season,
+                      onTap: () => setState(() {
+                        _season = x.number;
+                        _episode = null;
+                        _sourceKey = null;
+                      }),
+                    ),
+                ],
+              ),
+            ),
+          _EpisodeRow(
+            tvId: t.id,
+            season: season,
+            selected: episode,
+            // 有季切换按钮时按钮就是标题；只有一季时显示季名
+            seasonLabel: seasons.length > 1 ? null : seasons.first.name,
+            library: episodes,
+            // 媒体库里根本没有这部剧时不逐集标「无资源」（下面的播放资源区会说明）
+            libraryLoaded: (libraryEpisodes?.hasValue ?? false) && copies.isNotEmpty,
+            onSelect: (n) {
+              if (n == episode) {
+                if (selected != null) _play(selected);
+                return;
+              }
+              setState(() {
+                _season = season;
+                _episode = n;
+                _sourceKey = null;
+              });
+            },
           ),
+          const SizedBox(height: 24),
+        ],
+        SourcesSection(
+          options: options,
+          loading: loading,
+          selected: selected,
+          onSelect: (o) => setState(() => _sourceKey = sourceKeyOf(o)),
+          onPlay: _play,
+          firstRow: 3,
+          caption: t.isTv ? epLabel : null,
+          emptyText: emptyText,
+        ),
         const SizedBox(height: 24),
-        ...tmdbExtraRows(t, firstRow: 1 + SourcesSection.rows),
+        ...tmdbExtraRows(t, firstRow: 3 + SourcesSection.rows),
         const EndOfPage(leading: VSpace.safeH),
       ],
     );
   }
 }
 
-/// 剧集：各服务器上找到的这部剧，点进媒体库详情页选集
-class _SeriesCopies extends ConsumerWidget {
-  const _SeriesCopies({required this.copies, required this.loading, required this.emptyText});
+/// 剧集：当前季的所有集（TMDB 数据），标出媒体库里有没有、看到哪里；点一下选中，再点一次播放
+class _EpisodeRow extends ConsumerWidget {
+  const _EpisodeRow({
+    required this.tvId,
+    required this.season,
+    required this.selected,
+    required this.library,
+    required this.libraryLoaded,
+    required this.onSelect,
+    this.seasonLabel,
+  });
 
-  final List<MediaItem> copies;
-  final bool loading;
-  final String emptyText;
+  final int tvId;
+  final int season;
+  final int selected;
+  final List<MediaItem> library;
+  final bool libraryLoaded;
+  final ValueChanged<int> onSelect;
+
+  /// 只有一季时行标题显示季名
+  final String? seasonLabel;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final servers = ref.watch(configProvider.select((c) => c.servers));
-    final header = Padding(
-      padding: const EdgeInsets.fromLTRB(VSpace.safeH, 0, VSpace.safeH, 18),
-      child: Text('播放资源', style: VText.rowTitle.copyWith(color: const Color(0xEBFFFFFF))),
-    );
-    if (copies.isEmpty) {
-      return Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          header,
-          if (loading)
-            const SourceSkeletonRow()
-          else
-            Padding(
-              padding: const EdgeInsets.fromLTRB(VSpace.safeH, 0, VSpace.safeH, 32),
-              child: Text(emptyText, style: VText.label.copyWith(color: VColors.textTertiary)),
-            ),
-        ],
+    final async = ref.watch(tmdbSeasonProvider((tvId: tvId, season: season)));
+    final eps = async.value ?? const <TmdbEpisode>[];
+    if (eps.isEmpty) {
+      return Padding(
+        padding: const EdgeInsets.fromLTRB(VSpace.safeH, 8, VSpace.safeH, 8),
+        child: Text(
+          async.isLoading ? '正在加载剧集…' : '没有找到这一季的剧集信息',
+          style: VText.label.copyWith(color: VColors.textTertiary),
+        ),
       );
     }
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        header,
-        FocusRow(
-          rowIndex: 1,
-          leading: VSpace.safeH,
-          itemCount: copies.length,
-          itemExtent: SourceCard.width,
-          height: SourceCard.height,
-          itemBuilder: (context, i, node) {
-            final c = copies[i];
-            final server = servers.where((s) => s.id == c.serverId).firstOrNull;
-            return VFocusable(
-              focusNode: node,
-              radius: VRadius.card,
-              scale: 1.05,
-              onActivate: () => context.push('/item/${c.serverId}/${c.id}'),
-              builder: (context, focused) => AnimatedContainer(
-                duration: VMotion.focus,
-                width: SourceCard.width,
-                height: SourceCard.height,
-                padding: const EdgeInsets.fromLTRB(24, 20, 20, 18),
-                decoration: BoxDecoration(
-                  color: focused ? const Color(0x29FFFFFF) : const Color(0x12FFFFFF),
-                  borderRadius: BorderRadius.circular(VRadius.card),
-                  border: Border.all(color: const Color(0x1FFFFFFF)),
-                ),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      c.name,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(fontSize: 26, fontWeight: FontWeight.w700),
-                    ),
-                    const SizedBox(height: 10),
-                    Text(
-                      [
-                        if (c.year != null) '${c.year}',
-                        if (c.childCount != null) '${c.childCount} 季',
-                        if (c.position > Duration.zero || c.lastPlayed != null) '看过',
-                      ].join('   '),
-                      style: VText.caption,
-                    ),
-                    const Spacer(),
-                    Container(height: 1, color: const Color(0x1AFFFFFF)),
-                    const SizedBox(height: 12),
-                    Row(
-                      children: [
-                        if (server != null) ...[
-                          SizedBox.square(dimension: 24, child: ServerTypeLogo(server.type)),
-                          const SizedBox(width: 10),
-                        ],
-                        Expanded(
-                          child: Text(
-                            server?.displayName ?? '服务器',
-                            style: VText.small.copyWith(fontWeight: FontWeight.w600),
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                          ),
-                        ),
-                        const Icon(Icons.chevron_right_rounded, color: VColors.textTertiary),
-                      ],
-                    ),
-                  ],
-                ),
-              ),
-            );
-          },
-        ),
-      ],
+    MediaItem? inLibrary(TmdbEpisode e) =>
+        library.where((x) => x.seasonNumber == e.season && x.episodeNumber == e.number).firstOrNull;
+    String two(int n) => n.toString().padLeft(2, '0');
+    final initial = eps.indexWhere((e) => e.number == selected);
+    return FocusRow(
+      key: ValueKey('tmdb-season-$season'),
+      rowIndex: 2,
+      leading: VSpace.safeH,
+      title: seasonLabel,
+      initialIndex: initial < 0 ? 0 : initial,
+      itemCount: eps.length,
+      itemExtent: LandscapeCard.width,
+      height: LandscapeCard.height,
+      itemBuilder: (context, i, node) {
+        final e = eps[i];
+        final have = inLibrary(e);
+        final isSelected = e.number == selected;
+        final progress = have == null
+            ? null
+            : have.played
+            ? 1.0
+            : (have.playedPercentage ?? 0) > 0
+            ? have.playedPercentage! / 100
+            : null;
+        return LandscapeCard(
+          node: node,
+          art: placeholderArt('$tvId/${e.season}/${e.number}'),
+          image: TmdbImage(
+            path: e.stillPath,
+            kind: TmdbImageKind.still,
+            width: LandscapeCard.width,
+            fallbackSeed: '$tvId/${e.season}/${e.number}',
+          ),
+          title: '${e.number}. ${e.name}',
+          subtitle: [
+            if (e.airDate != null) '${e.airDate!.year}-${two(e.airDate!.month)}-${two(e.airDate!.day)}',
+            if (e.runtimeMinutes != null && e.runtimeMinutes! > 0) '${e.runtimeMinutes} 分钟',
+          ].join(' · '),
+          tag: isSelected
+              ? '已选择'
+              : e.upcoming
+              ? '未播出'
+              : libraryLoaded && have == null
+              ? '无资源'
+              : null,
+          tagIcon: isSelected ? Icons.check_circle_rounded : null,
+          progress: progress,
+          onActivate: () => onSelect(e.number),
+        );
+      },
     );
   }
 }

@@ -209,6 +209,27 @@ MediaItem? nextEpisodeAfter(List<MediaItem> episodes, MediaItem current) {
       .firstOrNull;
 }
 
+/// 剧集详情默认选中哪一集（季号, 集号）：最近看的那集没看完就是它，看完了就是下一集；没看过返回 null
+(int, int)? pickStartEpisode(List<MediaItem> episodes) {
+  final watched = episodes
+      .where((e) => e.seasonNumber != null && e.episodeNumber != null && e.seasonNumber! > 0)
+      .where((e) => e.lastPlayed != null || e.position > Duration.zero || e.played)
+      .toList();
+  if (watched.isEmpty) return null;
+  int order(MediaItem e) => e.seasonNumber! * 10000 + e.episodeNumber!;
+  // 有播放时间按时间，否则按集序取最靠后的
+  watched.sort((a, b) {
+    final ta = a.lastPlayed, tb = b.lastPlayed;
+    if (ta != null && tb != null) return tb.compareTo(ta);
+    if (ta != null || tb != null) return ta != null ? -1 : 1;
+    return order(b).compareTo(order(a));
+  });
+  final last = watched.first;
+  if (!last.played) return (last.seasonNumber!, last.episodeNumber!);
+  final next = nextEpisodeAfter(episodes, last);
+  return next == null ? (last.seasonNumber!, last.episodeNumber!) : (next.seasonNumber!, next.episodeNumber!);
+}
+
 enum VideoRange { sdr, hdr10, hdr10Plus, hlg, dolbyVision }
 
 class MediaStreamInfo {

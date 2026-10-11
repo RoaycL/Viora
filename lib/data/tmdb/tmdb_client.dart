@@ -216,6 +216,14 @@ class TmdbClient {
     return TmdbTitle.fromJson(j, isTv: isTv);
   }
 
+  /// 剧集某一季的所有集（播出中的剧每天更新，缓存 12 小时）
+  Future<List<TmdbEpisode>> season(int tvId, int season) async {
+    final j = await get('/tv/$tvId/season/$season', ttl: const Duration(hours: 12));
+    return [
+      for (final e in (j['episodes'] as List? ?? const [])) TmdbEpisode.fromJson((e as Map).cast<String, dynamic>()),
+    ]..sort((a, b) => a.number.compareTo(b.number));
+  }
+
   Future<(TmdbPerson?, List<TmdbTitle>)> person(int id) async {
     final j = await get('/person/$id', query: {'append_to_response': 'combined_credits'}, ttl: detailTtl);
     final credits =
@@ -273,6 +281,13 @@ final tmdbTitleProvider = FutureProvider.family<TmdbTitle?, ({bool isTv, int id}
   final client = ref.watch(tmdbClientProvider);
   if (client == null) return null;
   return client.title(key.isTv, key.id);
+});
+
+/// 剧集某一季的所有集
+final tmdbSeasonProvider = FutureProvider.family<List<TmdbEpisode>, ({int tvId, int season})>((ref, key) async {
+  final client = ref.watch(tmdbClientProvider);
+  if (client == null) return const [];
+  return client.season(key.tvId, key.season);
 });
 
 final tmdbPersonProvider = FutureProvider.family<(TmdbPerson?, List<TmdbTitle>), int>((ref, id) async {

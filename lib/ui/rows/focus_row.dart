@@ -26,7 +26,11 @@ class FocusRow extends StatefulWidget {
     this.leading = VSpace.contentLeft,
     this.verticalAlignment = 0.32,
     this.onItemFocused,
+    this.initialIndex = 0,
   });
+
+  /// 初始位置：行一出现就滚到这一项，↓ 进入本行时焦点也落在这里（如详情页当前看到的那一集）
+  final int initialIndex;
 
   final int rowIndex;
   final int itemCount;
@@ -74,6 +78,19 @@ class _FocusRowState extends State<FocusRow> implements FocusRowHandle {
       _nodes.add(node);
     }
     return _nodes[index];
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    if (widget.initialIndex > 0 && widget.initialIndex < widget.itemCount) {
+      _remembered = widget.initialIndex;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted || !_scroll.hasClients) return;
+        final position = _scroll.position;
+        _scroll.jumpTo((_remembered * (widget.itemExtent + widget.gap)).clamp(0.0, position.maxScrollExtent));
+      });
+    }
   }
 
   @override
