@@ -173,4 +173,4 @@ flutter test
 flutter analyze
 ```
 
-把 `pubspec.yaml` 的 `version` 改大后推送，CI（`.github/workflows/release.yml`）会自动构建 APK 与 Windows 安装包并发布预发布版本。
+把 `pubspec.yaml` 的 `version` 改大后合并到 main，CI（`.github/workflows/release.yml`，只在 main 上运行）会自动构建 APK 与 Windows 安装包并发布预发布版本。

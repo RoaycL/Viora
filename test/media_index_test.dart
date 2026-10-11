@@ -169,4 +169,20 @@ void main() {
     );
     expect(config.aggregateServerIds, {'a'});
   });
+
+  test('下一集跨季：季末接着下一季第一集，特别篇不插进正片', () {
+    MediaItem ep(String id, int season, int episode) => MediaItem(
+      serverId: 'a',
+      id: id,
+      kind: MediaKind.episode,
+      name: id,
+      seasonNumber: season,
+      episodeNumber: episode,
+    );
+    final all = [ep('s2e1', 2, 1), ep('s1e2', 1, 2), ep('sp1', 0, 1), ep('s1e1', 1, 1), ep('sp2', 0, 2)];
+    expect(nextEpisodeAfter(all, ep('s1e1', 1, 1))?.id, 's1e2');
+    expect(nextEpisodeAfter(all, ep('s1e2', 1, 2))?.id, 's2e1');
+    expect(nextEpisodeAfter(all, ep('s2e1', 2, 1)), isNull);
+    expect(nextEpisodeAfter(all, ep('sp1', 0, 1))?.id, 'sp2');
+  });
 }

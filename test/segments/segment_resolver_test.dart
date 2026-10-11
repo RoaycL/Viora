@@ -213,4 +213,46 @@ void main() {
     );
     expect(provider.calls, 4);
   });
+
+  test('已确定的片段先发布：媒体服务器标记返回后不等慢的第三方来源', () async {
+    final slow = Completer<List<SegmentCandidate>>();
+    final partials = <List<Segment>>[];
+    final pending = SegmentResolver(
+      providers: [
+        FakeProvider('server', () async => [candidate('server', SegmentType.intro, 10, 70)]),
+        FakeProvider('theintrodb', () => slow.future),
+      ],
+      timeout: const Duration(seconds: 6),
+    ).resolve(query, onPartial: (r) => partials.add(r.segments));
+    await Future<void>.delayed(Duration.zero);
+    // 最高优先级来源给了片头 → 片头已确定，立即可用；其他类型还要等第三方
+    expect(partials, hasLength(1));
+    expect(partials.single.map((x) => x.type), [SegmentType.intro]);
+
+    slow.complete([
+      candidate('theintrodb', SegmentType.intro, 0, 50),
+      candidate('theintrodb', SegmentType.credits, 2900, null),
+    ]);
+    final result = await pending;
+    expect(result.segments.map((x) => (x.type, x.provider)), [
+      (SegmentType.intro, 'server'),
+      (SegmentType.credits, 'theintrodb'),
+    ]);
+  });
+
+  test('优先来源还没返回时，低优先级来源的结果不提前发布', () async {
+    final first = Completer<List<SegmentCandidate>>();
+    final partials = <List<Segment>>[];
+    final pending = SegmentResolver(
+      providers: [
+        FakeProvider('server', () => first.future),
+        FakeProvider('theintrodb', () async => [candidate('theintrodb', SegmentType.intro, 0, 50)]),
+      ],
+    ).resolve(query, onPartial: (r) => partials.add(r.segments));
+    await Future<void>.delayed(Duration.zero);
+    expect(partials, isEmpty);
+    first.complete([]);
+    await pending;
+    expect(partials.last.single.provider, 'theintrodb');
+  });
 }

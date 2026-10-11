@@ -27,24 +27,32 @@ class SegmentPlaybackSession {
   int _generation = 0;
   SegmentSkipController? _controller;
   Duration _position = Duration.zero;
+
+  /// 是否已经拿到真实的播放位置。没拿到之前片段解析好了也不做判断：
+  /// 否则续播（如从 10 分钟处开始）时会按位置 0 命中片头、被自动跳回片头结尾
+  bool _hasPosition = false;
   bool _inFlight = false;
 
-  void begin(SegmentQuery query, SegmentSettings settings, {bool hasNextEpisode = false}) {
+  /// [position]：当前确定的播放位置（还没开始播放时传 null，等第一次 [onPosition]）
+  void begin(SegmentQuery query, SegmentSettings settings, {bool hasNextEpisode = false, Duration? position}) {
     final generation = ++_generation;
-    _position = Duration.zero;
+    _position = position ?? Duration.zero;
+    _hasPosition = position != null;
     _inFlight = false;
     final controller = SegmentSkipController(query: query, settings: settings, hasNextEpisode: hasNextEpisode);
     _controller = controller;
     onPrompt(null);
+    void apply(SegmentResolution result) {
+      if (generation != _generation) return;
+      controller.segments = result.segments;
+      onResolution?.call(result);
+      if (_hasPosition) onPosition(_position);
+    }
+
     resolver
-        .resolve(query)
+        .resolve(query, onPartial: apply)
         .then(
-          (result) {
-            if (generation != _generation) return;
-            controller.segments = result.segments;
-            onResolution?.call(result);
-            onPosition(_position);
-          },
+          apply,
           onError: (Object error) {
             if (generation == _generation) onActionError?.call(error);
           },
@@ -53,6 +61,7 @@ class SegmentPlaybackSession {
 
   void onPosition(Duration position) {
     _position = position;
+    _hasPosition = true;
     if (_inFlight) return;
     final action = _controller?.at(position);
     if (action != null && action.automatic) {

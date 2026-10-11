@@ -95,6 +95,24 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
 
   /// 剧集看到 85% 时预加载的下一集（播完直接跳过去，起播更快）
   MediaItem? _nextEpisode;
+
+  /// 下一集（跨季）：片尾跳过、预加载、播放结束、「下一集」按钮共用，只查询一次
+  Future<MediaItem?>? _nextEpisodeFuture;
+
+  Future<MediaItem?> _resolveNextEpisode() {
+    final item = _item, client = _client;
+    if (item == null || client == null || item.kind != MediaKind.episode || item.seriesId == null) {
+      return Future.value();
+    }
+    return _nextEpisodeFuture ??= client
+        .episodes(item.seriesId!)
+        .then((all) => _nextEpisode ??= nextEpisodeAfter(all, item))
+        .catchError((Object _) {
+          _nextEpisodeFuture = null; // 失败了下次再查
+          return null;
+        });
+  }
+
   bool _nextPreloading = false;
 
   /// 控制层底部的面板（播放资源 / 选集）
@@ -166,7 +184,8 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
 
   void _onEngineState() {
     final s = _state;
-    _segments?.onPosition(s.position);
+    // 开始播放前内核报的位置可能还是 0（续播时还没跳到上次的位置），不能拿来判断片头
+    if (_started || s.playing) _segments?.onPosition(s.position);
     if (!_nextPreloading &&
         s.duration > Duration.zero &&
         s.position.inMilliseconds > s.duration.inMilliseconds * 0.85) {
@@ -278,7 +297,24 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
 
   // ───────────────────────── 片头片尾 ─────────────────────────
 
+  /// 片头片尾查询的代次：换源 / 换集后，旧的查询结果作废
+  int _segmentGen = 0;
+
+  /// 换源开始时立即停用旧版本的跳过规则、提示和进度条标记（新版本的时间轴可能不同）
+  void _resetSegments() {
+    _segmentGen++;
+    _segments?.dispose();
+    _segments = null;
+    if (mounted) {
+      setState(() {
+        _skipPrompt = null;
+        _segmentList = const [];
+      });
+    }
+  }
+
   Future<void> _beginSegments() async {
+    final gen = ++_segmentGen;
     final item = _item, client = _client, source = _source;
     if (item == null || client == null || source == null) return;
     if (item.kind != MediaKind.movie && item.kind != MediaKind.episode) return;
@@ -290,17 +326,10 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
       if (item.kind == MediaKind.episode && item.seriesId != null) {
         final results = await Future.wait([
           client.item(item.seriesId!).then<Object?>((v) => v, onError: (_) => null),
-          client.episodes(item.seriesId!, seasonId: item.seasonId).then<Object?>((v) => v, onError: (_) => null),
+          _resolveNextEpisode(),
         ]);
         if (results[0] is MediaItem) title = results[0]! as MediaItem;
-        if (results[1] is List<MediaItem>) {
-          final eps = results[1]! as List<MediaItem>;
-          final i = eps.indexWhere((e) => e.id == item.id);
-          if (i >= 0 && i + 1 < eps.length) {
-            hasNext = true;
-            _nextEpisode ??= eps[i + 1];
-          }
-        }
+        hasNext = results[1] != null;
       }
       final duration = source.duration ?? item.runtime ?? _state.duration;
       if (duration <= Duration.zero || !mounted) return;
@@ -315,7 +344,7 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
         sourceKey: '${widget.serverId}/${source.id}',
       );
       final resolver = await playbackSegmentResolver(ref, client, item.id);
-      if (!mounted || _source?.id != source.id) return;
+      if (!mounted || gen != _segmentGen || _source?.id != source.id) return;
       _segments?.dispose();
       _segments = SegmentPlaybackSession(
         resolver: resolver,
@@ -333,7 +362,7 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
         },
         onAutoSkip: (action) => showToast(_autoSkipText(action)),
         onActionError: (e) => debugPrint('segments: $e'),
-      )..begin(query, settings, hasNextEpisode: hasNext);
+      )..begin(query, settings, hasNextEpisode: hasNext, position: _started ? _state.position : null);
     } catch (e) {
       debugPrint('segments unavailable: $e');
     }
@@ -627,14 +656,11 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
 
   Future<void> _preloadNext() async {
     _nextPreloading = true;
-    final item = _item, client = _client;
-    if (item == null || client == null || item.kind != MediaKind.episode || item.seriesId == null) return;
+    final client = _client;
     try {
-      final eps = await client.episodes(item.seriesId!, seasonId: item.seasonId);
-      final i = eps.indexWhere((e) => e.id == item.id);
-      if (i < 0 || i + 1 >= eps.length) return;
-      _nextEpisode = eps[i + 1];
-      await PlaybackPreloader.preload(client, eps[i + 1], position: Duration.zero);
+      final next = await _resolveNextEpisode();
+      if (next == null || client == null) return;
+      await PlaybackPreloader.preload(client, next, position: Duration.zero);
     } catch (_) {}
   }
 
@@ -642,22 +668,14 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
     _reportStopped();
     final item = _item, client = _client;
     if (item == null || client == null || !mounted) return;
-    // 剧集自动播放下一集
-    if (_nextEpisode != null) {
-      _handoffTo('/play/${widget.serverId}/${_nextEpisode!.id}?pos=0');
+    // 剧集自动播放下一集（季末接着播下一季第一集）
+    final next = await _resolveNextEpisode();
+    if (!mounted) return;
+    if (next != null) {
+      _handoffTo('/play/${widget.serverId}/${next.id}?pos=0');
       return;
     }
-    if (item.kind == MediaKind.episode && item.seriesId != null) {
-      try {
-        final eps = await client.episodes(item.seriesId!, seasonId: item.seasonId);
-        final i = eps.indexWhere((e) => e.id == item.id);
-        if (i >= 0 && i + 1 < eps.length && mounted) {
-          _handoffTo('/play/${widget.serverId}/${eps[i + 1].id}?pos=0');
-          return;
-        }
-      } catch (_) {}
-    }
-    if (mounted) context.pop();
+    context.pop();
   }
 
   @override
@@ -875,8 +893,9 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
     return KeyEventResult.handled;
   }
 
-  void _playNext() {
-    final next = _nextEpisode;
+  Future<void> _playNext() async {
+    final next = await _resolveNextEpisode();
+    if (!mounted) return;
     if (next == null) {
       if (_item?.kind == MediaKind.episode) showToast('已经是最后一集');
       return;
@@ -1104,6 +1123,7 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
       _stopped = false;
       _started = false;
       _wasPlaying = false;
+      _resetSegments();
       _start(sourceId: o.source.id, at: at);
       showToast('切换到 ${o.source.resolutionLabel} ${o.source.rangeLabel} · ${o.serverName}');
     } else {

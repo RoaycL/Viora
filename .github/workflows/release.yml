@@ -7,11 +7,13 @@
 #   Viora-<版本>-windows-portable.zip   Windows 免安装版
 #   latest.json                        自建更新源可直接使用的清单
 # 版本号没变时只构建，产物在 Actions 页面的 Artifacts 里下载。
+#
+# 只有 main 分支会触发：开发分支先合并到 main 再发布（手动运行时也只在 main 上创建 Release）。
 name: Release
 
 on:
   push:
-    branches: [main, 'claude/**']
+    branches: [main]
     paths-ignore: ['docs/**', '**.md']
   workflow_dispatch:
 
@@ -116,7 +118,7 @@ jobs:
 
   release:
     needs: [prepare, android, windows]
-    if: needs.prepare.outputs.exists == 'false'
+    if: needs.prepare.outputs.exists == 'false' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4

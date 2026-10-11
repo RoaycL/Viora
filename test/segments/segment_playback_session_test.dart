@@ -80,4 +80,33 @@ void main() {
     expect(calls, 1);
     session.dispose();
   });
+
+  test('续播：片段先于播放位置返回时不按位置 0 判断，不会跳回片头', () async {
+    final seeks = <Duration>[];
+    final session = SegmentPlaybackSession(
+      resolver: SegmentResolver(
+        providers: [
+          FakeProvider('source', () async => [candidate('source', SegmentType.intro, 0, 60)]),
+        ],
+      ),
+      seek: (position) async => seeks.add(position),
+      nextEpisode: () async {},
+      onPrompt: (_) {},
+    );
+    session.begin(query, SegmentSettings.defaults().copyWith(intro: SegmentSkipMode.auto));
+    await Future<void>.delayed(const Duration(milliseconds: 10));
+    expect(seeks, isEmpty, reason: '还不知道播放位置');
+    session.onPosition(const Duration(seconds: 600));
+    expect(seeks, isEmpty, reason: '从 10 分钟续播，不在片头里');
+
+    // 开始时已知位置：同样按真实位置判断
+    session.begin(
+      query,
+      SegmentSettings.defaults().copyWith(intro: SegmentSkipMode.auto),
+      position: const Duration(seconds: 600),
+    );
+    await Future<void>.delayed(const Duration(milliseconds: 10));
+    expect(seeks, isEmpty);
+    session.dispose();
+  });
 }

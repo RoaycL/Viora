@@ -41,7 +41,9 @@ class SegmentResolver {
   final Duration timeout;
   final DateTime Function() _now;
 
-  Future<SegmentResolution> resolve(SegmentQuery query) async {
+  /// [onPartial]：某种片段已经确定（比它优先的来源都已返回）就先发布，不必等慢的来源超时；
+  /// 最终结果仍由返回值给出。命中缓存时不调用。
+  Future<SegmentResolution> resolve(SegmentQuery query, {void Function(SegmentResolution partial)? onPartial}) async {
     if (!query.canLookup) return const SegmentResolution(segments: []);
     final key = '$cacheNamespace:${jsonEncode(query.cacheIdentity)}';
     try {
@@ -61,31 +63,70 @@ class SegmentResolver {
     }
 
     final failures = <String, SegmentFailure>{};
-    final results = await Future.wait(
-      providers.map((provider) async {
-        try {
-          return await provider.fetch(query).timeout(timeout);
-        } on TimeoutException {
-          failures[provider.id] = SegmentFailure.timeout;
-        } on SegmentHttpException catch (e) {
-          failures[provider.id] = switch (e.statusCode) {
-            401 || 403 => SegmentFailure.unauthorized,
-            429 => SegmentFailure.rateLimited,
-            _ => SegmentFailure.unavailable,
-          };
-        } on FormatException {
-          failures[provider.id] = SegmentFailure.invalidResponse;
-        } on Exception {
-          failures[provider.id] = SegmentFailure.unavailable;
-        }
-        return <SegmentCandidate>[];
-      }),
-    );
+    // null = 还没返回
+    final results = List<List<SegmentCandidate>?>.filled(providers.length, null);
+    var published = 0;
+    void publishDecided() {
+      if (onPartial == null) return;
+      final (decided, picked) = _select(results, query);
+      if (decided <= published || picked.isEmpty) return;
+      published = decided;
+      onPartial(SegmentResolution(segments: picked.map((c) => validate(c, query.duration)!).toList()));
+    }
 
+    await Future.wait([
+      for (var i = 0; i < providers.length; i++)
+        () async {
+          final provider = providers[i];
+          var found = <SegmentCandidate>[];
+          try {
+            found = await provider.fetch(query).timeout(timeout);
+          } on TimeoutException {
+            failures[provider.id] = SegmentFailure.timeout;
+          } on SegmentHttpException catch (e) {
+            failures[provider.id] = switch (e.statusCode) {
+              401 || 403 => SegmentFailure.unauthorized,
+              429 => SegmentFailure.rateLimited,
+              _ => SegmentFailure.unavailable,
+            };
+          } on FormatException {
+            failures[provider.id] = SegmentFailure.invalidResponse;
+          } on Exception {
+            failures[provider.id] = SegmentFailure.unavailable;
+          }
+          results[i] = found;
+          publishDecided();
+        }(),
+    ]);
+
+    final (_, selected) = _select(results, query);
+    selected.sort((a, b) => a.start.compareTo(b.start));
+    // Keep raw confidence/null ends in storage to avoid penalizing twice or
+    // fixing a null end to the wrong exact duration on the next cache hit.
+    if (failures.isEmpty) {
+      try {
+        await cache?.write(key, SegmentCacheEntry(_now(), selected));
+      } on Exception {
+        // Persistence is best effort, never part of successful playback.
+      }
+    }
+    return SegmentResolution(segments: selected.map((c) => validate(c, query.duration)!).toList(), failures: failures);
+  }
+
+  /// 按类型选出最高优先级来源的片段。某个类型在排在前面的来源都已返回时才算确定；
+  /// 返回（已确定的类型数, 已确定类型的片段）
+  (int, List<SegmentCandidate>) _select(List<List<SegmentCandidate>?> results, SegmentQuery query) {
     final selected = <SegmentCandidate>[];
+    var decided = 0;
     for (final type in SegmentType.values) {
+      var settled = true;
       for (var i = 0; i < providers.length; i++) {
-        final valid = results[i]
+        final r = results[i];
+        if (r == null) {
+          settled = false;
+          break;
+        }
+        final valid = r
             .where((c) => c.type == type && c.provider == providers[i].id && validate(c, query.duration) != null)
             .toList();
         if (valid.isEmpty) continue;
@@ -105,18 +146,10 @@ class SegmentResolver {
         selected.addAll(kept);
         break;
       }
+      if (settled) decided++;
     }
     selected.sort((a, b) => a.start.compareTo(b.start));
-    // Keep raw confidence/null ends in storage to avoid penalizing twice or
-    // fixing a null end to the wrong exact duration on the next cache hit.
-    if (failures.isEmpty) {
-      try {
-        await cache?.write(key, SegmentCacheEntry(_now(), selected));
-      } on Exception {
-        // Persistence is best effort, never part of successful playback.
-      }
-    }
-    return SegmentResolution(segments: selected.map((c) => validate(c, query.duration)!).toList(), failures: failures);
+    return (decided, selected);
   }
 
   static Segment? validate(SegmentCandidate candidate, Duration duration) {
