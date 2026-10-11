@@ -11,7 +11,7 @@ import 'package:viora/features/metadata/external_ratings.dart';
 import 'package:viora/features/metadata/ratings_service.dart';
 
 void main() {
-  testWidgets('shows early provider results, preserves source labels and wraps at narrow widths', (tester) async {
+  testWidgets('shows early provider results, preserves source labels (tooltips) and wraps at narrow widths', (tester) async {
     final vault = MemoryVault();
     final store = RatingsSettingsStore(vault: vault);
     await store.save(
@@ -55,13 +55,14 @@ void main() {
     );
     await tester.pump();
     await tester.pump();
-    expect(find.text('媒体库 8.3/10'), findsOneWidget);
-    expect(find.text('IMDb 9.5/10'), findsOneWidget);
+    expect(find.byTooltip('媒体库 · 8.3'), findsOneWidget);
+    expect(find.byTooltip('IMDb · 9.5'), findsOneWidget);
+    expect(find.text('9.5'), findsOneWidget);
     expect(find.text('整剧评分'), findsOneWidget);
     expect(find.text('外部评分加载中…'), findsOneWidget);
     trakt.complete(const RatingsResult(RatingsData(), error: '访问被拒绝'));
     await tester.pumpAndSettle();
-    expect(find.text('IMDb 9.5/10'), findsOneWidget);
+    expect(find.byTooltip('IMDb · 9.5'), findsOneWidget);
     expect(find.text('Trakt：访问被拒绝'), findsOneWidget);
     expect(find.text('重试评分'), findsOneWidget);
     expect(tester.takeException(), isNull);
