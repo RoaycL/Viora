@@ -1,5 +1,7 @@
 import '../history/play_history.dart';
 
+import '../cache/snapshot_cache.dart';
+
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../config/app_config.dart';
@@ -38,21 +40,33 @@ EmbyClient clientForDraft(AppConfig config, ServerConfig server) =>
 final resumeProvider = FutureProvider<List<MediaItem>>((ref) async {
   ref.watch(configProvider.select((c) => c.serversKey));
   final config = ref.read(configProvider);
-  final results = await Future.wait(
-    config.servers.where((s) => s.loggedIn).map((s) async {
-      try {
-        return await ref.read(serverClientProvider(s.id))!.resume(limit: 12);
-      } catch (_) {
-        return const <MediaItem>[];
-      }
-    }),
+  // 启动时先显示上次的列表，后台再拉最新
+  return snapshotFirst(
+    ref,
+    'resume',
+    encode: MediaItem.encodeList,
+    decode: (j) => [
+      for (final it in MediaItem.decodeList(j))
+        if (itemVisible(config, it)) it,
+    ],
+    fetch: () async {
+      final results = await Future.wait(
+        config.servers.where((s) => s.loggedIn).map((s) async {
+          try {
+            return await ref.read(serverClientProvider(s.id))!.resume(limit: 12);
+          } catch (_) {
+            return const <MediaItem>[];
+          }
+        }),
+      );
+      // 各服务器按上次播放时间合并
+      final all = [for (final list in results) ...list];
+      // 服务器没给上次播放时间时用本机记录的
+      final epoch = DateTime(1970);
+      all.sort((a, b) => (PlayHistory.lastPlayed(b) ?? epoch).compareTo(PlayHistory.lastPlayed(a) ?? epoch));
+      return all;
+    },
   );
-  // 各服务器按上次播放时间合并
-  final all = [for (final list in results) ...list];
-  // 服务器没给上次播放时间时用本机记录的
-  final epoch = DateTime(1970);
-  all.sort((a, b) => (PlayHistory.lastPlayed(b) ?? epoch).compareTo(PlayHistory.lastPlayed(a) ?? epoch));
-  return all;
 });
 
 final librariesProvider = FutureProvider.family<List<Library>, String>((ref, serverId) async {

@@ -11,7 +11,9 @@ import 'package:viora/features/metadata/external_ratings.dart';
 import 'package:viora/features/metadata/ratings_service.dart';
 
 void main() {
-  testWidgets('shows early provider results, preserves source labels (tooltips) and wraps at narrow widths', (tester) async {
+  testWidgets('shows early provider results, preserves source labels (tooltips) and wraps at narrow widths', (
+    tester,
+  ) async {
     final vault = MemoryVault();
     final store = RatingsSettingsStore(vault: vault);
     await store.save(

@@ -184,6 +184,74 @@ class MediaItem {
     overview: j['ov'] as String?,
   );
 
+  /// 完整字段（页面快照用，见 SnapshotCache）
+  Map<String, Object?> toCacheJson() => {
+    's': serverId,
+    'id': id,
+    ...toIndexJson(),
+    'pd': premiereDate?.millisecondsSinceEpoch,
+    'or': officialRating,
+    'cr': criticRating,
+    'rt': runtime?.inMilliseconds,
+    'th': thumb?.toJson(),
+    'si': seriesId,
+    'sn': seriesName,
+    'ss': seasonId,
+    'sx': seasonNumber,
+    'ex': episodeNumber,
+    'pl': played,
+    'fv': favorite,
+    'po': position.inMilliseconds,
+    'pp': playedPercentage,
+    'lp': lastPlayed?.millisecondsSinceEpoch,
+  };
+
+  static MediaItem fromCacheJson(Map<String, Object?> j) {
+    final b = fromIndexJson(j['s'] as String, j['id'] as String, j);
+    DateTime? t(String k) => j[k] == null ? null : DateTime.fromMillisecondsSinceEpoch(j[k] as int);
+    return MediaItem(
+      serverId: b.serverId,
+      id: b.id,
+      kind: b.kind,
+      name: b.name,
+      originalTitle: b.originalTitle,
+      overview: b.overview,
+      year: b.year,
+      premiereDate: t('pd'),
+      rating: b.rating,
+      officialRating: j['or'] as String?,
+      criticRating: (j['cr'] as num?)?.toDouble(),
+      genres: b.genres,
+      runtime: j['rt'] == null ? null : Duration(milliseconds: j['rt'] as int),
+      tmdbId: b.tmdbId,
+      imdbId: b.imdbId,
+      tvdbId: b.tvdbId,
+      primary: b.primary,
+      backdrop: b.backdrop,
+      thumb: ImageRef.fromJson(j['th']),
+      logo: b.logo,
+      seriesId: j['si'] as String?,
+      seriesName: j['sn'] as String?,
+      seasonId: j['ss'] as String?,
+      seasonNumber: j['sx'] as int?,
+      episodeNumber: j['ex'] as int?,
+      childCount: b.childCount,
+      played: j['pl'] as bool? ?? false,
+      favorite: j['fv'] as bool? ?? false,
+      position: Duration(milliseconds: j['po'] as int? ?? 0),
+      playedPercentage: (j['pp'] as num?)?.toDouble(),
+      dateCreated: b.dateCreated,
+      lastMediaAdded: b.lastMediaAdded,
+      lastPlayed: t('lp'),
+    );
+  }
+
+  static List<Map<String, Object?>> encodeList(List<MediaItem> items) => [for (final it in items) it.toCacheJson()];
+
+  static List<MediaItem> decodeList(Object? json) => [
+    for (final j in json as List) fromCacheJson((j as Map).cast<String, Object?>()),
+  ];
+
   /// `S1E3` 这样的集号
   String? get episodeLabel => seasonNumber != null && episodeNumber != null ? 'S${seasonNumber}E$episodeNumber' : null;
 }

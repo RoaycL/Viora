@@ -1,4 +1,7 @@
 import 'package:flutter/material.dart';
+
+import '../../data/cache/snapshot_cache.dart';
+
 import 'package:flutter/rendering.dart' show ScrollCacheExtent;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -18,47 +21,74 @@ import '../browse/media_cards.dart';
 /// 所有已登录服务器上收藏的电影 / 剧集，同一部作品合并
 final favoritesProvider = FutureProvider<List<AggregatedTitle>>((ref) async {
   ref.watch(configProvider.select((c) => c.serversKey));
-  final servers = ref.read(configProvider).servers.where((s) => s.loggedIn);
-  final lists = await Future.wait(
-    servers.map((s) async {
-      try {
-        final page = await ref
-            .read(serverClientProvider(s.id))!
-            .items(filters: 'IsFavorite', limit: 200, sortBy: 'SortName', sortOrder: 'Ascending')
-            .timeout(const Duration(seconds: 10));
-        return page.items;
-      } catch (_) {
-        return const <MediaItem>[];
-      }
-    }),
+  final config = ref.read(configProvider);
+  final servers = config.servers.where((s) => s.loggedIn);
+  // 启动时先显示上次的收藏，后台再拉最新
+  final items = await snapshotFirst(
+    ref,
+    'favorites',
+    encode: MediaItem.encodeList,
+    decode: (j) => [
+      for (final it in MediaItem.decodeList(j))
+        if (itemVisible(config, it)) it,
+    ],
+    fetch: () async {
+      final lists = await Future.wait(
+        servers.map((s) async {
+          try {
+            final page = await ref
+                .read(serverClientProvider(s.id))!
+                .items(filters: 'IsFavorite', limit: 200, sortBy: 'SortName', sortOrder: 'Ascending')
+                .timeout(const Duration(seconds: 10));
+            return page.items;
+          } catch (_) {
+            return const <MediaItem>[];
+          }
+        }),
+      );
+      return [for (final l in lists) ...l];
+    },
   );
-  return groupTitles([for (final l in lists) ...l]);
+  return groupTitles(items);
 });
 
 /// 最近看过：已看完的电影 / 单集按观看时间倒序，同一部剧只保留最近的一集
 final recentlyPlayedProvider = FutureProvider<List<MediaItem>>((ref) async {
   ref.watch(configProvider.select((c) => c.serversKey));
-  final servers = ref.read(configProvider).servers.where((s) => s.loggedIn);
-  final lists = await Future.wait(
-    servers.map((s) async {
-      try {
-        final page = await ref
-            .read(serverClientProvider(s.id))!
-            .items(
-              types: 'Movie,Episode',
-              filters: 'IsPlayed',
-              limit: 60,
-              sortBy: 'DatePlayed',
-              sortOrder: 'Descending',
-            )
-            .timeout(const Duration(seconds: 10));
-        return page.items;
-      } catch (_) {
-        return const <MediaItem>[];
-      }
-    }),
+  final config = ref.read(configProvider);
+  final servers = config.servers.where((s) => s.loggedIn);
+  // 启动时先显示上次的记录，后台再拉最新
+  return snapshotFirst(
+    ref,
+    'recently-played',
+    encode: MediaItem.encodeList,
+    decode: (j) => [
+      for (final it in MediaItem.decodeList(j))
+        if (itemVisible(config, it)) it,
+    ],
+    fetch: () async {
+      final lists = await Future.wait(
+        servers.map((s) async {
+          try {
+            final page = await ref
+                .read(serverClientProvider(s.id))!
+                .items(
+                  types: 'Movie,Episode',
+                  filters: 'IsPlayed',
+                  limit: 60,
+                  sortBy: 'DatePlayed',
+                  sortOrder: 'Descending',
+                )
+                .timeout(const Duration(seconds: 10));
+            return page.items;
+          } catch (_) {
+            return const <MediaItem>[];
+          }
+        }),
+      );
+      return dedupeWatched([for (final l in lists) ...l]);
+    },
   );
-  return dedupeWatched([for (final l in lists) ...l]);
 });
 
 /// 继续观看 / 观看记录去重：单集按"剧名 + 季 + 集"，电影按作品键；保留先出现的（更近的）
