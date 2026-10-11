@@ -16,6 +16,7 @@ import '../../data/tmdb/tmdb_client.dart';
 import '../../ui/focus/focus_auto_scroll.dart';
 import '../../ui/focus/focusable.dart';
 import '../../ui/rows/cards.dart';
+import '../../ui/widgets/buttons.dart';
 import '../../ui/widgets/form.dart';
 import '../../ui/widgets/server_image.dart';
 import '../browse/media_cards.dart';
@@ -37,8 +38,10 @@ class _SearchPageState extends ConsumerState<SearchPage> {
   static const maxResults = 120;
 
   final _query = TextEditingController();
-  Timer? _debounce;
   int _generation = 0;
+
+  /// 上一次点「搜索」时的关键字（结果对应的就是它）
+  String _searched = '';
   List<AggregatedTitle> _results = const [];
   bool _searchingRemote = false;
   int _pendingServers = 0;
@@ -53,20 +56,26 @@ class _SearchPageState extends ConsumerState<SearchPage> {
 
   @override
   void dispose() {
-    _debounce?.cancel();
     _query.dispose();
     super.dispose();
   }
 
+  /// 输入时不搜索（电视上每输一个字就查一遍会很卡），点「搜索」/ 按回车才开始；清空时清掉结果
   void _onChanged() {
-    _debounce?.cancel();
-    _debounce = Timer(const Duration(milliseconds: 400), _search);
+    if (_query.text.trim().isEmpty && _searched.isNotEmpty) {
+      _generation++;
+      _searched = '';
+      _results = const [];
+      _searchingRemote = false;
+      _pendingServers = 0;
+    }
     setState(() {});
   }
 
   Future<void> _search() async {
     final q = _query.text.trim();
     final gen = ++_generation;
+    _searched = q;
     if (q.isEmpty) {
       setState(() => _results = const []);
       return;
@@ -137,7 +146,16 @@ class _SearchPageState extends ConsumerState<SearchPage> {
 
   @override
   Widget build(BuildContext context) {
-    final hasQuery = _query.text.trim().isNotEmpty;
+    final typed = _query.text.trim();
+    final hasQuery = _searched.isNotEmpty;
+    final field = VTextField(
+      label: PlatformProfile.isTv ? '片名 / 拼音首字母（如 sgdlr）' : '片名 / 拼音首字母 / 全拼',
+      controller: _query,
+      autofocus: true,
+      hint: '时光代理人',
+      textInputAction: TextInputAction.search,
+      onSubmitted: (_) => _search(),
+    );
     return FocusAutoScroll(
       child: Padding(
         padding: const EdgeInsets.fromLTRB(VSpace.contentLeft, VSpace.safeV, 0, 0),
@@ -152,20 +170,27 @@ class _SearchPageState extends ConsumerState<SearchPage> {
                 children: [
                   const Text('搜索', style: VText.h1),
                   const SizedBox(height: 32),
-                  VTextField(
-                    label: PlatformProfile.isTv ? '片名 / 拼音首字母（如 sgdlr）' : '片名 / 拼音首字母 / 全拼',
-                    controller: _query,
-                    autofocus: true,
-                    hint: '时光代理人',
-                  ),
                   if (PlatformProfile.isTv) ...[
+                    // 电视：屏幕键盘最后一行有「搜索」键
+                    field,
                     const SizedBox(height: 24),
-                    _Keyboard(onKey: _type, onBackspace: _backspace, onClear: () => _query.clear()),
-                  ],
+                    _Keyboard(onKey: _type, onBackspace: _backspace, onClear: () => _query.clear(), onSearch: _search),
+                  ] else
+                    // Windows：输入框右边一个「搜索」按钮，也可以直接按回车
+                    Row(
+                      crossAxisAlignment: CrossAxisAlignment.end,
+                      children: [
+                        Expanded(child: field),
+                        const SizedBox(width: 16),
+                        PillButton(label: '搜索', icon: Icons.search_rounded, onPressed: _search),
+                      ],
+                    ),
                   const SizedBox(height: 20),
                   Text(
                     _searchingRemote && _pendingServers > 0
                         ? '本地索引已返回，正在查询 $_pendingServers 台服务器…'
+                        : typed.isNotEmpty && typed != _searched
+                        ? (PlatformProfile.isTv ? '输入完成后按「搜索」' : '输入完成后按回车或点「搜索」')
                         : hasQuery
                         ? '共 ${_results.length} 部作品'
                         : '同时搜索所有服务器，同一部作品会合并显示',
@@ -236,11 +261,12 @@ class _ResultCardState extends ConsumerState<_ResultCard> {
 
 /// TV 屏幕键盘：字母数字（配合拼音首字母搜索），以及空格 / 删除 / 清空
 class _Keyboard extends StatelessWidget {
-  const _Keyboard({required this.onKey, required this.onBackspace, required this.onClear});
+  const _Keyboard({required this.onKey, required this.onBackspace, required this.onClear, required this.onSearch});
 
   final ValueChanged<String> onKey;
   final VoidCallback onBackspace;
   final VoidCallback onClear;
+  final VoidCallback onSearch;
 
   static const _keys = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ1234567890';
 
@@ -281,11 +307,13 @@ class _Keyboard extends StatelessWidget {
         const SizedBox(height: 10),
         Row(
           children: [
-            key('空格', () => onKey(' '), width: 170),
+            key('空格', () => onKey(' '), width: 125),
             const SizedBox(width: 10),
-            key('删除', onBackspace, width: 170),
+            key('删除', onBackspace, width: 125),
             const SizedBox(width: 10),
-            key('清空', onClear, width: 170),
+            key('清空', onClear, width: 125),
+            const SizedBox(width: 10),
+            key('搜索', onSearch, width: 125),
           ],
         ),
       ],
