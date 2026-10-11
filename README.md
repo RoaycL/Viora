@@ -132,8 +132,8 @@
 
 ## 常见问题
 
-**电视上看起来卡？**
-电视版已经关闭了磨砂模糊等耗性能的效果。如果仍然卡顿，可以在「设置 → 播放」降低播放缓冲上限，或换用另一个播放内核试试。
+**电视上看起来卡 / 操作快了闪退？**
+电视版已经关闭了磨砂模糊，并针对 2GB 内存的盒子降低了图片与播放缓冲的内存占用。如果仍然卡顿或闪退，重新打开后在「设置 → 关于与更新 → 导出日志」扫码，把日志发给开发者（日志会记录上次运行到哪里、内存用了多少）。
 
 **无法播放 / 提示 403？**
 部分服务器会限制客户端，在「设置 → 播放」修改播放 UA 或客户端名称，或在服务器设置里单独指定 UA。
@@ -174,5 +174,4 @@ flutter test
 flutter analyze
 ```
 
-把 `pubspec.yaml` 的 `version` 改大后合并到 main，CI（`.github/workflows/release.yml`）会在 main 上自动构建 APK 与 Windows 安装包并发布预发布版本。
-PR 会先运行静态检查与测试。TV 性能测量使用单独的 Profile APK，下载和日志说明见 [TV 性能优化与测量](docs/14-tv-performance.md)。
+把 `pubspec.yaml` 的 `version` 改大后合并到 main，CI（`.github/workflows/release.yml`，只在 main 上运行）会自动构建 APK 与 Windows 安装包并发布预发布版本。

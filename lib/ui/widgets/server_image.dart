@@ -5,7 +5,6 @@ import '../../data/media/media_models.dart';
 import '../../data/media/server_registry.dart';
 import 'art.dart';
 import 'cached_image.dart';
-import '../../core/net/image_request_pool.dart';
 import 'image_sizing.dart';
 
 /// 媒体服务器上的图片：地址经过线路 / 代理改写，请求带 UA。
@@ -43,12 +42,7 @@ class ServerImage extends ConsumerWidget {
     final req = client.image(image!, maxWidth: px);
     return Image(
       // 磁盘缓存 + 按显示尺寸解码（大图不会占满内存，电视盒子尤其重要）
-      image: netImage(
-        req.url.toString(),
-        headers: req.headers,
-        cacheWidth: px,
-        priority: width >= 1080 ? ImageRequestPriority.visible : ImageRequestPriority.normal,
-      ),
+      image: netImage(req.url.toString(), headers: req.headers, cacheWidth: px),
       fit: fit,
       alignment: alignment,
       gaplessPlayback: true,

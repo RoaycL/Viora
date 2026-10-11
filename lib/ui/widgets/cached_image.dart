@@ -1,7 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
-import 'dart:typed_data';
 import 'dart:ui' as ui;
 
 import 'package:crypto/crypto.dart';
@@ -9,58 +8,55 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/painting.dart';
 import 'package:path_provider/path_provider.dart';
 
-import '../../core/net/image_request_pool.dart';
-import '../../app/tv_performance.dart';
-
 /// 带磁盘缓存的网络图片（海报、背景图等）。
 ///
 /// 媒体服务器的图片地址里带图片版本 tag，TMDB 图片地址不变，所以按地址缓存即可。
 /// 再次打开应用时直接读本地文件，不再向 NAS 请求（也省去 Emby 现场缩放图片的 CPU）。
 /// 缓存上限 [maxBytes]，超出时启动后按最久未使用清理。
 class CachedNetImage extends ImageProvider<CachedNetImage> {
-  const CachedNetImage(this.url, {this.headers = const {}, this.priority = ImageRequestPriority.normal});
+  const CachedNetImage(this.url, {this.headers = const {}});
 
   final String url;
   final Map<String, String> headers;
-  final ImageRequestPriority priority;
 
   static const maxBytes = 512 * 1024 * 1024;
   static Future<Directory?>? _dir;
   static final _inflight = <String, Future<Uint8List>>{};
-  static final _priorities = <String, ImageRequestPriority>{};
-  static ImageRequestPool _pool = ImageRequestPool(6);
-  static HttpClient? _client;
-  static Duration _requestTimeout = const Duration(seconds: 45);
-  static int _baselineDownloads = 0;
-  static int get activeDownloads => _pool.active + _baselineDownloads;
-  static int get queuedDownloads => _pool.queued;
 
-  static void configure({required bool tv}) {
-    if (_pool.active == 0 && _pool.queued == 0) _pool = ImageRequestPool(tv ? 4 : 6);
-  }
+  /// 同时下载的图片数（电视 4 张，电脑 8 张）。快速翻动时不会一下子发出几十个请求、
+  /// 同时攒着几十份图片数据等解码（2GB 电视内存峰值的主要来源之一）
+  static int maxDownloads = 8;
+  static int _active = 0;
 
-  static HttpClient get _http => _client ??= HttpClient()
+  /// 排队的下载：后进先出——最新请求的就是现在屏幕上的，翻过去的旧卡片排在后面
+  static final _waiting = <Completer<void>>[];
+
+  /// 共用一个连接池，不再每张图新建连接（省去反复握手，尤其是 HTTPS）
+  static final _client = HttpClient()
     ..connectionTimeout = const Duration(seconds: 15)
-    ..idleTimeout = const Duration(seconds: 30)
-    ..maxConnectionsPerHost = 4;
+    ..idleTimeout = const Duration(seconds: 20)
+    ..maxConnectionsPerHost = 6;
 
   @visibleForTesting
-  static void resetNetworkForTesting({Duration timeout = const Duration(seconds: 45)}) {
-    assert(_pool.active == 0 && _pool.queued == 0);
-    _client?.close(force: true);
-    _client = null;
-    _requestTimeout = timeout;
-    _inflight.clear();
-    _priorities.clear();
+  static int get activeDownloads => _active;
+
+  static Future<void> _acquire() async {
+    if (_active < maxDownloads) {
+      _active++;
+      return;
+    }
+    final slot = Completer<void>();
+    _waiting.add(slot);
+    await slot.future; // 名额由 _release 直接转交，_active 不变
   }
 
-  // Headers are part of cache identity; priority is not, so prefetch is reusable.
-  String get _identity => headers.isEmpty
-      ? url
-      : jsonEncode([
-          url,
-          {for (final k in headers.keys.toList()..sort()) k: headers[k]},
-        ]);
+  static void _release() {
+    if (_waiting.isNotEmpty) {
+      _waiting.removeLast().complete();
+    } else {
+      _active--;
+    }
+  }
 
   static Future<Directory?> _cacheDir() => _dir ??= () async {
     if (kIsWeb) return null;
@@ -76,16 +72,7 @@ class CachedNetImage extends ImageProvider<CachedNetImage> {
   static String _name(String url) => sha1.convert(utf8.encode(url)).toString();
 
   @override
-  Future<CachedNetImage> obtainKey(ImageConfiguration configuration) {
-    // Runs even when ImageCache already holds the same pending prefetch.
-    final key = _identity;
-    if (_inflight.containsKey(key)) {
-      final previous = _priorities[key];
-      if (previous == null || priority.index < previous.index) _priorities[key] = priority;
-      _pool.promote(key, priority);
-    }
-    return SynchronousFuture(this);
-  }
+  Future<CachedNetImage> obtainKey(ImageConfiguration configuration) => SynchronousFuture(this);
 
   @override
   ImageStreamCompleter loadImage(CachedNetImage key, ImageDecoderCallback decode) =>
@@ -93,21 +80,16 @@ class CachedNetImage extends ImageProvider<CachedNetImage> {
 
   Future<ui.Codec> _load(ImageDecoderCallback decode) async {
     // 注意不能写成 `whenComplete(() => _inflight.remove(url))`：remove 返回的正是这个 Future，会自己等自己而永远不完成
-    final key = _identity;
-    final previous = _priorities[key];
-    if (previous == null || priority.index < previous.index) _priorities[key] = priority;
-    _pool.promote(key, priority);
-    final bytes = await (_inflight[key] ??= _bytes().whenComplete(() {
-      _inflight.remove(key);
-      _priorities.remove(key);
+    final bytes = await (_inflight[url] ??= _bytes().whenComplete(() {
+      _inflight.remove(url);
     }));
     return decode(await ui.ImmutableBuffer.fromUint8List(bytes));
   }
 
   Future<Uint8List> _bytes() async {
     final dir = await _cacheDir();
-    final file = dir == null ? null : File('${dir.path}${Platform.pathSeparator}${_name(_identity)}');
-    if (file != null && await file.exists()) {
+    final file = dir == null ? null : File('${dir.path}${Platform.pathSeparator}${_name(url)}');
+    if (file != null && file.existsSync()) {
       try {
         final data = await file.readAsBytes();
         if (data.isNotEmpty) {
@@ -117,61 +99,33 @@ class CachedNetImage extends ImageProvider<CachedNetImage> {
         }
       } catch (_) {}
     }
-    final data = TvPerformance.baseline
-        ? await _baselineDownload()
-        : await _pool.run(_identity, _download, priority: _priorities[_identity] ?? priority);
+    final data = await _download();
     if (file != null) {
       unawaited(file.writeAsBytes(data, flush: false).then((_) {}, onError: (_) {}));
     }
     return data;
   }
 
-  Future<Uint8List> _baselineDownload() async {
-    _baselineDownloads++;
+  Future<Uint8List> _download() async {
+    await _acquire();
+    HttpClientRequest? req;
     try {
-      return await _download(shared: false);
-    } finally {
-      _baselineDownloads--;
-    }
-  }
-
-  Future<Uint8List> _download({bool shared = true}) async {
-    final client = shared ? _http : (HttpClient()..connectionTimeout = const Duration(seconds: 15));
-    HttpClientRequest? request;
-    StreamSubscription<List<int>>? body;
-    var expired = false;
-    try {
-      return await (() async {
-        final req = request = await client.getUrl(Uri.parse(url));
-        if (expired) {
-          req.abort();
-          throw TimeoutException('Image request expired');
-        }
-        headers.forEach(req.headers.set);
-        final res = await req.close();
-        if (res.statusCode != HttpStatus.ok) {
-          await res.listen((_) {}).cancel();
-          throw HttpException('HTTP ${res.statusCode}');
-        }
-        final data = BytesBuilder(copy: false);
-        final done = Completer<Uint8List>();
-        body = res.listen(
-          data.add,
-          onDone: () => done.complete(data.takeBytes()),
-          onError: (Object e, StackTrace s) => done.completeError(e, s),
-          cancelOnError: true,
-        );
-        final bytes = await done.future;
-        if (bytes.isEmpty) throw const HttpException('empty image');
-        return bytes;
-      })().timeout(_requestTimeout);
+      req = await _client.getUrl(Uri.parse(url));
+      headers.forEach(req.headers.set);
+      final res = await req.close().timeout(const Duration(seconds: 30));
+      if (res.statusCode != HttpStatus.ok) {
+        await res.drain<void>().catchError((_) {});
+        throw HttpException('HTTP ${res.statusCode}', uri: Uri.parse(url));
+      }
+      final bytes = await consolidateHttpClientResponseBytes(res).timeout(const Duration(seconds: 60));
+      if (bytes.isEmpty) throw const HttpException('empty image');
+      return bytes;
     } catch (_) {
-      expired = true;
-      request?.abort();
-      await body?.cancel();
+      // 超时 / 出错时断开这个请求，连接不留在池里
+      req?.abort();
       rethrow;
     } finally {
-      if (!shared) client.close();
+      _release();
     }
   }
 
@@ -227,24 +181,17 @@ class CachedNetImage extends ImageProvider<CachedNetImage> {
   }
 
   @override
-  bool operator ==(Object other) => other is CachedNetImage && other._identity == _identity;
+  bool operator ==(Object other) => other is CachedNetImage && other.url == url;
 
   @override
-  int get hashCode => _identity.hashCode;
+  int get hashCode => url.hashCode;
 
   @override
   String toString() => 'CachedNetImage($url)';
 }
 
 /// 网页预览没有本地文件系统：直接用普通网络图片
-ImageProvider netImage(
-  String url, {
-  Map<String, String> headers = const {},
-  int? cacheWidth,
-  ImageRequestPriority priority = ImageRequestPriority.normal,
-}) {
-  final ImageProvider base = kIsWeb
-      ? NetworkImage(url, headers: headers)
-      : CachedNetImage(url, headers: headers, priority: priority);
+ImageProvider netImage(String url, {Map<String, String> headers = const {}, int? cacheWidth}) {
+  final ImageProvider base = kIsWeb ? NetworkImage(url, headers: headers) : CachedNetImage(url, headers: headers);
   return ResizeImage.resizeIfNeeded(cacheWidth, null, base);
 }

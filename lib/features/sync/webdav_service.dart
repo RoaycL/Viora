@@ -60,6 +60,10 @@ class WebDavSync {
 
   Future<String>? _running;
   Timer? _debounce;
+
+  /// 自动同步失败后暂停一段时间再自动重试（手动同步、换了 WebDAV 设置不受影响），不在后台反复请求
+  DateTime? _autoPausedUntil;
+  static const autoRetryAfter = Duration(minutes: 30);
   bool _pendingCheck = false;
   final _subscriptions = <ProviderSubscription<Object?>>[];
 
@@ -101,12 +105,16 @@ class WebDavSync {
     _debounce?.cancel();
     _debounce = Timer(delay, () async {
       _pendingCheck = false;
+      final paused = _autoPausedUntil;
+      if (paused != null && DateTime.now().isBefore(paused) && !pendingCheck) return;
       try {
         // 本机没改：不用访问云端
         if (!pendingCheck && await _localHash() == (await _loadState()).hash) return;
         await sync();
+        _autoPausedUntil = null;
       } catch (e) {
-        debugPrint('webdav auto sync failed: $e');
+        _autoPausedUntil = DateTime.now().add(autoRetryAfter);
+        debugPrint('webdav auto sync failed (自动同步暂停 ${autoRetryAfter.inMinutes} 分钟): $e');
       }
     });
   }
@@ -183,8 +191,13 @@ class WebDavSync {
     _running = f;
     status.value = WebDavStatus(running: true, message: '正在同步…', at: status.value.at);
     f.then(
-      (m) => status.value = WebDavStatus(message: m, at: DateTime.now()),
-      onError: (Object e) => status.value = WebDavStatus(message: '$e', error: true, at: DateTime.now()),
+      (m) {
+        _autoPausedUntil = null;
+        status.value = WebDavStatus(message: m, at: DateTime.now());
+      },
+      onError: (Object e) {
+        status.value = WebDavStatus(message: '$e', error: true, at: DateTime.now());
+      },
     );
     return f.whenComplete(() => _running = null);
   }

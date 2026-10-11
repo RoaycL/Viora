@@ -16,6 +16,12 @@ class _FakeDav {
   final dirs = <String>{'/dav'};
   int puts = 0;
 
+  /// 父目录不存在时回的状态码（有的服务器回 405 而不是 409）
+  int missingParent = 409;
+
+  /// 只读：PUT 一律 405
+  bool readOnly = false;
+
   Future<void> start() async {
     server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
     server.listen((req) async {
@@ -41,8 +47,10 @@ class _FakeDav {
             res.write(f);
           }
         case 'PUT':
-          if (!dirs.contains(parent.replaceAll(RegExp(r'/$'), ''))) {
-            res.statusCode = 409;
+          if (readOnly) {
+            res.statusCode = 405;
+          } else if (!dirs.contains(parent.replaceAll(RegExp(r'/$'), ''))) {
+            res.statusCode = missingParent;
           } else {
             files[path] = await utf8.decodeStream(req);
             puts++;
@@ -162,5 +170,19 @@ void main() {
     await reloaded.read(configProvider.notifier).load();
     expect(reloaded.read(configProvider).webdav.password, 'pw');
     expect(reloaded.read(configProvider).webdav.passphrase, 'pp');
+  });
+
+  test('父目录不存在时回 405 的服务器：建好目录后重试成功；只读目录给出明确原因', () async {
+    dav.missingParent = 405;
+    const base = WebDavConfig(username: 'me', password: 'pw');
+    final client = WebDavClient(base.copyWith(url: dav.url));
+    await client.write('{"viora":1}');
+    expect(dav.files['/dav/Viora/viora-config.json'], '{"viora":1}');
+
+    dav.readOnly = true;
+    await expectLater(
+      client.write('{"viora":1}'),
+      throwsA(isA<WebDavException>().having((e) => e.message, 'message', contains('只读'))),
+    );
   });
 }

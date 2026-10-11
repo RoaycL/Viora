@@ -1,18 +1,12 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart' show ScrollCacheExtent;
 
+import '../../app/platform_profile.dart';
 import '../../app/theme.dart';
-import '../../app/tv_performance.dart';
 import '../focus/row_focus.dart';
 import '../focus/input_mode.dart';
 
 typedef FocusRowItemBuilder = Widget Function(BuildContext context, int index, FocusNode node);
-
-/// Owned by a lazy row's shell, so unmounting cards does not lose navigation.
-class FocusRowMemory {
-  int index = 0;
-  double offset = 0;
-}
 
 /// 横向滚动的一行卡片（首页 / 详情页通用）。
 ///
@@ -34,12 +28,10 @@ class FocusRow extends StatefulWidget {
     this.verticalAlignment = 0.32,
     this.onItemFocused,
     this.initialIndex = 0,
-    this.memory,
   });
 
   /// 初始位置：行一出现就滚到这一项，↓ 进入本行时焦点也落在这里（如详情页当前看到的那一集）
   final int initialIndex;
-  final FocusRowMemory? memory;
 
   final int rowIndex;
   final int itemCount;
@@ -65,7 +57,7 @@ class FocusRow extends StatefulWidget {
 }
 
 class _FocusRowState extends State<FocusRow> implements FocusRowHandle {
-  late final _scroll = ScrollController(initialScrollOffset: widget.memory?.offset ?? 0);
+  final _scroll = ScrollController();
   final _nodes = <FocusNode>[];
   RowFocusController? _controller;
   int _remembered = 0;
@@ -92,12 +84,8 @@ class _FocusRowState extends State<FocusRow> implements FocusRowHandle {
   @override
   void initState() {
     super.initState();
-    _scroll.addListener(() {
-      if (_scroll.hasClients) widget.memory?.offset = _scroll.offset;
-    });
-    final initial = widget.memory?.index ?? widget.initialIndex;
-    if (initial > 0 && initial < widget.itemCount) {
-      _remembered = initial;
+    if (widget.initialIndex > 0 && widget.initialIndex < widget.itemCount) {
+      _remembered = widget.initialIndex;
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (!mounted || !_scroll.hasClients) return;
         final position = _scroll.position;
@@ -138,7 +126,6 @@ class _FocusRowState extends State<FocusRow> implements FocusRowHandle {
 
   void _onItemFocused(int index) {
     _remembered = index;
-    widget.memory?.index = index;
     widget.onItemFocused?.call(index);
     // 鼠标悬停 / 点击带来的焦点不滚动，布局保持不动
     if (!InputMode.shouldAutoScroll) return;
@@ -183,9 +170,9 @@ class _FocusRowState extends State<FocusRow> implements FocusRowHandle {
               controller: _scroll,
               scrollDirection: Axis.horizontal,
               clipBehavior: Clip.none,
-              scrollCacheExtent: ScrollCacheExtent.pixels(
-                TvPerformance.enabled ? widget.itemExtent + widget.gap : 1600,
-              ),
+              // 屏幕外提前构建的范围：电视 800 像素（左右各多两三张卡），电脑 1600。
+              // 电视上每行少建一半屏外卡片，首页十来行加起来少解码几十张海报
+              scrollCacheExtent: ScrollCacheExtent.pixels(PlatformProfile.isTv ? 800 : 1600),
               padding: EdgeInsets.fromLTRB(widget.leading, FocusRow.focusBleed, VSpace.safeH, FocusRow.focusBleed),
               itemCount: widget.itemCount,
               separatorBuilder: (_, _) => SizedBox(width: widget.gap),

@@ -1,9 +1,14 @@
 import 'package:flutter/widgets.dart';
 
+import '../../app/platform_profile.dart';
+
 import '../../app/theme.dart';
 import 'art.dart';
 
 /// 全屏动态背景：背景图交叉淡入 + 左侧与底部压暗（效果图同款）。
+Widget _latestTwo(Widget? current, List<Widget> previous) =>
+    Stack(alignment: Alignment.center, children: [if (previous.isNotEmpty) previous.last, ?current]);
+
 class PageBackdrop extends StatelessWidget {
   const PageBackdrop({
     super.key,
@@ -33,6 +38,9 @@ class PageBackdrop extends StatelessWidget {
         children: [
           AnimatedSwitcher(
             duration: VMotion.backdrop,
+            // 电视：切换时只保留「新图 + 上一张」两层。焦点移得快时默认会叠着三四张全屏大图一起淡出，
+            // 既占内存又拖慢电视 GPU（每层都要整屏混合）
+            layoutBuilder: PlatformProfile.isTv ? _latestTwo : AnimatedSwitcher.defaultLayoutBuilder,
             child: image == null
                 ? ArtView(art, key: ValueKey(art), lightCenter: const Alignment(0.5, -0.4))
                 : Stack(
