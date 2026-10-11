@@ -9,7 +9,11 @@ void main() {
     tester.view.physicalSize = const Size(1920, 1080);
     tester.view.devicePixelRatio = 1;
     addTearDown(tester.view.reset);
-    await tester.pumpWidget(const ProviderScope(child: MaterialApp(home: Scaffold(body: ServerEditPage()))));
+    await tester.pumpWidget(
+      const ProviderScope(
+        child: MaterialApp(home: Scaffold(body: ServerEditPage())),
+      ),
+    );
     await tester.pump();
 
     VToggle httpsToggle() => tester.widget<VToggle>(find.widgetWithText(VToggle, '使用 HTTPS'));

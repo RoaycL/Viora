@@ -138,7 +138,8 @@ class _ServerEditPageState extends ConsumerState<ServerEditPage> {
       if (server.lines.every((l) => l.latencyMs == null)) {
         throw const MediaServerException('所有线路都连不上，请检查地址、端口或代理设置');
       }
-      final info = await client.publicInfo();
+      // 读不到服务器名不影响添加（按 UA 拦截的服务器在登录时会说明原因）
+      final info = await client.publicInfo().catchError((_) => <String, dynamic>{});
       // Emby 可能返回空的 ServerName：再退到地址的主机名
       final serverName = (info['ServerName'] as String?)?.trim() ?? '';
       if (server.name.trim().isEmpty) {
@@ -223,7 +224,7 @@ class _ServerEditPageState extends ConsumerState<ServerEditPage> {
                       ),
                       const SizedBox(width: 24),
                       Expanded(
-                        child: VTextField(label: '播放 UA（留空使用全局设置）', controller: _ua),
+                        child: VTextField(label: 'UA（留空使用全局设置；填了登录、浏览、播放都用它）', controller: _ua, credential: true),
                       ),
                     ],
                   ),

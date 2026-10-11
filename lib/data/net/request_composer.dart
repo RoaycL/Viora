@@ -1,4 +1,7 @@
+import 'dart:convert';
 import 'dart:io';
+
+import 'package:crypto/crypto.dart';
 
 import 'package:flutter/foundation.dart' show kIsWeb;
 
@@ -97,8 +100,20 @@ class RequestComposer {
     return custom.isNotEmpty ? custom : defaultUserAgent(appVersion);
   }
 
-  String userAgentFor(RequestKind kind) =>
-      kind == RequestKind.stream || config.playback.uaForApi ? playbackUserAgent : defaultUserAgent(appVersion);
+  /// 服务器单独指定的 UA 用于这台服务器的所有请求（很多服务器按 UA 白名单拦截，登录、API 也要用它）；
+  /// 全局播放 UA 只用于视频流，打开「API 也使用播放 UA」后才用于 API
+  String userAgentFor(RequestKind kind) {
+    if (server.userAgent?.trim().isNotEmpty == true) return server.userAgent!.trim();
+    return kind == RequestKind.stream || config.playback.uaForApi ? playbackUserAgent : defaultUserAgent(appVersion);
+  }
+
+  /// 设备 ID：本机 ID + 服务器地址 / 用户名的摘要。删掉服务器再添加、改显示名称都不变，
+  /// 不会在服务器上多出一台新设备（有些服务器限制每个账号的设备数）
+  String get deviceId {
+    final host = Uri.tryParse(server.lines.firstOrNull?.url.trim() ?? '')?.host.toLowerCase() ?? '';
+    final digest = sha1.convert(utf8.encode('${server.type.name}|$host|${server.username.trim().toLowerCase()}'));
+    return '${config.deviceId}-${digest.toString().substring(0, 12)}';
+  }
 
   String get _clientName => config.playback.clientName.trim().isEmpty ? 'Viora' : config.playback.clientName.trim();
 
@@ -111,7 +126,7 @@ class RequestComposer {
     final parts = [
       'Client="${q(_clientName)}"',
       'Device="${q(_deviceName)}"',
-      'DeviceId="${q('${config.deviceId}-${server.id}')}"',
+      'DeviceId="${q(deviceId)}"',
       'Version="${q(appVersion)}"',
       if (withToken && server.token != null) 'Token="${server.token}"',
     ];

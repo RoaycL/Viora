@@ -48,6 +48,29 @@ class MediaServerException implements Exception {
   String toString() => message;
 }
 
+/// 登录被拒时给用户看的原因：不是所有 401 / 403 都是密码错了
+@visibleForTesting
+String loginRejectedMessage(int status, Object? body, String where) {
+  final text = switch (body) {
+    final Map<String, dynamic> m => '${m['error'] ?? m['message'] ?? m['Message'] ?? ''}',
+    final String s => s,
+    _ => '',
+  }.trim();
+  final lower = text.toLowerCase();
+  if (lower.contains('device') && (lower.contains('limit') || lower.contains('exceed') || lower.contains('max'))) {
+    return '这个账号的设备数已达上限（$where：$text）。请在其他设备上退出登录，或请服主清理旧设备后再试';
+  }
+  // 网关 / Nginx / Cloudflare 的拦截页（HTML），或网关自己的 JSON 错误：通常是限制了播放器 UA 或 IP
+  if (status == 403 && (lower.contains('<html') || lower.contains('forbidden') || lower.contains('access denied'))) {
+    return '服务器拒绝了这个客户端（$where）。可能只允许特定播放器：在「播放 UA」里填写能正常使用的播放器 UA 后再试';
+  }
+  if (status == 401 || lower.contains('password') || lower.contains('invalid user')) {
+    return '用户名或密码错误（$where）';
+  }
+  final detail = text.isEmpty || text.length > 120 || lower.contains('<') ? '' : '：$text';
+  return '服务器拒绝登录（$where$detail）';
+}
+
 /// 当前进程内记住的"自动选线"结果（serverId → lineId）。
 final Map<String, String> _autoLine = {};
 
@@ -104,7 +127,9 @@ class EmbyClient {
       final sw = Stopwatch()..start();
       try {
         final r = await dio.getUri<dynamic>(url, options: Options(headers: c.headers(RequestKind.api)));
-        if (r.statusCode == 200) samples.add(sw.elapsedMilliseconds);
+        // 401 / 403 也算连得上：按 UA 白名单拦截的服务器到登录时再提示原因，不要报"连不上"
+        final code = r.statusCode ?? 0;
+        if (code >= 200 && code < 500 && code != 404) samples.add(sw.elapsedMilliseconds);
       } catch (_) {
         break;
       }
@@ -165,10 +190,8 @@ class EmbyClient {
     if (r.statusCode == 401 || r.statusCode == 403) {
       // 说明是哪个地址、是否经过反向代理拒绝的，方便排查（内网地址、代理、账号大小写等）
       final via = c.usesProxy(RequestKind.api) ? '，经反向代理' : '';
-      throw MediaServerException(
-        '用户名或密码错误（${c.apiBase.host}${c.apiBase.hasPort ? ':${c.apiBase.port}' : ''}$via 返回 HTTP ${r.statusCode}）',
-        statusCode: 401,
-      );
+      final where = '${c.apiBase.host}${c.apiBase.hasPort ? ':${c.apiBase.port}' : ''}$via 返回 HTTP ${r.statusCode}';
+      throw MediaServerException(loginRejectedMessage(r.statusCode!, r.data, where), statusCode: 401);
     }
     if (r.statusCode != 200 || r.data is! Map) {
       throw MediaServerException('登录失败（HTTP ${r.statusCode}）', statusCode: r.statusCode);
