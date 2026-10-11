@@ -20,7 +20,11 @@ class VTextField extends StatefulWidget {
     this.onSubmitted,
     this.helper,
     this.credential,
+    this.textInputAction = TextInputAction.next,
   });
+
+  /// 输入法右下角的键；默认「下一项」（回车后焦点移到下一个控件），其他（如搜索）回车后焦点留在输入框
+  final TextInputAction textInputAction;
 
   /// 账号、密码、地址、Key：关闭输入法的自动纠错、联想和大小写（电视输入法常把 admin 改成 Admin、在末尾补空格）。
   /// 默认：密码框和网址框开启
@@ -127,10 +131,12 @@ class _VTextFieldState extends State<VTextField> {
                       smartDashesType: _credential ? SmartDashesType.disabled : null,
                       smartQuotesType: _credential ? SmartQuotesType.disabled : null,
                       textCapitalization: TextCapitalization.none,
-                      textInputAction: TextInputAction.next,
+                      textInputAction: widget.textInputAction,
                       onSubmitted: (v) {
                         widget.onSubmitted?.call(v);
-                        _node.focusInDirection(TraversalDirection.down);
+                        if (widget.textInputAction == TextInputAction.next) {
+                          _node.focusInDirection(TraversalDirection.down);
+                        }
                       },
                       cursorColor: VColors.accent,
                       style: VText.label,

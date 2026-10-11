@@ -8,6 +8,31 @@ import 'package:sqlite3/sqlite3.dart' if (dart.library.js_interop) 'sqlite_stub.
 import '../media/media_models.dart';
 import 'title_norm.dart';
 
+/// 一行索引：item_id, kind, name, norm, initials, pinyin, year, tmdb, imdb, tvdb, created, json
+typedef IndexRow = List<Object?>;
+
+String? _blankToNull(String? s) => s == null || s.trim().isEmpty ? null : s.trim();
+
+/// 算出要写入索引的行（纯计算，可以交给 `compute` 在后台 isolate 里跑，避免同步时卡住界面）
+List<IndexRow> prepareIndexRows(List<MediaItem> items) => [
+  for (final it in items)
+    if (it.kind == MediaKind.movie || it.kind == MediaKind.series)
+      [
+        it.id,
+        it.kind.index,
+        it.name,
+        normalizeTitle(it.name),
+        titleInitials(it.name),
+        titlePinyin(it.name),
+        it.year,
+        _blankToNull(it.tmdbId),
+        _blankToNull(it.imdbId),
+        _blankToNull(it.tvdbId),
+        it.addedAt?.millisecondsSinceEpoch,
+        jsonEncode(it.toIndexJson()),
+      ],
+];
+
 /// 本地聚合索引（docs/04-aggregation.md §1~§3）：
 /// 每台服务器的电影与剧集（不含单集）存进 SQLite，用于秒出搜索结果和跨服务器匹配同一部作品。
 class MediaIndex {
@@ -88,8 +113,12 @@ class MediaIndex {
   }
 
   /// 写入一批条目；[gen] 为本次全量同步的代号（增量同步沿用当前代号）
-  void upsert(String serverId, List<MediaItem> items, {int? gen}) {
-    if (items.isEmpty) return;
+  void upsert(String serverId, List<MediaItem> items, {int? gen}) =>
+      upsertPrepared(serverId, prepareIndexRows(items), gen: gen);
+
+  /// 写入 [prepareIndexRows] 算好的行（标题归一化、拼音、JSON 可以放到后台 isolate 里算，这里只写库）
+  void upsertPrepared(String serverId, List<IndexRow> rows, {int? gen}) {
+    if (rows.isEmpty) return;
     final g = gen ?? syncState(serverId).gen;
     final stmt = _db.prepare('''
       INSERT OR REPLACE INTO items(server_id, item_id, kind, name, norm, initials, pinyin, year, tmdb, imdb, tvdb, created, gen, json)
@@ -97,24 +126,8 @@ class MediaIndex {
     ''');
     _db.execute('BEGIN');
     try {
-      for (final it in items) {
-        if (it.kind != MediaKind.movie && it.kind != MediaKind.series) continue;
-        stmt.execute([
-          serverId,
-          it.id,
-          it.kind.index,
-          it.name,
-          normalizeTitle(it.name),
-          titleInitials(it.name),
-          titlePinyin(it.name),
-          it.year,
-          _blankToNull(it.tmdbId),
-          _blankToNull(it.imdbId),
-          _blankToNull(it.tvdbId),
-          it.addedAt?.millisecondsSinceEpoch,
-          g,
-          jsonEncode(it.toIndexJson()),
-        ]);
+      for (final r in rows) {
+        stmt.execute([serverId, ...r.sublist(0, 11), g, r[11]]);
       }
       _db.execute('COMMIT');
     } catch (_) {
@@ -124,8 +137,6 @@ class MediaIndex {
       stmt.close();
     }
   }
-
-  static String? _blankToNull(String? s) => s == null || s.trim().isEmpty ? null : s.trim();
 
   /// 开始一次全量同步，返回新的代号
   int beginFull(String serverId) => syncState(serverId).gen + 1;
@@ -290,16 +301,51 @@ class AggregatedTitle {
   int get serverCount => copies.map((c) => c.serverId).toSet().length;
 }
 
-/// 把条目按"同一部作品"分组（任意一个 ID 相同或标题年份相同即合并），保持原有顺序
+/// 把条目按"同一部作品"分组（任意一个 ID 相同或标题年份相同即合并），保持原有顺序。
+///
+/// 先按 ID / 规范化标题建索引，只和可能是同一部的分组比较。原来是每条和所有分组两两比较，
+/// 16 台服务器的搜索结果、最近入库（几百到上千条）要比较几十万次，电视上界面线程卡死几十秒、被系统杀掉
 List<AggregatedTitle> groupTitles(Iterable<MediaItem> items) {
   final groups = <AggregatedTitle>[];
+  final byKey = <String, List<AggregatedTitle>>{};
+  final seen = <AggregatedTitle, Set<String>>{};
   for (final it in items) {
-    final g = groups.where((g) => g.copies.any((c) => sameTitle(c, it))).firstOrNull;
+    final keys = _matchKeys(it);
+    AggregatedTitle? g;
+    search:
+    for (final k in keys) {
+      for (final candidate in byKey[k] ?? const <AggregatedTitle>[]) {
+        if (candidate.copies.any((c) => sameTitle(c, it))) {
+          g = candidate;
+          break search;
+        }
+      }
+    }
     if (g == null) {
-      groups.add(AggregatedTitle([it]));
-    } else if (!g.copies.any((c) => c.serverId == it.serverId && c.id == it.id)) {
+      g = AggregatedTitle([it]);
+      groups.add(g);
+      seen[g] = {'${it.serverId}/${it.id}'};
+    } else if (seen[g]!.add('${it.serverId}/${it.id}')) {
       g.copies.add(it);
+    } else {
+      continue;
+    }
+    for (final k in keys) {
+      final list = byKey.putIfAbsent(k, () => []);
+      if (!list.contains(g)) list.add(g);
     }
   }
   return groups;
+}
+
+/// 能和 [it] 判为同一部的条目一定至少共享其中一个键（[sameTitle]：ID 相同，或标题相同）
+List<String> _matchKeys(MediaItem it) {
+  final k = it.kind.index;
+  String? id(String? v) => v == null || v.trim().isEmpty ? null : v.trim();
+  return [
+    if (id(it.tmdbId) case final v?) 't$k:$v',
+    if (id(it.imdbId) case final v?) 'i$k:$v',
+    if (id(it.tvdbId) case final v?) 'v$k:$v',
+    'n$k:${normalizeTitle(it.name)}',
+  ];
 }

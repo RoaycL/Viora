@@ -16,6 +16,7 @@ import '../../data/tmdb/tmdb_client.dart';
 import '../../ui/focus/focus_auto_scroll.dart';
 import '../../ui/focus/focusable.dart';
 import '../../ui/rows/cards.dart';
+import '../../ui/widgets/buttons.dart';
 import '../../ui/widgets/form.dart';
 import '../../ui/widgets/server_image.dart';
 import '../browse/media_cards.dart';
@@ -33,9 +34,14 @@ class SearchPage extends ConsumerStatefulWidget {
 }
 
 class _SearchPageState extends ConsumerState<SearchPage> {
+  /// 最多显示的作品数：结果网格不是懒加载，几百张海报一起构建、下载会拖垮电视
+  static const maxResults = 120;
+
   final _query = TextEditingController();
-  Timer? _debounce;
   int _generation = 0;
+
+  /// 上一次点「搜索」时的关键字（结果对应的就是它）
+  String _searched = '';
   List<AggregatedTitle> _results = const [];
   bool _searchingRemote = false;
   int _pendingServers = 0;
@@ -50,55 +56,80 @@ class _SearchPageState extends ConsumerState<SearchPage> {
 
   @override
   void dispose() {
-    _debounce?.cancel();
     _query.dispose();
     super.dispose();
   }
 
+  /// 输入时不搜索（电视上每输一个字就查一遍会很卡），点「搜索」/ 按回车才开始；清空时清掉结果
   void _onChanged() {
-    _debounce?.cancel();
-    _debounce = Timer(const Duration(milliseconds: 400), _search);
+    if (_query.text.trim().isEmpty && _searched.isNotEmpty) {
+      _generation++;
+      _searched = '';
+      _results = const [];
+      _searchingRemote = false;
+      _pendingServers = 0;
+    }
     setState(() {});
   }
 
   Future<void> _search() async {
     final q = _query.text.trim();
     final gen = ++_generation;
+    _searched = q;
     if (q.isEmpty) {
       setState(() => _results = const []);
       return;
     }
-    // 1. 本地索引
+    // 1. 本地索引（一个字母能匹配上万条，只取前 100 条）
     final index = await ref.read(mediaIndexProvider.future);
     final config = ref.read(configProvider);
     final local = [
-      for (final it in index?.search(q) ?? const <MediaItem>[])
+      for (final it in index?.search(q, limit: 100) ?? const <MediaItem>[])
         if (itemVisible(config, it)) it,
     ];
     if (gen != _generation || !mounted) return;
-    var groups = groupTitles(local);
+    final all = [...local];
     setState(() {
-      _results = groups;
-      _searchingRemote = true;
+      _results = groupTitles(all).take(maxResults).toList();
+      _searchingRemote = false;
+      _pendingServers = 0;
     });
 
-    // 2. 各服务器实时搜索（单台 5 秒超时），回来一台合并一台
+    // 2. 各服务器实时搜索：只有一个字母时不查（结果太多也没意义，16 台服务器一起查会把电视卡死）
+    if (q.characters.length < 2) return;
     final servers = ref.read(configProvider).servers.toList();
-    setState(() => _pendingServers = servers.length);
+    setState(() {
+      _searchingRemote = true;
+      _pendingServers = servers.length;
+    });
+    // 服务器陆续返回：合并后重新分组，最多每 300 毫秒刷新一次界面
+    Timer? regroup;
+    void scheduleRegroup() {
+      regroup ??= Timer(const Duration(milliseconds: 300), () {
+        regroup = null;
+        if (gen != _generation || !mounted) return;
+        setState(() => _results = groupTitles(all).take(maxResults).toList());
+      });
+    }
+
     await Future.wait(
       servers.map((s) async {
         final client = ref.read(serverClientProvider(s.id));
         try {
-          final page = await client!.items(searchTerm: q, limit: 40).timeout(const Duration(seconds: 5));
+          final page = await client!.items(searchTerm: q, limit: 20).timeout(const Duration(seconds: 5));
           if (gen != _generation || !mounted) return;
-          groups = groupTitles([for (final g in groups) ...g.copies, ...page.items]);
-          setState(() => _results = groups);
+          all.addAll(page.items);
+          scheduleRegroup();
         } catch (_) {
         } finally {
           if (gen == _generation && mounted) setState(() => _pendingServers--);
         }
       }),
     );
+    regroup?.cancel();
+    if (gen == _generation && mounted) {
+      setState(() => _results = groupTitles(all).take(maxResults).toList());
+    }
     if (gen == _generation && mounted) setState(() => _searchingRemote = false);
   }
 
@@ -115,7 +146,16 @@ class _SearchPageState extends ConsumerState<SearchPage> {
 
   @override
   Widget build(BuildContext context) {
-    final hasQuery = _query.text.trim().isNotEmpty;
+    final typed = _query.text.trim();
+    final hasQuery = _searched.isNotEmpty;
+    final field = VTextField(
+      label: PlatformProfile.isTv ? '片名 / 拼音首字母（如 sgdlr）' : '片名 / 拼音首字母 / 全拼',
+      controller: _query,
+      autofocus: true,
+      hint: '时光代理人',
+      textInputAction: TextInputAction.search,
+      onSubmitted: (_) => _search(),
+    );
     return FocusAutoScroll(
       child: Padding(
         padding: const EdgeInsets.fromLTRB(VSpace.contentLeft, VSpace.safeV, 0, 0),
@@ -130,20 +170,27 @@ class _SearchPageState extends ConsumerState<SearchPage> {
                 children: [
                   const Text('搜索', style: VText.h1),
                   const SizedBox(height: 32),
-                  VTextField(
-                    label: PlatformProfile.isTv ? '片名 / 拼音首字母（如 sgdlr）' : '片名 / 拼音首字母 / 全拼',
-                    controller: _query,
-                    autofocus: true,
-                    hint: '时光代理人',
-                  ),
                   if (PlatformProfile.isTv) ...[
+                    // 电视：屏幕键盘最后一行有「搜索」键
+                    field,
                     const SizedBox(height: 24),
-                    _Keyboard(onKey: _type, onBackspace: _backspace, onClear: () => _query.clear()),
-                  ],
+                    _Keyboard(onKey: _type, onBackspace: _backspace, onClear: () => _query.clear(), onSearch: _search),
+                  ] else
+                    // Windows：输入框右边一个「搜索」按钮，也可以直接按回车
+                    Row(
+                      crossAxisAlignment: CrossAxisAlignment.end,
+                      children: [
+                        Expanded(child: field),
+                        const SizedBox(width: 16),
+                        PillButton(label: '搜索', icon: Icons.search_rounded, onPressed: _search),
+                      ],
+                    ),
                   const SizedBox(height: 20),
                   Text(
                     _searchingRemote && _pendingServers > 0
                         ? '本地索引已返回，正在查询 $_pendingServers 台服务器…'
+                        : typed.isNotEmpty && typed != _searched
+                        ? (PlatformProfile.isTv ? '输入完成后按「搜索」' : '输入完成后按回车或点「搜索」')
                         : hasQuery
                         ? '共 ${_results.length} 部作品'
                         : '同时搜索所有服务器，同一部作品会合并显示',
@@ -214,11 +261,12 @@ class _ResultCardState extends ConsumerState<_ResultCard> {
 
 /// TV 屏幕键盘：字母数字（配合拼音首字母搜索），以及空格 / 删除 / 清空
 class _Keyboard extends StatelessWidget {
-  const _Keyboard({required this.onKey, required this.onBackspace, required this.onClear});
+  const _Keyboard({required this.onKey, required this.onBackspace, required this.onClear, required this.onSearch});
 
   final ValueChanged<String> onKey;
   final VoidCallback onBackspace;
   final VoidCallback onClear;
+  final VoidCallback onSearch;
 
   static const _keys = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ1234567890';
 
@@ -259,11 +307,13 @@ class _Keyboard extends StatelessWidget {
         const SizedBox(height: 10),
         Row(
           children: [
-            key('空格', () => onKey(' '), width: 170),
+            key('空格', () => onKey(' '), width: 125),
             const SizedBox(width: 10),
-            key('删除', onBackspace, width: 170),
+            key('删除', onBackspace, width: 125),
             const SizedBox(width: 10),
-            key('清空', onClear, width: 170),
+            key('清空', onClear, width: 125),
+            const SizedBox(width: 10),
+            key('搜索', onSearch, width: 125),
           ],
         ),
       ],

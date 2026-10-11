@@ -1,8 +1,20 @@
 import 'package:lpinyin/lpinyin.dart';
 
+/// 规范化结果缓存：繁简转换、正则都不便宜，分组时同一个片名会被反复规范化
+final _normCache = <String, String>{};
+
 /// 标题归一化（docs/04-aggregation.md §3）：
 /// 全角转半角、繁转简、小写、去掉标点空白、去掉"第X季""(2021)"等后缀，用于跨服务器匹配同一部作品。
 String normalizeTitle(String title) {
+  final hit = _normCache[title];
+  if (hit != null) return hit;
+  final result = _normalize(title);
+  if (_normCache.length >= 20000) _normCache.clear();
+  _normCache[title] = result;
+  return result;
+}
+
+String _normalize(String title) {
   var s = title.trim();
   // 全角 → 半角
   s = String.fromCharCodes(
