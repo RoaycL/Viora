@@ -29,9 +29,18 @@ class SegmentSettingsController extends AsyncNotifier<SegmentSettings> {
   @override
   Future<SegmentSettings> build() => ref.read(segmentSettingsStoreProvider).load();
 
+  /// 界面立即显示新设置；写入失败时恢复成磁盘上实际保存的内容再报错（不会显示未保存的值）
   Future<void> save(SegmentSettings settings) async {
-    await ref.read(segmentSettingsStoreProvider).save(settings);
+    final store = ref.read(segmentSettingsStoreProvider);
     state = AsyncData(settings);
+    try {
+      await store.save(settings);
+    } catch (_) {
+      try {
+        state = AsyncData(await store.load());
+      } catch (_) {}
+      rethrow;
+    }
   }
 }
 

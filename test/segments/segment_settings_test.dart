@@ -96,4 +96,53 @@ void main() {
     await second.write('new-key', entry);
     expect((await second.read('new-key'))!.candidates.single.provider, 'introdb');
   });
+
+  test('系统密钥库不可用：Key 退回存进普通配置，保存不报错、重启后还在', () async {
+    final store = SegmentSettingsStore(secrets: _BrokenSecrets());
+    final defaults = SegmentSettings.defaults();
+    final settings = defaults.copyWith(
+      intro: SegmentSkipMode.auto,
+      providers: [for (final p in defaults.providers) p.id == 'theintrodb' ? p.copyWith(apiKey: 'k-1') : p],
+    );
+    await store.save(settings);
+    final loaded = await SegmentSettingsStore(secrets: _BrokenSecrets()).load();
+    expect(loaded.intro, SegmentSkipMode.auto);
+    expect(loaded.providers.firstWhere((p) => p.id == 'theintrodb').apiKey, 'k-1');
+  });
+}
+
+class _BrokenSecrets extends FlutterSecureStorage {
+  @override
+  Future<String?> read({
+    required String key,
+    AppleOptions? iOptions,
+    AndroidOptions? aOptions,
+    LinuxOptions? lOptions,
+    WebOptions? webOptions,
+    AppleOptions? mOptions,
+    WindowsOptions? wOptions,
+  }) async => throw Exception('keystore unavailable');
+
+  @override
+  Future<void> write({
+    required String key,
+    required String? value,
+    AppleOptions? iOptions,
+    AndroidOptions? aOptions,
+    LinuxOptions? lOptions,
+    WebOptions? webOptions,
+    AppleOptions? mOptions,
+    WindowsOptions? wOptions,
+  }) async => throw Exception('keystore unavailable');
+
+  @override
+  Future<void> delete({
+    required String key,
+    AppleOptions? iOptions,
+    AndroidOptions? aOptions,
+    LinuxOptions? lOptions,
+    WebOptions? webOptions,
+    AppleOptions? mOptions,
+    WindowsOptions? wOptions,
+  }) async => throw Exception('keystore unavailable');
 }

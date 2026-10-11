@@ -26,12 +26,15 @@ class SegmentSettingsSection extends ConsumerStatefulWidget {
 }
 
 class _SegmentSettingsSectionState extends ConsumerState<SegmentSettingsSection> {
-  Future<void> _save(SegmentSettings s, {String? done}) async {
+  /// 返回是否保存成功（失败时弹窗不关闭，保留已输入的内容）
+  Future<bool> _save(SegmentSettings s, {String? done}) async {
     try {
       await ref.read(segmentSettingsProvider.notifier).save(s);
       if (done != null) showToast(done);
+      return true;
     } catch (e) {
       showToast('保存失败：$e');
+      return false;
     }
   }
 
@@ -78,8 +81,7 @@ class _SegmentSettingsSectionState extends ConsumerState<SegmentSettingsSection>
             // PublicMetaDB 没有 Key 时不能启用；刚填上 Key 时自动启用
             enabled: p.id == 'publicmetadb' ? k.isNotEmpty && (p.enabled || p.apiKey.isEmpty) : p.enabled,
           );
-        await _save(s.copyWith(providers: list), done: '$name 已保存');
-        return true;
+        return _save(s.copyWith(providers: list), done: '$name 已保存');
       },
     );
     key.dispose();

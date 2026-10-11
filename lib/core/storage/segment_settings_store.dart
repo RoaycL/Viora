@@ -10,6 +10,9 @@ class SegmentSettingsStore {
   final FlutterSecureStorage _secrets;
   static const _preferencesKey = 'segments.settings.v1';
 
+  /// 系统密钥库不可用时（部分电视盒子）Key 退回存这里，和服务器密码的处理一致
+  static const _fallbackKey = 'segments.keys.fallback.v1';
+
   Future<SegmentSettings> load() async {
     final prefs = await SharedPreferences.getInstance();
     final raw = prefs.getString(_preferencesKey);
@@ -21,9 +24,11 @@ class SegmentSettingsStore {
         /* Recover non-secret preferences independently of stored keys. */
       }
     }
+    final fallback = _fallback(prefs);
     final providers = <SegmentProviderSettings>[];
     for (final provider in settings.providers) {
-      providers.add(provider.copyWith(apiKey: await _readKey(provider.id)));
+      final secure = await _readKey(provider.id);
+      providers.add(provider.copyWith(apiKey: secure.isNotEmpty ? secure : fallback[provider.id] ?? ''));
     }
     return settings.copyWith(providers: providers);
   }
@@ -37,8 +42,19 @@ class SegmentSettingsStore {
     }
   }
 
+  Map<String, String> _fallback(SharedPreferences prefs) {
+    try {
+      final raw = prefs.getString(_fallbackKey);
+      return raw == null ? {} : (jsonDecode(raw) as Map<String, dynamic>).cast<String, String>();
+    } on Object {
+      return {};
+    }
+  }
+
+  /// 先写 Key 再写其他设置；密钥库写入失败的 Key 改存进普通配置，不会出现"设置存了、Key 没存"的半保存状态
   Future<void> save(SegmentSettings settings) async {
-    Object? secretError;
+    final prefs = await SharedPreferences.getInstance();
+    final fallback = <String, String>{};
     for (final provider in settings.providers) {
       final key = 'segments.key.${provider.id}';
       try {
@@ -47,22 +63,15 @@ class SegmentSettingsStore {
         } else {
           await _secrets.write(key: key, value: provider.apiKey);
         }
-      } catch (e) {
-        secretError = e;
+      } catch (_) {
+        if (provider.apiKey.isNotEmpty) fallback[provider.id] = provider.apiKey;
       }
     }
-    final prefs = await SharedPreferences.getInstance();
+    if (fallback.isEmpty) {
+      await prefs.remove(_fallbackKey);
+    } else {
+      await prefs.setString(_fallbackKey, jsonEncode(fallback));
+    }
     await prefs.setString(_preferencesKey, jsonEncode(settings.toJson()));
-    // 其他设置已保存；Key 写入失败再报告
-    if (secretError != null) throw SegmentKeyStorageException(secretError);
   }
-}
-
-class SegmentKeyStorageException implements Exception {
-  const SegmentKeyStorageException(this.cause);
-
-  final Object cause;
-
-  @override
-  String toString() => '系统安全存储不可用，API Key 未能保存：$cause';
 }

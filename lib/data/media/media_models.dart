@@ -188,6 +188,27 @@ class MediaItem {
   String? get episodeLabel => seasonNumber != null && episodeNumber != null ? 'S${seasonNumber}E$episodeNumber' : null;
 }
 
+/// 一部剧的下一集：按季、集排序，季末接着下一季第一集；特别篇（第 0 季）只在特别篇之间连播
+MediaItem? nextEpisodeAfter(List<MediaItem> episodes, MediaItem current) {
+  final season = current.seasonNumber;
+  final list =
+      episodes
+          .where((e) => e.kind == MediaKind.episode && e.seasonNumber != null && e.episodeNumber != null)
+          .where((e) => season == 0 ? e.seasonNumber == 0 : e.seasonNumber != 0)
+          .toList()
+        ..sort((a, b) {
+          final s = a.seasonNumber!.compareTo(b.seasonNumber!);
+          return s != 0 ? s : a.episodeNumber!.compareTo(b.episodeNumber!);
+        });
+  final i = list.indexWhere((e) => e.id == current.id);
+  if (i >= 0) return i + 1 < list.length ? list[i + 1] : null;
+  // 当前集不在列表里（如没有集号）：取第一个排在它后面的
+  if (season == null || current.episodeNumber == null) return null;
+  return list
+      .where((e) => e.seasonNumber! > season || (e.seasonNumber == season && e.episodeNumber! > current.episodeNumber!))
+      .firstOrNull;
+}
+
 enum VideoRange { sdr, hdr10, hdr10Plus, hlg, dolbyVision }
 
 class MediaStreamInfo {
