@@ -178,8 +178,10 @@ class _WindowTitleBarState extends State<WindowTitleBar> with WindowListener {
                 : const SizedBox.shrink(),
           ),
           Expanded(
+            // opaque：标题栏下面的内容收不到这块区域的鼠标事件。之前是 translucent，
+            // 下面的列表（鼠标可以拖动滚动）也参与手势竞争，鼠标一拖常被列表抢走，窗口拖不动
             child: GestureDetector(
-              behavior: HitTestBehavior.translucent,
+              behavior: HitTestBehavior.opaque,
               onPanStart: (_) => windowManager.startDragging(),
               onDoubleTap: _toggleMaximize,
             ),
