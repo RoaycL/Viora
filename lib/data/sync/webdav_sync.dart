@@ -92,7 +92,8 @@ class WebDavClient {
       data: Stream.fromIterable([body]),
       headers: {'Content-Type': 'application/json; charset=utf-8', 'Content-Length': '${body.length}'},
     );
-    if (r.statusCode == 409 || r.statusCode == 404) {
+    // 父目录不存在：多数服务器回 409 / 404，有的（如部分 Nginx、Alist 挂载）回 405。建好目录再试一次
+    if (r.statusCode == 409 || r.statusCode == 404 || r.statusCode == 405) {
       final dirs = _segments.take(_segments.length - 1).toList();
       for (var i = 1; i <= dirs.length; i++) {
         final m = await _send('MKCOL', _base.resolve('${dirs.take(i).map(Uri.encodeComponent).join('/')}/'));
@@ -104,6 +105,12 @@ class WebDavClient {
         fileUri,
         data: Stream.fromIterable([body]),
         headers: {'Content-Type': 'application/json; charset=utf-8', 'Content-Length': '${body.length}'},
+      );
+    }
+    if (r.statusCode == 405) {
+      throw const WebDavException(
+        'WebDAV 不允许在这个位置写文件（HTTP 405）：目录可能是只读的（如 Alist 的只读存储、网盘挂载的根目录），'
+        '请把「文件路径」换到可写的目录，或检查账号的写入权限',
       );
     }
     if (r.statusCode != 200 && r.statusCode != 201 && r.statusCode != 204) _fail('上传', r.statusCode);
