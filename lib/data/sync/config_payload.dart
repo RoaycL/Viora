@@ -18,7 +18,8 @@ enum SyncSection {
   network('反向代理与播放 UA', '反代地址、播放 UA、客户端名称'),
   tmdb('TMDB', 'API Key、自定义地址'),
   danmaku('弹幕', '弹幕服务器、显示设置、屏蔽词'),
-  segments('片头片尾', '数据源开关与 API Key');
+  segments('片头片尾', '数据源开关与 API Key'),
+  webdav('WebDAV 同步', '地址、账号、加密口令（电视收到后即可自动同步）');
 
   const SyncSection(this.label, this.detail);
   final String label;
@@ -49,6 +50,7 @@ Map<String, dynamic> buildSyncPayload(
           'password': s.password,
           'userAgent': s.userAgent,
           'adult': s.adult,
+          'aggregate': s.aggregate,
         },
     ],
   if (sections.contains(SyncSection.network)) ...{
@@ -61,6 +63,7 @@ Map<String, dynamic> buildSyncPayload(
   },
   if (sections.contains(SyncSection.tmdb)) 'tmdb': c.tmdb.toJson(),
   if (sections.contains(SyncSection.danmaku)) 'danmaku': c.danmaku.toJson(),
+  if (sections.contains(SyncSection.webdav) && c.webdav.configured) 'webdav': c.webdav.toJson(),
   if (sections.contains(SyncSection.segments) && segments != null)
     'segments': {
       'settings': segments.toJson(),
@@ -94,20 +97,30 @@ class SyncMergeResult {
   bool get isEmpty => summary.isEmpty;
 }
 
+String _withScheme(String url) => url.contains('://') ? url : 'http://$url';
+
+bool _sameLines(List<ServerLine> a, List<ServerLine> b) =>
+    a.length == b.length &&
+    [for (var i = 0; i < a.length; i++) a[i].name == b[i].name && a[i].url == b[i].url && a[i].proxied == b[i].proxied]
+        .every((x) => x);
+
 String _norm(String url) => url.trim().toLowerCase().replaceAll(RegExp(r'/+$'), '');
 
 /// 把收到的配置合并进本机配置：服务器按「类型 + 第一条地址 + 用户名」对上的更新，其余新增；
 /// 其他部分只覆盖带过来的字段。格式不对时抛 [FormatException]。
-SyncMergeResult mergeSyncPayload(AppConfig c, Map<String, dynamic> p) {
+///
+/// [replaceServers]：本机有、收到的配置里没有的服务器删掉（WebDAV 同步时让删除也同步到其他设备）
+SyncMergeResult mergeSyncPayload(AppConfig c, Map<String, dynamic> p, {bool replaceServers = false}) {
   if (p['viora'] is! num) throw const FormatException('不是 Viora 的配置');
   var config = c;
   final summary = <String>[];
   final changed = <String>[];
 
   final servers = p['servers'];
-  if (servers is List && servers.isNotEmpty) {
-    final list = [...config.servers];
-    var added = 0, updated = 0;
+  if (servers is List && (servers.isNotEmpty || replaceServers)) {
+    final list = [...config.allServers];
+    final kept = <String>{};
+    var added = 0, updated = 0, same = 0;
     for (final raw in servers.whereType<Map<String, dynamic>>()) {
       final lines = [
         for (final (i, l) in (raw['lines'] as List? ?? const []).whereType<Map<String, dynamic>>().indexed)
@@ -115,7 +128,8 @@ SyncMergeResult mergeSyncPayload(AppConfig c, Map<String, dynamic> p) {
             ServerLine(
               id: newId(),
               name: (l['name'] as String?)?.trim().isNotEmpty == true ? l['name'] as String : '线路 ${i + 1}',
-              url: (l['url'] as String).trim(),
+              // 没写协议时按 http（和添加服务器页「使用 HTTPS」关闭时一致）
+              url: _withScheme((l['url'] as String).trim()),
               proxied: l['proxied'] as bool? ?? false,
             ),
       ];
@@ -134,7 +148,19 @@ SyncMergeResult mergeSyncPayload(AppConfig c, Map<String, dynamic> p) {
       );
       if (i >= 0) {
         final old = list[i];
+        kept.add(old.id);
         final credentials = old.password != password;
+        final aggregate = raw['aggregate'] as bool?;
+        // 内容没变的不算更新，不重新登录
+        if (!credentials &&
+            (name.isEmpty || name == old.name) &&
+            (ua?.isEmpty ?? true ? old.userAgent == null : old.userAgent == ua) &&
+            (raw['adult'] as bool? ?? old.adult) == old.adult &&
+            (aggregate ?? old.aggregate) == old.aggregate &&
+            _sameLines(old.lines, lines)) {
+          same++;
+          continue;
+        }
         list[i] = old.copyWith(
           name: name.isEmpty ? null : name,
           lines: lines,
@@ -142,6 +168,7 @@ SyncMergeResult mergeSyncPayload(AppConfig c, Map<String, dynamic> p) {
           userAgent: ua?.isEmpty ?? true ? null : ua,
           clearUserAgent: ua?.isEmpty ?? true,
           adult: raw['adult'] as bool?,
+          aggregate: raw['aggregate'] as bool?,
           clearActiveLine: true,
           clearSession: credentials,
         );
@@ -157,15 +184,24 @@ SyncMergeResult mergeSyncPayload(AppConfig c, Map<String, dynamic> p) {
           password: password,
           userAgent: ua?.isEmpty ?? true ? null : ua,
           adult: raw['adult'] as bool? ?? false,
+          aggregate: raw['aggregate'] as bool? ?? true,
         );
         list.add(s);
+        kept.add(s.id);
         changed.add(s.id);
         added++;
       }
     }
+    var removed = 0;
+    if (replaceServers) {
+      removed = list.where((s) => !kept.contains(s.id)).length;
+      list.removeWhere((s) => !kept.contains(s.id));
+    }
     config = config.copyWith(servers: list);
     if (added > 0) summary.add('新增服务器 $added 台');
     if (updated > 0) summary.add('更新服务器 $updated 台');
+    if (removed > 0) summary.add('删除服务器 $removed 台');
+    if (same > 0 && added + updated + removed == 0) summary.add('服务器 $same 台（无变化）');
   }
 
   Map<String, dynamic>? section(String key) => p[key] is Map<String, dynamic> ? p[key] as Map<String, dynamic> : null;
@@ -180,6 +216,10 @@ SyncMergeResult mergeSyncPayload(AppConfig c, Map<String, dynamic> p) {
   if (section('tmdb') case final m?) {
     config = config.copyWith(tmdb: TmdbConfig.fromJson({...config.tmdb.toJson(), ...m}));
     summary.add('TMDB');
+  }
+  if (section('webdav') case final m?) {
+    config = config.copyWith(webdav: WebDavConfig.fromJson({...config.webdav.toJson(), ...m}));
+    summary.add('WebDAV 同步');
   }
   if (section('danmaku') case final m?) {
     config = config.copyWith(danmaku: DanmakuConfig.fromJson({...config.danmaku.toJson(), ...m}));

@@ -1,4 +1,6 @@
 import 'package:flutter_test/flutter_test.dart';
+import 'package:viora/data/config/app_config.dart';
+import 'package:viora/data/aggregate/tmdb_link.dart';
 import 'package:viora/data/aggregate/sources.dart';
 import 'package:viora/data/index/media_index.dart';
 import 'package:viora/data/index/title_norm.dart';
@@ -103,5 +105,68 @@ void main() {
     ]);
     expect(ranked.map((o) => o.serverId), ['c', 'b', 'a']);
     expect(rankSources(ranked, preferredServerId: 'a').first.serverId, 'a');
+  });
+
+  test('最近入库：新内容多的服务器不会把其他服务器挤掉；剧集按最近更新新集排序', () async {
+    final index = (await MediaIndex.open(path: ':memory:'))!;
+    MediaItem at(String server, String id, DateTime t, {MediaKind kind = MediaKind.movie, DateTime? newEpisode}) =>
+        MediaItem(
+          serverId: server,
+          id: id,
+          kind: kind,
+          name: '$server-$id',
+          dateCreated: t,
+          lastMediaAdded: newEpisode,
+        );
+    // a：最近一周新增 40 部；b：一个月前的 3 部，外加一部老剧昨天更新了新集
+    final now = DateTime(2026, 10, 10);
+    index.upsert('a', [for (var i = 0; i < 40; i++) at('a', '$i', now.subtract(Duration(hours: i)))]);
+    index.upsert('b', [
+      for (var i = 0; i < 3; i++) at('b', '$i', now.subtract(Duration(days: 30 + i))),
+      at(
+        'b',
+        'show',
+        DateTime(2024),
+        kind: MediaKind.series,
+        newEpisode: now.subtract(const Duration(hours: 5, minutes: 30)),
+      ),
+    ]);
+    // 以前只取全局最新：b 一部都排不进前 24
+    expect(groupTitles(index.latest(limit: 60)).take(24).where((g) => g.primary.serverId == 'b').length, 1);
+
+    final recent = balancedLatest(index.latestPerServer(perServer: 30));
+    expect(recent.length, 24);
+    expect(recent.where((g) => g.primary.serverId == 'b').length, 4);
+    // 仍按时间倒序：更新了新集的老剧排在第 7 位
+    expect(recent[6].primary.id, 'show');
+    expect(recent.last.primary.id, '2');
+    index.close();
+  });
+
+  test('聚合搜索比对：双方都有的 ID 优先，没有 ID 时按中文名 / 原名 + 年份 ±1', () {
+    final probe = TitleProbe(kind: MediaKind.movie, titles: ['沙丘', 'Dune'], year: 2021, tmdbId: '438631');
+    expect(probe.terms, ['沙丘', 'Dune']);
+    expect(probe.matches(movie('b', '1', 'Dune: Part One', tmdb: '438631')), isTrue);
+    expect(probe.matches(movie('b', '2', '沙丘', year: 1984, tmdb: '841')), isFalse);
+    expect(probe.matches(movie('b', '3', 'Dune', year: 2022)), isTrue);
+    expect(probe.matches(movie('b', '4', 'Dune', year: 1984)), isFalse);
+    expect(probe.matches(series('b', '5', '沙丘', year: 2021)), isFalse);
+  });
+
+  test('服务器默认参与聚合搜索，旧配置没有这个字段也一样', () {
+    const s = ServerConfig(id: 'a', type: ServerType.emby, name: 'a', lines: [], username: 'u');
+    expect(s.aggregate, isTrue);
+    final json = s.toJson()..remove('aggregate');
+    expect(ServerConfig.fromJson(json).aggregate, isTrue);
+    final off = s.copyWith(aggregate: false);
+    expect(ServerConfig.fromJson(off.toJson()).aggregate, isFalse);
+    final config = AppConfig(
+      servers: [
+        s,
+        off.copyWith(),
+        const ServerConfig(id: 'c', type: ServerType.jellyfin, name: 'c', lines: [], username: 'u', aggregate: false),
+      ],
+    );
+    expect(config.aggregateServerIds, {'a'});
   });
 }

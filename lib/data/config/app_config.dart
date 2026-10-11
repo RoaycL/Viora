@@ -63,6 +63,7 @@ class ServerConfig {
     this.activeLineId,
     this.userAgent,
     this.adult = false,
+    this.aggregate = true,
     this.note,
     this.lastAccessAt,
     this.movieCount,
@@ -95,7 +96,7 @@ class ServerConfig {
   final String username;
 
   /// 保存密码以便令牌失效时自动重新登录。
-  /// TODO(M8)：改为 flutter_secure_storage。
+  /// 存储时放进系统密钥库（见 ConfigStore），配置文件里不保存明文。
   final String password;
   final String? userId;
   final String? token;
@@ -106,6 +107,9 @@ class ServerConfig {
   /// 覆盖全局播放 UA
   final String? userAgent;
   final bool adult;
+
+  /// 参与聚合搜索（详情页的播放资源、TMDB 详情页找资源）；关掉后只在它自己的条目里使用它
+  final bool aggregate;
   final String? note;
   final DateTime? lastAccessAt;
   final int? movieCount;
@@ -125,6 +129,7 @@ class ServerConfig {
     String? userAgent,
     bool clearUserAgent = false,
     bool? adult,
+    bool? aggregate,
     String? note,
     DateTime? lastAccessAt,
     int? movieCount,
@@ -142,6 +147,7 @@ class ServerConfig {
     activeLineId: clearActiveLine ? null : (activeLineId ?? this.activeLineId),
     userAgent: clearUserAgent ? null : (userAgent ?? this.userAgent),
     adult: adult ?? this.adult,
+    aggregate: aggregate ?? this.aggregate,
     note: note ?? this.note,
     lastAccessAt: lastAccessAt ?? this.lastAccessAt,
     movieCount: movieCount ?? this.movieCount,
@@ -160,6 +166,7 @@ class ServerConfig {
     'activeLineId': activeLineId,
     'userAgent': userAgent,
     'adult': adult,
+    'aggregate': aggregate,
     'note': note,
     'lastAccessAt': lastAccessAt?.toIso8601String(),
     'movieCount': movieCount,
@@ -178,6 +185,7 @@ class ServerConfig {
     activeLineId: j['activeLineId'] as String?,
     userAgent: j['userAgent'] as String?,
     adult: j['adult'] as bool? ?? false,
+    aggregate: j['aggregate'] as bool? ?? true,
     note: j['note'] as String?,
     lastAccessAt: DateTime.tryParse(j['lastAccessAt'] as String? ?? ''),
     movieCount: j['movieCount'] as int?,
@@ -502,17 +510,180 @@ class DanmakuConfig {
   );
 }
 
+/// 家长控制 / 儿童模式（docs/12-parental.md）
+class ParentalConfig {
+  const ParentalConfig({this.enabled = false, this.maxAge = 12, this.pinHash = '', this.blockUnrated = false});
+
+  /// 儿童模式开启：隐藏标记 R18 的服务器、按年龄分级过滤内容、首页推荐换成适合儿童的
+  final bool enabled;
+
+  /// 允许的最大年龄分级：7 / 12 / 16
+  final int maxAge;
+
+  /// 退出儿童模式的 4 位 PIN（只保存哈希）
+  final String pinHash;
+
+  /// 没有分级信息的内容也隐藏（国内资源很多没有分级，默认不隐藏）
+  final bool blockUnrated;
+
+  static const ageOptions = [(7, '7 岁以下'), (12, '12 岁以下'), (16, '16 岁以下')];
+
+  /// 传给 Emby / Jellyfin 的 MaxOfficialRating（服务器端过滤，Viora 再按分级二次过滤）
+  String get maxOfficialRating => switch (maxAge) {
+    <= 7 => 'G',
+    <= 12 => 'PG',
+    _ => 'PG-13',
+  };
+
+  /// 这个分级在不在允许范围内
+  bool allows(String? officialRating) {
+    final age = ratingAge(officialRating);
+    if (age == null) return !blockUnrated;
+    return age <= maxAge;
+  }
+
+  ParentalConfig copyWith({bool? enabled, int? maxAge, String? pinHash, bool? blockUnrated}) => ParentalConfig(
+    enabled: enabled ?? this.enabled,
+    maxAge: maxAge ?? this.maxAge,
+    pinHash: pinHash ?? this.pinHash,
+    blockUnrated: blockUnrated ?? this.blockUnrated,
+  );
+
+  Map<String, dynamic> toJson() => {
+    'enabled': enabled,
+    'maxAge': maxAge,
+    'pinHash': pinHash,
+    'blockUnrated': blockUnrated,
+  };
+
+  factory ParentalConfig.fromJson(Map<String, dynamic> j) => ParentalConfig(
+    enabled: j['enabled'] as bool? ?? false,
+    maxAge: (j['maxAge'] as num?)?.toInt() ?? 12,
+    pinHash: j['pinHash'] as String? ?? '',
+    blockUnrated: j['blockUnrated'] as bool? ?? false,
+  );
+}
+
+/// 分级对应的最低年龄：G / TV-Y → 0，TV-Y7 → 7，PG → 8，PG-13 / TV-14 → 13，R / TV-MA → 17，NC-17 / R18 → 18；
+/// 也认识「12」「FSK-16」「GB-15」「KR-19」这类带数字的分级。认不出来返回 null。
+int? ratingAge(String? rating) {
+  if (rating == null) return null;
+  var r = rating.trim().toUpperCase().replaceAll(' ', '');
+  if (r.isEmpty || r == 'NR' || r == 'UNRATED' || r == 'NOTRATED') return null;
+  // 去掉国家前缀：US-PG-13、DE-16、GB-15
+  final prefixed = RegExp(r'^[A-Z]{2}-(.+)$').firstMatch(r);
+  if (prefixed != null && !const {'TV', 'PG', 'NC'}.contains(r.substring(0, 2))) r = prefixed[1]!;
+  const known = {
+    'G': 0, 'TV-Y': 0, 'TV-G': 0, 'U': 0, 'ALL': 0, 'E': 0, 'APPROVED': 0, //
+    'TV-Y7': 7, 'TV-Y7-FV': 7, 'PG': 8, 'TV-PG': 8, 'UC': 8,
+    'PG-13': 13, 'TV-14': 14, 'M': 15, 'MA15+': 15,
+    'R': 17, 'TV-MA': 17, 'NC-17': 18, 'X': 18, 'XXX': 18, 'AO': 18, 'R18': 18, 'R18+': 18, 'R-18': 18,
+  };
+  if (known.containsKey(r)) return known[r];
+  final n = RegExp(r'(\d{1,2})').firstMatch(r);
+  return n == null ? null : int.parse(n[1]!);
+}
+
+/// WebDAV 同步（docs/11-sync.md §WebDAV）：把配置存成 WebDAV 上的一个文件，多台设备共用
+class WebDavConfig {
+  const WebDavConfig({
+    this.url = '',
+    this.username = '',
+    this.password = '',
+    this.path = defaultPath,
+    this.passphrase = '',
+    this.autoSync = true,
+  });
+
+  static const defaultPath = 'Viora/viora-config.json';
+
+  /// 如 `https://dav.jianguoyun.com/dav/`
+  final String url;
+  final String username;
+
+  /// 和服务器密码一样存进系统密钥库
+  final String password;
+
+  /// 相对 [url] 的文件路径
+  final String path;
+
+  /// 加密口令（可选）：设置后云端文件用 AES-GCM 加密，所有设备要填同一个口令
+  final String passphrase;
+
+  /// 启动时和配置变化后自动同步
+  final bool autoSync;
+
+  bool get configured => url.trim().isNotEmpty;
+
+  WebDavConfig copyWith({
+    String? url,
+    String? username,
+    String? password,
+    String? path,
+    String? passphrase,
+    bool? autoSync,
+  }) => WebDavConfig(
+    url: url ?? this.url,
+    username: username ?? this.username,
+    password: password ?? this.password,
+    path: path ?? this.path,
+    passphrase: passphrase ?? this.passphrase,
+    autoSync: autoSync ?? this.autoSync,
+  );
+
+  Map<String, dynamic> toJson() => {
+    'url': url,
+    'username': username,
+    'password': password,
+    'path': path,
+    'passphrase': passphrase,
+    'autoSync': autoSync,
+  };
+
+  factory WebDavConfig.fromJson(Map<String, dynamic> j) => WebDavConfig(
+    url: j['url'] as String? ?? '',
+    username: j['username'] as String? ?? '',
+    password: j['password'] as String? ?? '',
+    path: (j['path'] as String?)?.trim().isNotEmpty == true ? (j['path'] as String).trim() : defaultPath,
+    passphrase: j['passphrase'] as String? ?? '',
+    autoSync: j['autoSync'] as bool? ?? true,
+  );
+}
+
 class AppConfig {
   const AppConfig({
-    this.servers = const [],
+    List<ServerConfig> servers = const [],
     this.proxy = const ProxyConfig(),
     this.playback = const PlaybackConfig(),
     this.tmdb = const TmdbConfig(),
     this.danmaku = const DanmakuConfig(),
+    this.parental = const ParentalConfig(),
+    this.webdav = const WebDavConfig(),
     this.deviceId = '',
-  });
+  }) : allServers = servers;
+
+  final WebDavConfig webdav;
+
+  /// 全部服务器（含儿童模式下隐藏的）：保存配置、修改服务器列表时用这个
+  final List<ServerConfig> allServers;
+
+  /// 当前可见的服务器：儿童模式下不含标记 R18 的服务器
+  List<ServerConfig> get servers => parental.enabled
+      ? [
+          for (final s in allServers)
+            if (!s.adult) s,
+        ]
+      : allServers;
+
+  final ParentalConfig parental;
 
   /// 所有服务器的连接键（只在登录、线路、代理、UA 等变化时改变）
+  /// 参与聚合搜索的服务器（已登录、未被儿童模式隐藏）
+  Set<String> get aggregateServerIds => {
+    for (final s in servers)
+      if (s.aggregate) s.id,
+  };
+
   String get serversKey => [for (final s in servers) '${s.id}#${s.connectionKey}'].join('\u0002');
 
   /// 某台服务器客户端依赖的全部配置
@@ -524,9 +695,11 @@ class AppConfig {
     playback.clientName,
     playback.deviceName,
     deviceId,
+    parental.enabled,
+    parental.maxAge,
+    parental.blockUnrated,
   ].join('\u0003');
 
-  final List<ServerConfig> servers;
   final ProxyConfig proxy;
   final PlaybackConfig playback;
   final TmdbConfig tmdb;
@@ -543,23 +716,30 @@ class AppConfig {
     PlaybackConfig? playback,
     TmdbConfig? tmdb,
     DanmakuConfig? danmaku,
+    ParentalConfig? parental,
+    WebDavConfig? webdav,
     String? deviceId,
   }) => AppConfig(
-    servers: servers ?? this.servers,
+    // 默认保留全部服务器（含儿童模式下隐藏的），否则改任何设置都会把隐藏的服务器丢掉
+    servers: servers ?? allServers,
+    parental: parental ?? this.parental,
     proxy: proxy ?? this.proxy,
     playback: playback ?? this.playback,
     tmdb: tmdb ?? this.tmdb,
     danmaku: danmaku ?? this.danmaku,
+    webdav: webdav ?? this.webdav,
     deviceId: deviceId ?? this.deviceId,
   );
 
   Map<String, dynamic> toJson() => {
     'version': 1,
-    'servers': servers.map((s) => s.toJson()).toList(),
+    'servers': allServers.map((s) => s.toJson()).toList(),
     'proxy': proxy.toJson(),
     'playback': playback.toJson(),
     'tmdb': tmdb.toJson(),
     'danmaku': danmaku.toJson(),
+    'parental': parental.toJson(),
+    'webdav': webdav.toJson(),
     'deviceId': deviceId,
   };
 
@@ -569,6 +749,8 @@ class AppConfig {
     playback: PlaybackConfig.fromJson(j['playback'] as Map<String, dynamic>? ?? const {}),
     tmdb: TmdbConfig.fromJson(j['tmdb'] as Map<String, dynamic>? ?? const {}),
     danmaku: DanmakuConfig.fromJson(j['danmaku'] as Map<String, dynamic>? ?? const {}),
+    parental: ParentalConfig.fromJson(j['parental'] as Map<String, dynamic>? ?? const {}),
+    webdav: WebDavConfig.fromJson(j['webdav'] as Map<String, dynamic>? ?? const {}),
     deviceId: j['deviceId'] as String? ?? '',
   );
 }

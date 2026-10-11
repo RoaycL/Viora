@@ -27,10 +27,13 @@ class ZhMeta {
 /// TMDB 客户端（docs/05-metadata-and-segments.md §2）：中文元数据补全 + 首页推荐。
 /// 列表接口缓存 6 小时、详情 3 天（内存 + 本地存储），断网时用过期缓存兜底。
 class TmdbClient {
-  TmdbClient(this.config, this.proxy);
+  TmdbClient(this.config, this.proxy, {this.kidsMaxAge});
 
   final TmdbConfig config;
   final ProxyConfig proxy;
+
+  /// 儿童模式的年龄上限：首页推荐行换成适合儿童的电影 / 剧集；null = 不限
+  final int? kidsMaxAge;
 
   static const listTtl = Duration(hours: 6);
   static const detailTtl = Duration(days: 3);
@@ -126,6 +129,7 @@ class TmdbClient {
   ];
 
   Future<List<TmdbTitle>> row(TmdbRow row) async {
+    if (kidsMaxAge != null) return _kidsRow(row, kidsMaxAge!);
     switch (row) {
       case TmdbRow.trendingDay:
         return _titles(await get('/trending/all/day', ttl: listTtl));
@@ -155,6 +159,41 @@ class TmdbClient {
           isTv: true,
         );
     }
+  }
+
+  /// 儿童模式的推荐：电影按美国分级（G / PG / PG-13）过滤并限定动画、家庭类；剧集限定少儿、动画、家庭类
+  Future<List<TmdbTitle>> _kidsRow(TmdbRow row, int maxAge) async {
+    final cert = maxAge <= 7 ? 'G' : (maxAge <= 12 ? 'PG' : 'PG-13');
+    Future<List<TmdbTitle>> movies(Map<String, String> extra) async => _titles(
+      await get(
+        '/discover/movie',
+        query: {
+          'certification_country': 'US',
+          'certification.lte': cert,
+          'with_genres': '16|10751',
+          'include_adult': 'false',
+          ...extra,
+        },
+        ttl: listTtl,
+      ),
+      isTv: false,
+    );
+    Future<List<TmdbTitle>> tv(Map<String, String> extra) async => _titles(
+      await get(
+        '/discover/tv',
+        query: {'with_genres': maxAge <= 7 ? '10762' : '10762|16|10751', 'include_adult': 'false', ...extra},
+        ttl: listTtl,
+      ),
+      isTv: true,
+    );
+    return switch (row) {
+      TmdbRow.trendingDay => movies({'sort_by': 'popularity.desc'}),
+      TmdbRow.trendingWeek => tv({'sort_by': 'popularity.desc'}),
+      TmdbRow.nowPlaying => movies({'sort_by': 'primary_release_date.desc', 'vote_count.gte': '50'}),
+      TmdbRow.onTheAir => tv({'sort_by': 'first_air_date.desc', 'vote_count.gte': '20'}),
+      TmdbRow.animeToday => tv({'with_genres': '16', 'sort_by': 'popularity.desc'}),
+      TmdbRow.topRatedTv => tv({'sort_by': 'vote_average.desc', 'vote_count.gte': '200'}),
+    };
   }
 
   Future<List<TmdbPerson>> popularPeople() async {
@@ -205,8 +244,8 @@ class TmdbClient {
 enum TmdbRow { trendingDay, trendingWeek, nowPlaying, onTheAir, animeToday, topRatedTv }
 
 final tmdbClientProvider = Provider<TmdbClient?>((ref) {
-  final (tmdb, proxy) = ref.watch(configProvider.select((c) => (c.tmdb, c.proxy)));
-  return tmdb.enabled ? TmdbClient(tmdb, proxy) : null;
+  final (tmdb, proxy, parental) = ref.watch(configProvider.select((c) => (c.tmdb, c.proxy, c.parental)));
+  return tmdb.enabled ? TmdbClient(tmdb, proxy, kidsMaxAge: parental.enabled ? parental.maxAge : null) : null;
 });
 
 final tmdbRowProvider = FutureProvider.family<List<TmdbTitle>, TmdbRow>((ref, row) async {

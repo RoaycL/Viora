@@ -139,6 +139,33 @@ void main() {
       );
     });
 
+    test('服务器单独指定的 UA 用于这台服务器的所有请求（登录、API 也要过 UA 白名单）', () {
+      final c = composer(server(ServerType.emby, ua: 'Forward/1.0'));
+      for (final k in RequestKind.values) {
+        expect(c.headers(k)['User-Agent'], 'Forward/1.0', reason: k.name);
+      }
+    });
+
+    test('设备 ID 只和本机、服务器地址、用户名有关：删掉重新添加不会在服务器上多一台设备', () {
+      final a = composer(server(ServerType.emby));
+      final readded = composer(server(ServerType.emby).copyWith(name: '改名了'));
+      final other = composer(
+        const ServerConfig(
+          id: 'another-id',
+          type: ServerType.emby,
+          name: 'x',
+          username: 'U ',
+          lines: [ServerLine(id: 'l9', name: '线路', url: 'https://EMBY.a.com/')],
+        ),
+      );
+      expect(a.deviceId, startsWith('dev-'));
+      expect(readded.deviceId, a.deviceId);
+      expect(other.deviceId, a.deviceId);
+      expect(a.authorization(), contains('DeviceId="${a.deviceId}"'));
+      final otherUser = composer(server(ServerType.emby).copyWith(username: 'v'));
+      expect(otherUser.deviceId, isNot(a.deviceId));
+    });
+
     test('鉴权头', () {
       final emby = composer(server(ServerType.emby)).headers(RequestKind.api);
       expect(emby['X-Emby-Token'], 'tok');

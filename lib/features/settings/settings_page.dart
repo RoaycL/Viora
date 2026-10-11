@@ -20,7 +20,9 @@ import '../../player/playback_cache.dart';
 import '../../ui/panels/form_dialog.dart';
 import '../danmaku/danmaku_settings_section.dart';
 import '../segments/segment_settings_section.dart';
+import '../parental/parental_settings_section.dart';
 import '../sync/sync_settings_section.dart';
+import 'support_actions.dart';
 import '../update/update_controller.dart';
 import '../update/update_dialog.dart';
 
@@ -399,8 +401,41 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
         ],
       ),
 
+      // ───────── 聚合搜索 ─────────
+      _Section(
+        title: '聚合搜索',
+        children: [
+          Text(
+            '进入详情页时，会在勾选的服务器上查找同一部作品，列出各服务器的版本供选择、播放中切换。'
+            '不勾选的服务器不参与查找，只在浏览它自己的媒体库时使用；「搜索」页仍然会搜索所有服务器。',
+            style: VText.small.copyWith(color: VColors.textTertiary, height: 1.6),
+          ),
+          const SizedBox(height: 24),
+          if (config.servers.isEmpty)
+            Text('还没有添加服务器', style: VText.label.copyWith(color: VColors.textMuted))
+          else
+            for (final s in config.servers) ...[
+              VToggle(
+                label: s.displayName,
+                subtitle: [
+                  s.type == ServerType.emby ? 'Emby' : 'Jellyfin',
+                  if (s.lines.isNotEmpty) s.lines.first.url,
+                  if (!s.loggedIn) '未登录',
+                ].join(' · '),
+                value: s.aggregate,
+                onChanged: (v) =>
+                    ref.read(configProvider.notifier).updateServer(s.id, (old) => old.copyWith(aggregate: v)),
+              ),
+              const SizedBox(height: 10),
+            ],
+        ],
+      ),
+
       // ───────── 同步配置 ─────────
       const _Section(title: '同步配置', children: [SyncSettingsSection()]),
+
+      // ───────── 家长控制 ─────────
+      const _Section(title: '家长控制', children: [ParentalSettingsSection()]),
 
       // ───────── 关于与更新 ─────────
       _Section(
@@ -443,6 +478,12 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
           ),
           const SizedBox(height: 16),
           PillButton(icon: Icons.save_rounded, label: '保存更新地址', onPressed: _saveManifest),
+          const SizedBox(height: 24),
+          SettingsEntry(
+            title: '导出日志',
+            subtitle: PlatformProfile.isTv ? '出问题时导出最近的运行日志：手机扫码查看 / 保存' : '出问题时导出最近的运行日志，保存成文件发给开发者',
+            onConfigure: () => exportLogs(context, ref),
+          ),
           const SizedBox(height: 40),
           const _TmdbAttribution(),
         ],
@@ -497,7 +538,9 @@ enum _Category {
   danmaku('弹幕', Icons.chat_outlined),
   metadata('元数据', Icons.auto_awesome_outlined),
   proxy('反向代理', Icons.shield_outlined),
+  aggregate('聚合搜索', Icons.travel_explore_rounded),
   sync('同步配置', Icons.qr_code_2_rounded),
+  parental('家长控制', Icons.child_care_rounded),
   about('关于与更新', Icons.system_update_alt_rounded);
 
   const _Category(this.label, this.icon);

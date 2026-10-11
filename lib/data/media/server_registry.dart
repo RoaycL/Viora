@@ -72,3 +72,8 @@ final itemProvider = FutureProvider.family<MediaItem, ({String serverId, String 
   if (client == null) throw const MediaServerException('服务器不存在');
   return client.item(key.itemId);
 });
+
+/// 当前能显示的条目：所在服务器可见（儿童模式隐藏 R18 服务器），分级在允许范围内（单集跟随剧集）
+bool itemVisible(AppConfig c, MediaItem it) =>
+    c.server(it.serverId) != null &&
+    (!c.parental.enabled || it.kind == MediaKind.episode || c.parental.allows(it.officialRating));

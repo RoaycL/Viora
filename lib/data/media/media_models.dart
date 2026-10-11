@@ -61,6 +61,7 @@ class MediaItem {
     this.premiereDate,
     this.rating,
     this.officialRating,
+    this.criticRating,
     this.genres = const [],
     this.runtime,
     this.tmdbId,
@@ -81,6 +82,7 @@ class MediaItem {
     this.position = Duration.zero,
     this.playedPercentage,
     this.dateCreated,
+    this.lastMediaAdded,
     this.lastPlayed,
   });
 
@@ -94,6 +96,9 @@ class MediaItem {
   final DateTime? premiereDate;
   final double? rating;
   final String? officialRating;
+
+  /// 影评人评分（烂番茄新鲜度 0–100，媒体服务器的元数据提供）
+  final double? criticRating;
   final List<String> genres;
   final Duration? runtime;
   final String? tmdbId;
@@ -116,6 +121,14 @@ class MediaItem {
   final Duration position;
   final double? playedPercentage;
   final DateTime? dateCreated;
+
+  /// 剧集最近一次有新集入库的时间（服务器的 DateLastMediaAdded）
+  final DateTime? lastMediaAdded;
+
+  /// 「最近入库」排序用：剧集按最近一次更新新集，电影按入库时间
+  DateTime? get addedAt => lastMediaAdded != null && (dateCreated == null || lastMediaAdded!.isAfter(dateCreated!))
+      ? lastMediaAdded
+      : dateCreated;
 
   /// 上次播放时间（继续观看跨服务器排序）
   final DateTime? lastPlayed;
@@ -146,6 +159,7 @@ class MediaItem {
     'l': logo?.toJson(),
     'c': childCount,
     'd': dateCreated?.millisecondsSinceEpoch,
+    'la': lastMediaAdded?.millisecondsSinceEpoch,
     'ov': overview,
   };
 
@@ -166,6 +180,7 @@ class MediaItem {
     logo: ImageRef.fromJson(j['l']),
     childCount: j['c'] as int?,
     dateCreated: j['d'] == null ? null : DateTime.fromMillisecondsSinceEpoch(j['d'] as int),
+    lastMediaAdded: j['la'] == null ? null : DateTime.fromMillisecondsSinceEpoch(j['la'] as int),
     overview: j['ov'] as String?,
   );
 
@@ -191,6 +206,16 @@ class MediaStreamInfo {
     this.frameRate,
     this.range = VideoRange.sdr,
     this.deliveryUrl,
+    this.streamTitle,
+    this.profile,
+    this.level,
+    this.colorPrimaries,
+    this.colorSpace,
+    this.colorTransfer,
+    this.channelLayout,
+    this.sampleRate,
+    this.bitrate,
+    this.aspectRatio,
   });
 
   final int index;
@@ -209,6 +234,19 @@ class MediaStreamInfo {
   final double? frameRate;
   final VideoRange range;
   final String? deliveryUrl;
+
+  // 以下只用于详情页「展开媒体信息」
+  /// 流自带的标题（[title] 优先用服务器拼好的 DisplayTitle）
+  final String? streamTitle;
+  final String? profile;
+  final double? level;
+  final String? colorPrimaries;
+  final String? colorSpace;
+  final String? colorTransfer;
+  final String? channelLayout;
+  final int? sampleRate;
+  final int? bitrate;
+  final String? aspectRatio;
 
   String get displayName {
     final parts = <String>[

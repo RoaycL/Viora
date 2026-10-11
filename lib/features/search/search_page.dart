@@ -70,7 +70,11 @@ class _SearchPageState extends ConsumerState<SearchPage> {
     }
     // 1. 本地索引
     final index = await ref.read(mediaIndexProvider.future);
-    final local = index?.search(q) ?? const <MediaItem>[];
+    final config = ref.read(configProvider);
+    final local = [
+      for (final it in index?.search(q) ?? const <MediaItem>[])
+        if (itemVisible(config, it)) it,
+    ];
     if (gen != _generation || !mounted) return;
     var groups = groupTitles(local);
     setState(() {

@@ -41,6 +41,12 @@ class MediaIndex {
         gen INTEGER NOT NULL DEFAULT 0
       );
     ''');
+    // v2：索引多了剧集的 DateLastMediaAdded（最近入库按新集排序）→ 下次同步时每台服务器全量重建一次
+    final version = _db.select('PRAGMA user_version').first['user_version'] as int;
+    if (version < 2) {
+      _db.execute('UPDATE sync_state SET full_at = NULL');
+      _db.execute('PRAGMA user_version = 2');
+    }
   }
 
   final Database _db;
@@ -105,7 +111,7 @@ class MediaIndex {
           _blankToNull(it.tmdbId),
           _blankToNull(it.imdbId),
           _blankToNull(it.tvdbId),
-          it.dateCreated?.millisecondsSinceEpoch,
+          it.addedAt?.millisecondsSinceEpoch,
           g,
           jsonEncode(it.toIndexJson()),
         ]);
@@ -205,6 +211,18 @@ class MediaIndex {
   /// 按服务器分组的最近入库
   List<MediaItem> latest({int limit = 40}) =>
       _db.select('SELECT * FROM items ORDER BY created DESC LIMIT ?', [limit]).map(_row).toList();
+
+  /// 每台服务器各自最新的 [perServer] 条（按入库时间倒序）。
+  /// 合并时不能只取全局最新：新内容多的服务器会把其他服务器挤出「最近入库」
+  List<MediaItem> latestPerServer({int perServer = 30}) => _db
+      .select(
+        '''SELECT * FROM (
+             SELECT *, ROW_NUMBER() OVER (PARTITION BY server_id ORDER BY created DESC) AS rn FROM items
+           ) WHERE rn <= ? ORDER BY created DESC''',
+        [perServer],
+      )
+      .map(_row)
+      .toList();
 }
 
 /// 两个条目是否为同一部作品（docs/04-aggregation.md §3）：
@@ -223,6 +241,34 @@ bool sameTitle(MediaItem a, MediaItem b) {
   if (normalizeTitle(a.name) != normalizeTitle(b.name)) return false;
   if (a.year != null && b.year != null && (a.year! - b.year!).abs() > 1) return false;
   return true;
+}
+
+/// 「最近入库」：所有服务器合并、同一部作品只出现一次，按入库时间倒序取 [limit] 部；
+/// 每台服务器先保证最多 [limit] / 服务器数 部的名额，名额用不完再由其他服务器补上，
+/// 这样新内容多的服务器不会把其他服务器挤掉
+List<AggregatedTitle> balancedLatest(List<MediaItem> newestFirst, {int limit = 24}) {
+  final groups = groupTitles(newestFirst);
+  final servers = {for (final g in groups) g.primary.serverId};
+  if (servers.length <= 1) return groups.take(limit).toList();
+  final quota = (limit / servers.length).ceil();
+  final used = <String, int>{};
+  final picked = <AggregatedTitle>{};
+  for (final g in groups) {
+    if (picked.length >= limit) break;
+    final s = g.primary.serverId;
+    if ((used[s] ?? 0) >= quota) continue;
+    used[s] = (used[s] ?? 0) + 1;
+    picked.add(g);
+  }
+  for (final g in groups) {
+    if (picked.length >= limit) break;
+    picked.add(g);
+  }
+  // 保持按时间倒序
+  return [
+    for (final g in groups)
+      if (picked.contains(g)) g,
+  ];
 }
 
 /// 用于去重 / 分组的作品键
