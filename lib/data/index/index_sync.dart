@@ -1,6 +1,7 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../core/log/app_log.dart';
 import '../emby/emby_client.dart';
 import '../config/config_store.dart';
 import '../media/server_registry.dart';
@@ -63,6 +64,7 @@ class IndexSyncController extends Notifier<Map<String, SyncStatus>> {
     final startedAt = DateTime.now();
     final gen = full ? index.beginFull(serverId) : st.gen;
     _set(serverId, SyncStatus(running: true, count: index.count(serverId), fullAt: st.fullAt));
+    AppLog.add('[index] ${client.server.name} ${full ? '全量' : '增量'}同步开始');
     try {
       var start = 0;
       int? total;
@@ -94,7 +96,12 @@ class IndexSyncController extends Notifier<Map<String, SyncStatus>> {
         serverId,
         SyncStatus(done: start, total: total, count: index.count(serverId), fullAt: index.syncState(serverId).fullAt),
       );
-      ref.invalidate(indexRevisionProvider);
+      AppLog.add(
+        '[index] ${client.server.name} 同步完成：$start 条，'
+        '${DateTime.now().difference(startedAt).inMilliseconds} ms',
+      );
+      // 增量同步没有新内容时不刷新（否则启动时每同步完一台服务器，首页「最近入库」等就重算、重建一次）
+      if (full || start > 0) ref.invalidate(indexRevisionProvider);
     } catch (e) {
       debugPrint('index sync ${client.server.name} failed: $e');
       _set(serverId, SyncStatus(error: e.toString(), count: index.count(serverId), fullAt: st.fullAt));
