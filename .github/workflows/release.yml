@@ -67,7 +67,6 @@ jobs:
 
   android:
     needs: prepare
-    if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -91,15 +90,32 @@ jobs:
           path: dist/*
           if-no-files-found: error
       - name: 构建 TV 性能测量 APK（Profile）
-        if: needs.prepare.outputs.exists == 'false' && github.ref == 'refs/heads/main'
         run: |
           flutter build apk --profile --dart-define=VIORA_FRAME_STATS=true --dart-define=VIORA_TMDB_TOKEN=${{ secrets.TMDB_TOKEN }}
           mkdir -p profile-dist
           cp build/app/outputs/flutter-apk/app-profile.apk "profile-dist/Viora-${{ needs.prepare.outputs.version }}-android-profile.apk"
           flutter build apk --profile --dart-define=VIORA_FRAME_STATS=true --dart-define=VIORA_TV_PERF_BASELINE=true --dart-define=VIORA_TMDB_TOKEN=${{ secrets.TMDB_TOKEN }}
           cp build/app/outputs/flutter-apk/app-profile.apk "profile-dist/Viora-${{ needs.prepare.outputs.version }}-android-profile-baseline.apk"
+      - name: 验证正式包与测量包签名一致
+        shell: bash
+        run: |
+          set -euo pipefail
+          build_tools=$(find "$ANDROID_HOME/build-tools" -mindepth 1 -maxdepth 1 -type d | sort -V | tail -n 1)
+          apksigner="$build_tools/apksigner"
+          certificate() {
+            "$apksigner" verify --print-certs "$1" | sed -n 's/^Signer #1 certificate SHA-256 digest: //p'
+          }
+          release_cert=$(certificate "dist/Viora-${{ needs.prepare.outputs.version }}-android.apk")
+          test -n "$release_cert"
+          for apk in profile-dist/*.apk; do
+            profile_cert=$(certificate "$apk")
+            if [ "$profile_cert" != "$release_cert" ]; then
+              echo "::error::测量包与正式包签名不一致：$apk"
+              exit 1
+            fi
+            echo "签名验证通过：$(basename "$apk")"
+          done
       - uses: actions/upload-artifact@v4
-        if: needs.prepare.outputs.exists == 'false' && github.ref == 'refs/heads/main'
         with:
           name: android-tv-performance
           path: profile-dist/*
