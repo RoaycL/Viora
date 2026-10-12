@@ -5,6 +5,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
+import '../../app/desktop_tray.dart';
 import '../../app/input/intents.dart';
 import '../../app/platform_profile.dart';
 import '../../app/theme.dart';
@@ -16,31 +17,31 @@ import '../../data/danmaku/danmaku_client.dart';
 import '../../data/danmaku/danmaku_models.dart';
 import '../../data/emby/emby_client.dart';
 import '../../data/history/play_history.dart';
+import '../../data/index/media_index.dart';
 import '../../data/media/media_models.dart';
 import '../../data/media/server_registry.dart';
+import '../../domain/models/segment.dart';
 import '../../player/engine.dart';
 import '../../player/exo_engine.dart';
+import '../../player/manual_segments.dart';
 import '../../player/mpv_engine.dart';
 import '../../player/playback_cache.dart';
 import '../../player/preload.dart';
-import '../../player/manual_segments.dart';
 import '../../player/segment_playback_session.dart';
 import '../../player/segment_skip_controller.dart';
-import '../../domain/models/segment.dart';
-import '../../data/index/media_index.dart';
-import '../segments/segment_service.dart';
-import '../danmaku/danmaku_layer.dart';
-import '../danmaku/danmaku_service.dart';
-import 'mini_player.dart';
-import 'player_osd.dart';
-import '../../ui/widgets/form.dart';
-import '../../ui/panels/form_dialog.dart';
 import '../../ui/glass/glass.dart';
-import '../../ui/scale/design_scale.dart';
 import '../../ui/panels/context_menu.dart';
+import '../../ui/panels/form_dialog.dart';
+import '../../ui/scale/design_scale.dart';
 import '../../ui/widgets/buttons.dart';
+import '../../ui/widgets/form.dart';
 import '../../ui/widgets/toast.dart';
 import '../browse/media_cards.dart';
+import '../danmaku/danmaku_layer.dart';
+import '../danmaku/danmaku_service.dart';
+import '../segments/segment_service.dart';
+import 'mini_player.dart';
+import 'player_osd.dart';
 
 /// 播放页（docs/08-player.md、docs/07-input-control.md §3）。
 ///
@@ -140,6 +141,12 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
       if (_started && _state.playing) _report();
     });
     _start();
+    // Windows 关闭到托盘时暂停（窗口看不见了，不在后台继续放）
+    DesktopTray.instance.hiddenToTray.addListener(_onHiddenToTray);
+  }
+
+  void _onHiddenToTray() {
+    if (DesktopTray.instance.hiddenToTray.value && _state.playing) _engine?.pause();
   }
 
   // ───────────────────────── 内核 ─────────────────────────
@@ -705,6 +712,7 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
 
   @override
   void dispose() {
+    DesktopTray.instance.hiddenToTray.removeListener(_onHiddenToTray);
     // 最先关闭播放器：后面任何一步出错都不能让视频在后台继续播放
     final engine = _engine;
     _engine?.state.removeListener(_onEngineState);

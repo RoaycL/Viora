@@ -2,31 +2,33 @@ import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../app/desktop_tray.dart';
 import '../../app/platform_profile.dart';
 import '../../app/theme.dart';
+import '../../app/window_frame.dart' show isDesktopWindow;
 import '../../core/platform/open_url.dart';
 import '../../data/config/app_config.dart';
 import '../../data/config/config_store.dart';
 import '../../data/media/server_registry.dart';
 import '../../data/net/request_composer.dart';
 import '../../data/tmdb/tmdb_client.dart';
+import '../../player/playback_cache.dart';
 import '../../ui/focus/focus_auto_scroll.dart';
 import '../../ui/focus/focusable.dart';
 import '../../ui/focus/input_mode.dart';
 import '../../ui/glass/glass.dart';
+import '../../ui/panels/form_dialog.dart';
 import '../../ui/widgets/buttons.dart';
 import '../../ui/widgets/form.dart';
 import '../../ui/widgets/toast.dart';
-import '../../player/playback_cache.dart';
-import '../../ui/panels/form_dialog.dart';
 import '../danmaku/danmaku_settings_section.dart';
-import '../segments/segment_settings_section.dart';
 import '../metadata/ratings_settings_section.dart';
 import '../parental/parental_settings_section.dart';
+import '../segments/segment_settings_section.dart';
 import '../sync/sync_settings_section.dart';
-import 'support_actions.dart';
 import '../update/update_controller.dart';
 import '../update/update_dialog.dart';
+import 'support_actions.dart';
 
 /// 设置（docs/06-ui-design.md §9）：播放、片头片尾、弹幕、元数据、反向代理（绑定线路）、关于与更新。
 class SettingsPage extends ConsumerStatefulWidget {
@@ -476,6 +478,19 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
             ],
           ),
           const SizedBox(height: 20),
+          // 仅 Windows：关闭窗口时退出还是隐藏到托盘
+          if (isDesktopWindow) ...[
+            ValueListenableBuilder<bool>(
+              valueListenable: DesktopTray.instance.closeToTray,
+              builder: (context, toTray, _) => VToggle(
+                label: '关闭窗口时最小化到托盘',
+                subtitle: toTray ? '点关闭只隐藏窗口；单击右下角托盘图标恢复，右键托盘图标可以退出' : '关闭：点关闭直接退出应用',
+                value: toTray,
+                onChanged: (v) => DesktopTray.instance.setCloseToTray(v),
+              ),
+            ),
+            const SizedBox(height: 12),
+          ],
           VToggle(
             label: '启动时自动检查更新',
             value: updater.settings.autoCheck,
