@@ -19,9 +19,12 @@ const _providerInfo = {
   'publicmetadb': ('PublicMetaDB', '按 TMDB ID 查询；片头、片尾。必须填写 API Key（PublicMetaDB 设置 → API）'),
 };
 
-/// 设置 → 片头片尾（docs/05-metadata-and-segments.md §3）：跳过方式、数据来源与优先级、API Key。
+/// 设置 → 片头片尾（docs/05-metadata-and-segments.md §3）：跳过方式、数据来源与优先级。
+/// [apiSources] 为 true 时只显示第三方数据库（API Key、地址、排序、反代），放在「设置 → 接口与网络」。
 class SegmentSettingsSection extends ConsumerStatefulWidget {
-  const SegmentSettingsSection({super.key});
+  const SegmentSettingsSection({super.key, this.apiSources = false});
+
+  final bool apiSources;
 
   @override
   ConsumerState<SegmentSettingsSection> createState() => _SegmentSettingsSectionState();
@@ -105,7 +108,7 @@ class _SegmentSettingsSectionState extends ConsumerState<SegmentSettingsSection>
     final p = s.providers[i];
     final (name, desc) = _providerInfo[p.id]!;
     return SettingsEntry(
-      title: '${_circled[i + 1]} $name',
+      title: '${_circled[i]} $name',
       subtitle: desc,
       status: p.apiKey.isNotEmpty ? '已填写 Key' : (p.id == 'publicmetadb' ? '未填写 Key' : null),
       trailing: [
@@ -118,7 +121,7 @@ class _SegmentSettingsSectionState extends ConsumerState<SegmentSettingsSection>
           value: p.enabled,
           onChanged: (v) {
             if (v && p.id == 'publicmetadb' && p.apiKey.isEmpty) {
-              showToast('PublicMetaDB 需要先在「设置」里填写 API Key');
+              showToast('PublicMetaDB 需要先点「设置」填写 API Key');
               return;
             }
             final list = [...s.providers]..[i] = p.copyWith(enabled: v);
@@ -137,7 +140,12 @@ class _SegmentSettingsSectionState extends ConsumerState<SegmentSettingsSection>
     if (s == null) {
       return Text(async.hasError ? '读取设置失败：${async.error}' : '加载中…', style: VText.label);
     }
+    if (widget.apiSources) return _apiSources(s);
     const modes = [(SegmentSkipMode.auto, '自动跳过'), (SegmentSkipMode.button, '显示按钮'), (SegmentSkipMode.off, '关闭')];
+    final enabled = [
+      for (final p in s.providers)
+        if (p.enabled) _providerInfo[p.id]!.$1,
+    ];
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -210,21 +218,41 @@ class _SegmentSettingsSectionState extends ConsumerState<SegmentSettingsSection>
           onChanged: (v) => _save(s.copyWith(serverMarkers: v)),
         ),
         const SizedBox(height: 12),
-        for (var i = 0; i < s.providers.length; i++) ...[_providerEntry(s, i), const SizedBox(height: 12)],
+        // 第三方数据库的 Key、地址、排序在「接口与网络」里统一管理，这里只说明当前启用了哪些
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 8),
+          child: Text(
+            '② 第三方数据库：${enabled.isEmpty ? '未启用' : enabled.join(' → ')}'
+            '（在「设置 → 接口与网络」里填写 Key、调整顺序）',
+            style: VText.caption.copyWith(color: VColors.textSecondary),
+          ),
+        ),
+        const SizedBox(height: 12),
         VToggle(
-          label: '${_circled[s.providers.length + 1]} 章节名识别（兜底）',
+          label: '③ 章节名识别（兜底）',
           subtitle: '以上都没有数据时，把名为 OP / Opening / 片头、ED / Ending / 片尾 的章节当作片头片尾',
           value: s.chapterNames,
           onChanged: (v) => _save(s.copyWith(chapterNames: v)),
         ),
-        const SizedBox(height: 24),
+      ],
+    );
+  }
+
+  /// 「接口与网络」里的第三方片头片尾数据库
+  Widget _apiSources(SegmentSettings s) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text('媒体服务器没有片头片尾标记时，按下面的顺序查询（取第一个有数据的）。', style: VText.caption.copyWith(color: VColors.textSecondary)),
+        const SizedBox(height: 16),
+        for (var i = 0; i < s.providers.length; i++) ...[_providerEntry(s, i), const SizedBox(height: 12)],
         VToggle(
-          label: '第三方数据库通过反向代理访问',
-          subtitle: '国内直连不稳定时打开（使用「反向代理」里填写的地址）',
+          label: '通过反向代理访问',
+          subtitle: '国内直连不稳定时打开（使用上面填写的反向代理地址）',
           value: s.useProxy,
           onChanged: (v) => _save(s.copyWith(useProxy: v)),
         ),
-        const SizedBox(height: 16),
+        const SizedBox(height: 12),
         Text(
           'API Key 保存在系统安全存储中（Windows 凭据管理器 / Android Keystore），不写入普通配置文件。',
           style: VText.small.copyWith(color: VColors.textTertiary),

@@ -6,6 +6,7 @@ import 'package:package_info_plus/package_info_plus.dart';
 import 'package:path_provider/path_provider.dart';
 
 import 'app/app.dart';
+import 'app/desktop_tray.dart';
 import 'app/platform_profile.dart';
 import 'app/window_frame.dart';
 import 'core/log/app_log.dart';
@@ -36,6 +37,7 @@ Future<void> main() async {
   }
   MediaKit.ensureInitialized();
   await initDesktopWindow();
+  await DesktopTray.instance.init();
   try {
     appVersion = (await PackageInfo.fromPlatform()).version;
     segmentClientVersion = appVersion;

@@ -316,7 +316,7 @@ class _HomeBodyState extends ConsumerState<_HomeBody> {
     final preview = _preview;
     final backdrop = _backdrop ?? (heroes.isEmpty ? null : heroes[heroIndex].$2);
     // 没配置 TMDB 时，推荐行显示占位并说明
-    const tmdbHint = '配置 TMDB 后显示（设置 → 元数据）';
+    const tmdbHint = '配置 TMDB 后显示（设置 → 接口与网络）';
 
     Widget tmdbRow(int index, String title, TmdbRow r) {
       if (!tmdbOn) return _SkeletonRow(title: title, note: tmdbHint, animate: false);

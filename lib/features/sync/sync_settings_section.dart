@@ -28,7 +28,7 @@ import '../metadata/ratings_service.dart';
 import '../settings/support_actions.dart';
 import 'webdav_service.dart';
 
-/// 设置 → 同步配置（docs/11-sync.md）
+/// 设置 → 同步与备份（docs/11-sync.md）
 ///
 /// 电视：「接收配置」——屏幕上显示二维码和配对码，手机扫码填写，或 Windows 一键发送。
 /// Windows：「发送到电视」（扫描局域网找到电视）；也可以接收（从手机导入）。
@@ -51,7 +51,7 @@ class SyncSettingsSection extends ConsumerWidget {
         if (!tv) ...[
           SettingsEntry(
             title: '发送到电视',
-            subtitle: '电视上先打开「设置 → 同步配置 → 接收配置」',
+            subtitle: '电视上先打开「设置 → 同步与备份 → 接收配置」',
             onConfigure: () => showSendDialog(context, ref),
           ),
           const SizedBox(height: 12),
@@ -87,7 +87,7 @@ class SyncSettingsSection extends ConsumerWidget {
 
 // ───────────────────────── WebDAV ─────────────────────────
 
-/// 设置 → 同步配置 → WebDAV 同步：多台设备共用 WebDAV 上的一个配置文件
+/// 设置 → 同步与备份 → WebDAV 同步：多台设备共用 WebDAV 上的一个配置文件
 class WebDavEntry extends ConsumerWidget {
   const WebDavEntry({super.key});
 
@@ -446,7 +446,7 @@ class _ReceiveDialogState extends ConsumerState<_ReceiveDialog> {
                     const SizedBox(height: 20),
                     _step('1', '手机和这台设备连同一个 Wi-Fi，用手机相机扫左边的二维码'),
                     _step('2', '在打开的网页里填写服务器、代理、Key，点「发送到电视」'),
-                    _step('3', '或者在 Windows 版 Viora：设置 → 同步配置 → 发送到电视'),
+                    _step('3', '或者在 Windows 版 Viora：设置 → 同步与备份 → 发送到电视'),
                     const SizedBox(height: 24),
                     if (r != null && running && url != null) ...[
                       Text('配对码', style: VText.caption.copyWith(color: VColors.textTertiary)),
@@ -531,7 +531,7 @@ Future<void> showSendDialog(BuildContext context, WidgetRef ref) async {
   await showFormDialog(
     context,
     title: '发送到电视',
-    description: '电视上先打开「设置 → 同步配置 → 接收配置」，再在这里选择电视、输入电视上显示的 4 位配对码。',
+    description: '电视上先打开「设置 → 同步与备份 → 接收配置」，再在这里选择电视、输入电视上显示的 4 位配对码。',
     saveLabel: '发送',
     children: [_SendForm(controller: form)],
     onSave: () async {

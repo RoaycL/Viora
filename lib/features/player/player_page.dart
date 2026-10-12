@@ -5,6 +5,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
+import '../../app/desktop_tray.dart';
 import '../../app/input/intents.dart';
 import '../../app/platform_profile.dart';
 import '../../app/theme.dart';
@@ -16,31 +17,31 @@ import '../../data/danmaku/danmaku_client.dart';
 import '../../data/danmaku/danmaku_models.dart';
 import '../../data/emby/emby_client.dart';
 import '../../data/history/play_history.dart';
+import '../../data/index/media_index.dart';
 import '../../data/media/media_models.dart';
 import '../../data/media/server_registry.dart';
+import '../../domain/models/segment.dart';
 import '../../player/engine.dart';
 import '../../player/exo_engine.dart';
+import '../../player/manual_segments.dart';
 import '../../player/mpv_engine.dart';
 import '../../player/playback_cache.dart';
 import '../../player/preload.dart';
-import '../../player/manual_segments.dart';
 import '../../player/segment_playback_session.dart';
 import '../../player/segment_skip_controller.dart';
-import '../../domain/models/segment.dart';
-import '../../data/index/media_index.dart';
-import '../segments/segment_service.dart';
-import '../danmaku/danmaku_layer.dart';
-import '../danmaku/danmaku_service.dart';
-import 'mini_player.dart';
-import 'player_osd.dart';
-import '../../ui/widgets/form.dart';
-import '../../ui/panels/form_dialog.dart';
 import '../../ui/glass/glass.dart';
-import '../../ui/scale/design_scale.dart';
 import '../../ui/panels/context_menu.dart';
+import '../../ui/panels/form_dialog.dart';
+import '../../ui/scale/design_scale.dart';
 import '../../ui/widgets/buttons.dart';
+import '../../ui/widgets/form.dart';
 import '../../ui/widgets/toast.dart';
 import '../browse/media_cards.dart';
+import '../danmaku/danmaku_layer.dart';
+import '../danmaku/danmaku_service.dart';
+import '../segments/segment_service.dart';
+import 'mini_player.dart';
+import 'player_osd.dart';
 
 /// 播放页（docs/08-player.md、docs/07-input-control.md §3）。
 ///
@@ -140,6 +141,12 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
       if (_started && _state.playing) _report();
     });
     _start();
+    // Windows 关闭到托盘时暂停（窗口看不见了，不在后台继续放）
+    DesktopTray.instance.hiddenToTray.addListener(_onHiddenToTray);
+  }
+
+  void _onHiddenToTray() {
+    if (DesktopTray.instance.hiddenToTray.value && _state.playing) _engine?.pause();
   }
 
   // ───────────────────────── 内核 ─────────────────────────
@@ -456,7 +463,7 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
     final client = _danmakuClient;
     final target = _danmakuTarget ?? (_item == null ? null : DanmakuTarget.of(_item!));
     if (client == null || target == null) {
-      showToast('还没有配置弹幕服务器：设置 → 弹幕');
+      showToast('还没有配置弹幕服务器：设置 → 接口与网络');
       return;
     }
     _danmakuTarget ??= target;
@@ -705,6 +712,7 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
 
   @override
   void dispose() {
+    DesktopTray.instance.hiddenToTray.removeListener(_onHiddenToTray);
     // 最先关闭播放器：后面任何一步出错都不能让视频在后台继续播放
     final engine = _engine;
     _engine?.state.removeListener(_onEngineState);
@@ -1529,7 +1537,7 @@ class _ErrorPanel extends StatelessWidget {
             const SizedBox(height: 16),
             Text(
               forbidden
-                  ? '服务器拒绝了播放请求：检查「设置 → 播放」里的播放 UA / 客户端名称，或重新登录。'
+                  ? '服务器拒绝了播放请求：检查「设置 → 媒体服务器」里的播放 UA / 客户端名称，或重新登录。'
                   : '可能是线路不通或格式不受支持：可以换一个播放内核，或在资源库里对这台服务器测速 / 切换线路后重试。',
               style: VText.caption.copyWith(color: VColors.textSecondary),
             ),

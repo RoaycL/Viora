@@ -10,9 +10,11 @@ import '../../ui/panels/form_dialog.dart';
 import '../../ui/widgets/form.dart';
 import '../../ui/widgets/toast.dart';
 
-/// 设置 → 弹幕：服务器（最多 3 个，并发搜索）、显示样式、过滤
+/// 设置 → 弹幕：显示样式、过滤。[servers] 为 true 时只显示弹幕服务器（最多 3 个，并发搜索），放在「设置 → 接口与网络」
 class DanmakuSettingsSection extends ConsumerWidget {
-  const DanmakuSettingsSection({super.key});
+  const DanmakuSettingsSection({super.key, this.servers = false});
+
+  final bool servers;
 
   void _update(WidgetRef ref, DanmakuConfig Function(DanmakuConfig) f) =>
       ref.read(configProvider.notifier).update((c) => c.copyWith(danmaku: f(c.danmaku)));
@@ -89,13 +91,35 @@ class DanmakuSettingsSection extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final d = ref.watch(configProvider.select((c) => c.danmaku));
     final blocked = splitKeywords(d.blockWords).length + splitKeywords(d.searchBlockWords).length;
+    if (servers) {
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            '自部署的 danmu_api（弹弹play 兼容接口，聚合腾讯、爱奇艺、优酷、B 站等）。多个时并发搜索，结果合并。',
+            style: VText.caption.copyWith(color: VColors.textSecondary),
+          ),
+          const SizedBox(height: 16),
+          for (var i = 0; i < DanmakuConfig.maxServers; i++) ...[
+            SettingsEntry(
+              title: '服务器 ${i + 1}${i == 0 ? '' : '（可选）'}',
+              subtitle: i < d.servers.length && d.servers[i].isNotEmpty ? _mask(d.servers[i]) : '未配置',
+              status: i < d.servers.length && d.servers[i].isNotEmpty ? '已配置' : null,
+              onConfigure: () => _configureServer(context, ref, i),
+            ),
+            if (i < DanmakuConfig.maxServers - 1) const SizedBox(height: 12),
+          ],
+        ],
+      );
+    }
+    final configured = d.servers.where((x) => x.isNotEmpty).length;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Text(
-          '弹幕来自自部署的 danmu_api（弹弹play 兼容接口，聚合腾讯、爱奇艺、优酷、B 站等）。'
-          '播放时按「剧名 + 季 + 集」自动匹配；匹配不对时在播放菜单 → 弹幕里手动选择，同一季后面的集会记住。',
-          style: VText.caption.copyWith(color: VColors.textSecondary),
+          '播放时按「剧名 + 季 + 集」自动匹配；匹配不对时在播放菜单 → 弹幕里手动选择，同一季后面的集会记住。'
+          '${configured == 0 ? '还没有配置弹幕服务器：在「设置 → 接口与网络」里添加。' : '已配置 $configured 个弹幕服务器（在「设置 → 接口与网络」里管理）。'}',
+          style: VText.caption.copyWith(color: configured == 0 ? VColors.rating : VColors.textSecondary),
         ),
         const SizedBox(height: 20),
         VToggle(
@@ -105,18 +129,6 @@ class DanmakuSettingsSection extends ConsumerWidget {
           onChanged: (v) => _update(ref, (x) => x.copyWith(enabled: v)),
         ),
         const SizedBox(height: 24),
-        Text('弹幕服务器（多个时并发搜索，结果合并）', style: VText.caption.copyWith(color: VColors.textTertiary)),
-        const SizedBox(height: 12),
-        for (var i = 0; i < DanmakuConfig.maxServers; i++) ...[
-          SettingsEntry(
-            title: '服务器 ${i + 1}${i == 0 ? '' : '（可选）'}',
-            subtitle: i < d.servers.length && d.servers[i].isNotEmpty ? _mask(d.servers[i]) : '未配置',
-            status: i < d.servers.length && d.servers[i].isNotEmpty ? '已配置' : null,
-            onConfigure: () => _configureServer(context, ref, i),
-          ),
-          const SizedBox(height: 12),
-        ],
-        const SizedBox(height: 16),
         VChoice<int>(
           label: '每集弹幕数量上限（超出时按全片等比例随机剔除）',
           options: [for (final n in DanmakuConfig.countChoices) (n, n == 0 ? '不限' : '$n')],
