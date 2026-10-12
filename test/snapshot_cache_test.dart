@@ -49,6 +49,8 @@ void main() {
         'nums',
         fetch: () async {
           fetches++;
+          // 模拟网络耗时
+          await Future<void>.delayed(const Duration(milliseconds: 30));
           return latest;
         },
         encode: (v) => v,
@@ -60,7 +62,10 @@ void main() {
     var c = ProviderContainer();
     expect(await c.read(p.future), [1, 2]);
     expect(fetches, 1);
-    await Future<void>.delayed(const Duration(milliseconds: 50));
+    // 等快照写完
+    for (var i = 0; i < 200 && !File('${dir.path}/nums.json').existsSync(); i++) {
+      await Future<void>.delayed(const Duration(milliseconds: 10));
+    }
     c.dispose();
 
     // 「重新打开应用」：先拿到快照，后台刷新后变成新数据
@@ -68,11 +73,21 @@ void main() {
     SnapshotCache.directoryForTest = dir;
     latest = [3];
     c = ProviderContainer();
-    final sub = c.listen(p, (_, _) {});
-    expect(await c.read(p.future), [1, 2]);
-    await Future<void>.delayed(const Duration(milliseconds: 50));
+    final seen = <List<int>>[];
+    final sub = c.listen(p, (_, next) {
+      if (next.value case final v? when seen.isEmpty || seen.last != v) seen.add(v);
+    }, fireImmediately: true);
+    for (var i = 0; i < 200 && seen.length < 2; i++) {
+      await Future<void>.delayed(const Duration(milliseconds: 10));
+    }
+    // 依次看到：快照 [1, 2] → 最新 [3]（中间重新加载时保留快照，不会变成空）
+    expect(seen, [
+      [1, 2],
+      [3],
+    ]);
     expect(sub.read().value, [3]);
     expect(fetches, 2);
+    await Future<void>.delayed(const Duration(milliseconds: 50));
     c.dispose();
   });
 }
