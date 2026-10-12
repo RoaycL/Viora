@@ -455,17 +455,32 @@ class _HomeBodyState extends ConsumerState<_HomeBody> {
                       height: BrandCard.height,
                       itemBuilder: (context, i, node) {
                         final n = tmdbNetworks[i];
+                        // 这些原始 Logo 含深色字形，使用浅底保证对比度。
+                        final lightBackground = switch (n.id) {
+                          49 || 1024 || 2552 || 2739 => true,
+                          _ => false,
+                        };
                         return BrandCard(
                           node: node,
                           art: placeholderArt(n.name),
                           name: n.name,
+                          backgroundColor: lightBackground ? const Color(0xFFF5F5F7) : const Color(0xFF121218),
                           logo: TmdbImage(
                             path: n.logoPath,
                             kind: TmdbImageKind.logo,
                             width: 190,
                             fit: BoxFit.contain,
                             transparentFallback: true,
-                            color: Colors.white,
+                            fallback: Center(
+                              child: Text(
+                                n.name,
+                                style: TextStyle(
+                                  color: lightBackground ? const Color(0xFF121218) : Colors.white,
+                                  fontSize: 28,
+                                  fontWeight: FontWeight.w700,
+                                ),
+                              ),
+                            ),
                           ),
                           onActivate: () => context.push('/tmdb/network/${n.id}?name=${Uri.encodeComponent(n.name)}'),
                         );

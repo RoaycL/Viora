@@ -335,7 +335,15 @@ class PersonCard extends StatelessWidget {
 
 /// 播出平台 / 电影公司 Logo 卡 300×170（没有 Logo 时显示文字）。
 class BrandCard extends StatelessWidget {
-  const BrandCard({super.key, required this.node, required this.art, required this.name, this.logo, this.onActivate});
+  const BrandCard({
+    super.key,
+    required this.node,
+    required this.art,
+    required this.name,
+    this.logo,
+    this.backgroundColor,
+    this.onActivate,
+  });
 
   static const width = 300.0;
   static const height = 170.0;
@@ -344,6 +352,7 @@ class BrandCard extends StatelessWidget {
   final ArtSpec art;
   final String name;
   final Widget? logo;
+  final Color? backgroundColor;
   final VoidCallback? onActivate;
 
   @override
@@ -360,7 +369,10 @@ class BrandCard extends StatelessWidget {
           child: Stack(
             fit: StackFit.expand,
             children: [
-              ArtView(art, lightCenter: const Alignment(0, 0.2)),
+              if (backgroundColor case final color?)
+                ColoredBox(color: color)
+              else
+                ArtView(art, lightCenter: const Alignment(0, 0.2)),
               if (logo != null)
                 Padding(padding: const EdgeInsets.symmetric(horizontal: 56, vertical: 48), child: logo)
               else

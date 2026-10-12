@@ -57,7 +57,7 @@ class TmdbImage extends ConsumerWidget {
   final Alignment alignment;
   final bool transparentFallback;
 
-  /// 单色化（播出平台 Logo 统一成白色）
+  /// 可选的单色着色；为空时保留图片原色。
   final Color? color;
 
   /// 自定义的加载中 / 失败占位（例如 Logo 加载不到时显示文字标题）
