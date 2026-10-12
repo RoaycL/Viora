@@ -348,6 +348,9 @@ class BrandCard extends StatelessWidget {
   static const width = 300.0;
   static const height = 170.0;
 
+  /// 品牌 Logo 卡统一的浅色底（原色 Logo 在上面都清楚）
+  static const logoBackground = Color(0xFFF2F2F5);
+
   final FocusNode node;
   final ArtSpec art;
   final String name;

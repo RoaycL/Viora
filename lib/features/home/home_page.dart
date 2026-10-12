@@ -455,16 +455,12 @@ class _HomeBodyState extends ConsumerState<_HomeBody> {
                       height: BrandCard.height,
                       itemBuilder: (context, i, node) {
                         final n = tmdbNetworks[i];
-                        // 这些原始 Logo 含深色字形，使用浅底保证对比度。
-                        final lightBackground = switch (n.id) {
-                          49 || 1024 || 2552 || 2739 => true,
-                          _ => false,
-                        };
                         return BrandCard(
                           node: node,
                           art: placeholderArt(n.name),
                           name: n.name,
-                          backgroundColor: lightBackground ? const Color(0xFFF5F5F7) : const Color(0xFF121218),
+                          // 统一浅底：HBO、Apple TV+、腾讯视频、优酷等原色 Logo 含黑 / 深灰字形，深底上看不清
+                          backgroundColor: BrandCard.logoBackground,
                           logo: TmdbImage(
                             path: n.logoPath,
                             kind: TmdbImageKind.logo,
@@ -475,7 +471,7 @@ class _HomeBodyState extends ConsumerState<_HomeBody> {
                               child: Text(
                                 n.name,
                                 style: TextStyle(
-                                  color: lightBackground ? const Color(0xFF121218) : Colors.white,
+                                  color: const Color(0xFF121218),
                                   fontSize: 28,
                                   fontWeight: FontWeight.w700,
                                 ),
