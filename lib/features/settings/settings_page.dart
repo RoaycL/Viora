@@ -523,7 +523,7 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
     final current = _category.index.clamp(0, sections.length - 1);
 
     return Row(
-      crossAxisAlignment: CrossAxisAlignment.start,
+      crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         // 左：分类
         Padding(
@@ -549,12 +549,17 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
           ),
         ),
         const SizedBox(width: 48),
-        // 右：当前分类的内容，铺满剩余宽度
+        // 右：外框与导航栏共用上下安全区，只有框内设置项滚动。
         Expanded(
-          child: FocusAutoScroll(
-            child: SingleChildScrollView(
-              padding: const EdgeInsets.fromLTRB(0, VSpace.safeV + 92, VSpace.safeH, 240),
-              child: sections[current],
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(0, VSpace.safeV, VSpace.safeH, VSpace.safeV),
+            child: Glass(
+              child: ClipRRect(
+                borderRadius: BorderRadius.circular(VRadius.panel),
+                child: FocusAutoScroll(
+                  child: SingleChildScrollView(padding: const EdgeInsets.all(44), child: sections[current]),
+                ),
+              ),
             ),
           ),
         ),
@@ -647,13 +652,7 @@ class _Section extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Padding(
-      padding: EdgeInsets.zero,
-      child: Glass(
-        padding: const EdgeInsets.all(44),
-        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [SectionTitle(title), ...children]),
-      ),
-    );
+    return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [SectionTitle(title), ...children]);
   }
 }
 
