@@ -27,7 +27,7 @@ class UpdateSettings {
   /// 非空时使用自定义清单地址，否则使用 GitHub Releases
   final String? manifestUrl;
 
-  /// 检查和下载更新都经反向代理（「设置 → 反向代理」的地址）。
+  /// 检查和下载更新都经反向代理（「设置 → 接口与网络」的地址）。
   /// 关闭时也会在直连失败后自动改走代理再试一次
   final bool useProxy;
 

@@ -127,8 +127,6 @@ class _RatingsSettingsSectionState extends ConsumerState<RatingsSettingsSection>
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text('外部评分', style: VText.rowTitle),
-        const SizedBox(height: 12),
         Text(
           '进入详情页时按作品 ID 查询，各来源独立显示。年龄分级是参考信息，不是详细家长指南。',
           style: VText.caption.copyWith(color: VColors.textSecondary),
@@ -166,7 +164,7 @@ class _RatingsSettingsSectionState extends ConsumerState<RatingsSettingsSection>
         ],
         VToggle(
           label: '通过反向代理访问评分服务',
-          subtitle: '使用设置中的 HTTPS 反向代理地址',
+          subtitle: '使用上面填写的 HTTPS 反向代理地址',
           value: settings.useProxy,
           onChanged: (v) {
             if (_saving) return;

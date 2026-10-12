@@ -211,7 +211,7 @@ void main() {
     expect(find.text('欢迎使用 Viora'), findsOneWidget);
     expect(find.text('添加服务器'), findsOneWidget);
     expect(find.text('正在热映'), findsOneWidget);
-    expect(find.text('配置 TMDB 后显示（设置 → 元数据）'), findsWidgets);
+    expect(find.text('配置 TMDB 后显示（设置 → 接口与网络）'), findsWidgets);
     expect(focused, isNotNull);
     await unmount(tester);
   });

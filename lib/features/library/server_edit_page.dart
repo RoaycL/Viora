@@ -232,8 +232,8 @@ class _ServerEditPageState extends ConsumerState<ServerEditPage> {
                   VToggle(
                     label: '线路走反向代理',
                     subtitle: _hasLanLine
-                        ? '内网地址（如 192.168.x.x）会自动直连，不经过反向代理；需要先在「设置 → 反向代理」填写完整地址'
-                        : '需要先在「设置 → 反向代理」填写完整地址',
+                        ? '内网地址（如 192.168.x.x）会自动直连，不经过反向代理；需要先在「设置 → 接口与网络」填写完整地址'
+                        : '需要先在「设置 → 接口与网络」填写完整地址',
                     value: _proxied,
                     onChanged: (v) => setState(() => _proxied = v),
                   ),

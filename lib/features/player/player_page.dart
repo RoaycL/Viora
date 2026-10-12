@@ -463,7 +463,7 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
     final client = _danmakuClient;
     final target = _danmakuTarget ?? (_item == null ? null : DanmakuTarget.of(_item!));
     if (client == null || target == null) {
-      showToast('还没有配置弹幕服务器：设置 → 弹幕');
+      showToast('还没有配置弹幕服务器：设置 → 接口与网络');
       return;
     }
     _danmakuTarget ??= target;
@@ -1537,7 +1537,7 @@ class _ErrorPanel extends StatelessWidget {
             const SizedBox(height: 16),
             Text(
               forbidden
-                  ? '服务器拒绝了播放请求：检查「设置 → 播放」里的播放 UA / 客户端名称，或重新登录。'
+                  ? '服务器拒绝了播放请求：检查「设置 → 媒体服务器」里的播放 UA / 客户端名称，或重新登录。'
                   : '可能是线路不通或格式不受支持：可以换一个播放内核，或在资源库里对这台服务器测速 / 切换线路后重试。',
               style: VText.caption.copyWith(color: VColors.textSecondary),
             ),

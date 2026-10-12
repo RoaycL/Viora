@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -30,7 +32,8 @@ import '../update/update_controller.dart';
 import '../update/update_dialog.dart';
 import 'support_actions.dart';
 
-/// 设置（docs/06-ui-design.md §9）：播放、片头片尾、弹幕、元数据、反向代理（绑定线路）、关于与更新。
+/// 设置（docs/06-ui-design.md §9）：播放、片头片尾、弹幕、媒体服务器、接口与网络、同步与备份、通用与关于。
+/// 文本框改完自动保存（停止输入 0.8 秒后，离开页面时也会保存），不需要点保存按钮。
 class SettingsPage extends ConsumerStatefulWidget {
   const SettingsPage({super.key});
 
@@ -50,6 +53,27 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
   String _version = '';
   String _source = '';
 
+  /// 保存时用的 store（离开页面时 ref 已不能用，提前取好）
+  late final ConfigStore _store = ref.read(configProvider.notifier);
+  late final UpdateController _updater = ref.read(updateControllerProvider.notifier);
+
+  String _savedIdentity = '';
+  String _savedProxy = '';
+
+  /// 各文本框的延时自动保存
+  final _pending = <String, (Timer, Future<void> Function())>{};
+
+  void _autoSave(String key, Future<void> Function() save) {
+    _pending.remove(key)?.$1.cancel();
+    _pending[key] = (
+      Timer(const Duration(milliseconds: 800), () {
+        _pending.remove(key);
+        save();
+      }),
+      save,
+    );
+  }
+
   @override
   void initState() {
     super.initState();
@@ -61,11 +85,23 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
     _proxy.text = c.proxy.baseUrl;
     _tmdbKey.text = c.tmdb.apiKey;
     _tmdbBase.text = c.tmdb.baseUrl;
+    _savedIdentity = '${_ua.text.trim()}\u0001${_client.text.trim()}\u0001${_device.text.trim()}';
+    _savedProxy = _proxy.text.trim();
+    for (final field in [_ua, _client, _device]) {
+      field.addListener(() => _autoSave('identity', _saveIdentity));
+    }
+    _proxy.addListener(() => _autoSave('proxy', _saveProxy));
     _load();
   }
 
   @override
   void dispose() {
+    // 还没到时间的自动保存立即执行
+    for (final (timer, save) in _pending.values) {
+      timer.cancel();
+      save();
+    }
+    _pending.clear();
     for (final c in [_ua, _client, _device, _proxy, _manifest, _tmdbKey, _tmdbBase]) {
       c.dispose();
     }
@@ -83,30 +119,31 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
       _source = source;
       _manifest.text = c.settings.manifestUrl ?? '';
     });
+    _manifest.addListener(() => _autoSave('manifest', _saveManifest));
   }
 
-  Future<void> _savePlayback() async {
-    await ref
-        .read(configProvider.notifier)
-        .update(
-          (c) => c.copyWith(
-            playback: c.playback.copyWith(
-              userAgent: _ua.text.trim(),
-              clientName: _client.text.trim().isEmpty ? 'Viora' : _client.text.trim(),
-              deviceName: _device.text.trim(),
-            ),
-          ),
-        );
-    showToast('播放设置已保存');
+  /// 播放 UA、客户端名称、设备名称
+  Future<void> _saveIdentity() async {
+    final ua = _ua.text.trim(), client = _client.text.trim(), device = _device.text.trim();
+    // 文本框移动光标也会触发监听：内容没变不保存
+    final key = '$ua\u0001$client\u0001$device';
+    if (key == _savedIdentity) return;
+    _savedIdentity = key;
+    await _store.update(
+      (c) => c.copyWith(
+        playback: c.playback.copyWith(userAgent: ua, clientName: client.isEmpty ? 'Viora' : client, deviceName: device),
+      ),
+    );
   }
 
+  /// 反向代理地址：没写协议时补 https://，末尾补 /（只改保存的值，不改输入框，避免打字时跳动）
   Future<void> _saveProxy() async {
+    if (_proxy.text.trim() == _savedProxy) return;
+    _savedProxy = _proxy.text.trim();
     var url = _proxy.text.trim();
     if (url.isNotEmpty && !url.contains('://')) url = 'https://$url';
     if (url.isNotEmpty && !url.endsWith('/')) url = '$url/';
-    _proxy.text = url;
-    await ref.read(configProvider.notifier).update((c) => c.copyWith(proxy: ProxyConfig(baseUrl: url)));
-    showToast(url.isEmpty ? '已关闭反向代理' : '反向代理地址已保存');
+    await _store.update((c) => c.proxy.baseUrl == url ? c : c.copyWith(proxy: ProxyConfig(baseUrl: url)));
   }
 
   int? _cacheSize;
@@ -183,12 +220,12 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
   }
 
   Future<void> _saveManifest() async {
-    final c = ref.read(updateControllerProvider.notifier);
+    final c = _updater;
     final url = _manifest.text.trim();
+    if (url == (c.settings.manifestUrl ?? '')) return;
     await c.saveSettings(c.settings.copyWith(manifestUrl: url.isEmpty ? null : url, clearManifest: url.isEmpty));
     final source = await c.sourceDescription();
-    setState(() => _source = source);
-    showToast('更新来源已保存');
+    if (mounted) setState(() => _source = source);
   }
 
   Future<void> _check() async {
@@ -217,28 +254,6 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
       _Section(
         title: '播放',
         children: [
-          VTextField(label: '播放 UA（自定义后以此 UA 播放；服务器里单独设置的优先）', controller: _ua, hint: defaultUserAgent(appVersion)),
-          const SizedBox(height: 20),
-          Row(
-            children: [
-              Expanded(
-                child: VTextField(label: '客户端名称（上报给 Emby / Jellyfin）', controller: _client),
-              ),
-              const SizedBox(width: 24),
-              Expanded(
-                child: VTextField(label: '设备名称', controller: _device, hint: defaultDeviceName()),
-              ),
-            ],
-          ),
-          const SizedBox(height: 20),
-          VToggle(
-            label: 'API 与图片请求也使用播放 UA',
-            subtitle: '默认只有视频流使用播放 UA',
-            value: config.playback.uaForApi,
-            onChanged: (v) =>
-                ref.read(configProvider.notifier).update((c) => c.copyWith(playback: c.playback.copyWith(uaForApi: v))),
-          ),
-          const SizedBox(height: 12),
           VToggle(
             label: '播放预加载',
             subtitle: '在详情页、继续观看上停留时提前准备播放信息并预热视频；剧集看到 85% 时预加载下一集。会多用少量流量',
@@ -324,8 +339,6 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
                   .update((c) => c.copyWith(playback: c.playback.copyWith(tunneling: v))),
             ),
           ],
-          const SizedBox(height: 24),
-          PillButton(icon: Icons.save_rounded, label: '保存播放设置', onPressed: _savePlayback),
         ],
       ),
 
@@ -335,10 +348,78 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
       // ───────── 弹幕 ─────────
       const _Section(title: '弹幕', children: [DanmakuSettingsSection()]),
 
-      // ───────── 元数据 ─────────
+      // ───────── 媒体服务器 ─────────
       _Section(
-        title: '元数据与评分',
+        title: '媒体服务器',
         children: [
+          VTextField(label: '播放 UA（自定义后以此 UA 播放；服务器里单独设置的优先）', controller: _ua, hint: defaultUserAgent(appVersion)),
+          const SizedBox(height: 20),
+          Row(
+            children: [
+              Expanded(
+                child: VTextField(label: '客户端名称（上报给 Emby / Jellyfin）', controller: _client),
+              ),
+              const SizedBox(width: 24),
+              Expanded(
+                child: VTextField(label: '设备名称', controller: _device, hint: defaultDeviceName()),
+              ),
+            ],
+          ),
+          const SizedBox(height: 20),
+          VToggle(
+            label: 'API 与图片请求也使用播放 UA',
+            subtitle: '默认只有视频流使用播放 UA',
+            value: config.playback.uaForApi,
+            onChanged: (v) =>
+                ref.read(configProvider.notifier).update((c) => c.copyWith(playback: c.playback.copyWith(uaForApi: v))),
+          ),
+          const SizedBox(height: 36),
+          const _Subtitle('聚合搜索'),
+          Text(
+            '进入详情页时，会在勾选的服务器上查找同一部作品，列出各服务器的版本供选择、播放中切换。'
+            '不勾选的服务器不参与查找，只在浏览它自己的媒体库时使用；「搜索」页仍然会搜索所有服务器。',
+            style: VText.small.copyWith(color: VColors.textTertiary, height: 1.6),
+          ),
+          const SizedBox(height: 20),
+          if (config.servers.isEmpty)
+            Text('还没有添加服务器', style: VText.label.copyWith(color: VColors.textMuted))
+          else
+            for (final s in config.servers) ...[
+              VToggle(
+                label: s.displayName,
+                subtitle: [
+                  s.type == ServerType.emby ? 'Emby' : 'Jellyfin',
+                  if (s.lines.isNotEmpty) s.lines.first.url,
+                  if (!s.loggedIn) '未登录',
+                ].join(' · '),
+                value: s.aggregate,
+                onChanged: (v) =>
+                    ref.read(configProvider.notifier).updateServer(s.id, (old) => old.copyWith(aggregate: v)),
+              ),
+              const SizedBox(height: 10),
+            ],
+        ],
+      ),
+
+      // ───────── 接口与网络 ─────────
+      _Section(
+        title: '接口与网络',
+        children: [
+          Text(
+            '所有第三方服务的 API Key、地址集中在这里。国内直连不稳定的服务，可以单独勾选「通过反向代理访问」。',
+            style: VText.small.copyWith(color: VColors.textTertiary, height: 1.6),
+          ),
+          const SizedBox(height: 24),
+          const _Subtitle('反向代理'),
+          VTextField(
+            label: '完整地址（emby-reverse-proxy-go，留空关闭）',
+            controller: _proxy,
+            hint: 'https://embyproxy.example.com/proxy/',
+            keyboardType: TextInputType.url,
+            helper: '下面各服务和服务器线路勾选后经过这个代理。示例：https://emby.a.com → …/proxy/https/emby.a.com/443',
+          ),
+          const SizedBox(height: 36),
+          const _Subtitle('TMDB（元数据、推荐、中文标题）'),
           Text(
             TmdbConfig.builtinToken.isEmpty
                 ? '首页推荐、详情页演职员 / 相似推荐，以及媒体库不是中文时的标题简介补全，都来自 TMDB。'
@@ -363,28 +444,40 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
                 ref.read(configProvider.notifier).update((c) => c.copyWith(tmdb: c.tmdb.copyWith(useProxy: v))),
           ),
           const SizedBox(height: 36),
+          const _Subtitle('评分（OMDb / Trakt）'),
           const RatingsSettingsSection(),
-        ],
-      ),
-
-      // ───────── 反向代理 ─────────
-      _Section(
-        title: '反向代理 · 绑定线路',
-        children: [
-          VTextField(
-            label: '完整地址（emby-reverse-proxy-go）',
-            controller: _proxy,
-            hint: 'https://embyproxy.example.com/proxy/',
-            keyboardType: TextInputType.url,
-            helper: '更换地址后，已绑定的线路会继续使用这个代理。示例：https://emby.a.com → …/proxy/https/emby.a.com/443',
+          const SizedBox(height: 36),
+          const _Subtitle('片头片尾数据库'),
+          const SegmentSettingsSection(apiSources: true),
+          const SizedBox(height: 36),
+          const _Subtitle('弹幕服务器'),
+          const DanmakuSettingsSection(servers: true),
+          const SizedBox(height: 36),
+          const _Subtitle('应用更新'),
+          VToggle(
+            label: '通过反向代理检查和下载更新',
+            subtitle: updater.proxyAvailable ? '电视连不上 GitHub 时打开（使用上面的反向代理地址）。关闭时直连失败也会自动改走反向代理再试一次' : '需要先在上面填写反向代理地址',
+            value: updater.settings.useProxy && updater.proxyAvailable,
+            onChanged: (v) async {
+              if (v && !updater.proxyAvailable) {
+                showToast('请先在上面填写反向代理地址');
+                return;
+              }
+              await updater.saveSettings(updater.settings.copyWith(useProxy: v));
+              setState(() {});
+            },
           ),
           const SizedBox(height: 20),
-          PillButton(icon: Icons.save_rounded, label: '保存地址', onPressed: _saveProxy),
-          const SizedBox(height: 12),
+          VTextField(
+            label: '自定义更新地址（latest.json，留空使用 GitHub Releases）',
+            controller: _manifest,
+            hint: 'https://example.com/viora/latest.json',
+            keyboardType: TextInputType.url,
+          ),
+          const SizedBox(height: 36),
+          const _Subtitle('媒体服务器线路走反向代理'),
           Text('勾选的线路：登录、浏览、图片和视频播放全部经过代理；内网地址始终直连。', style: VText.small.copyWith(color: VColors.textTertiary)),
-          const SizedBox(height: 28),
-          Text('媒体服务器线路', style: VText.caption.copyWith(color: VColors.textTertiary)),
-          const SizedBox(height: 12),
+          const SizedBox(height: 16),
           if (config.servers.isEmpty)
             Text('还没有添加服务器', style: VText.label.copyWith(color: VColors.textMuted))
           else
@@ -407,46 +500,31 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
         ],
       ),
 
-      // ───────── 聚合搜索 ─────────
+      // ───────── 同步与备份 ─────────
+      const _Section(title: '同步与备份', children: [SyncSettingsSection()]),
+
+      // ───────── 通用与关于 ─────────
       _Section(
-        title: '聚合搜索',
+        title: '通用与关于',
         children: [
-          Text(
-            '进入详情页时，会在勾选的服务器上查找同一部作品，列出各服务器的版本供选择、播放中切换。'
-            '不勾选的服务器不参与查找，只在浏览它自己的媒体库时使用；「搜索」页仍然会搜索所有服务器。',
-            style: VText.small.copyWith(color: VColors.textTertiary, height: 1.6),
-          ),
-          const SizedBox(height: 24),
-          if (config.servers.isEmpty)
-            Text('还没有添加服务器', style: VText.label.copyWith(color: VColors.textMuted))
-          else
-            for (final s in config.servers) ...[
-              VToggle(
-                label: s.displayName,
-                subtitle: [
-                  s.type == ServerType.emby ? 'Emby' : 'Jellyfin',
-                  if (s.lines.isNotEmpty) s.lines.first.url,
-                  if (!s.loggedIn) '未登录',
-                ].join(' · '),
-                value: s.aggregate,
-                onChanged: (v) =>
-                    ref.read(configProvider.notifier).updateServer(s.id, (old) => old.copyWith(aggregate: v)),
+          // 仅 Windows：关闭窗口时退出还是隐藏到托盘（默认隐藏到托盘）
+          if (isDesktopWindow) ...[
+            ValueListenableBuilder<bool>(
+              valueListenable: DesktopTray.instance.closeToTray,
+              builder: (context, toTray, _) => VToggle(
+                label: '关闭窗口时最小化到托盘',
+                subtitle: toTray ? '点关闭只隐藏窗口；单击右下角托盘图标恢复，右键托盘图标可以退出' : '关闭：点关闭直接退出应用',
+                value: toTray,
+                onChanged: (v) => DesktopTray.instance.setCloseToTray(v),
               ),
-              const SizedBox(height: 10),
-            ],
-        ],
-      ),
-
-      // ───────── 同步配置 ─────────
-      const _Section(title: '同步配置', children: [SyncSettingsSection()]),
-
-      // ───────── 家长控制 ─────────
-      const _Section(title: '家长控制', children: [ParentalSettingsSection()]),
-
-      // ───────── 关于与更新 ─────────
-      _Section(
-        title: '关于与更新',
-        children: [
+            ),
+            const SizedBox(height: 12),
+          ],
+          const SizedBox(height: 24),
+          const _Subtitle('家长控制'),
+          const ParentalSettingsSection(),
+          const SizedBox(height: 36),
+          const _Subtitle('关于与更新'),
           _InfoLine(label: '当前版本', value: _version),
           _InfoLine(
             label: '更新来源',
@@ -478,19 +556,6 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
             ],
           ),
           const SizedBox(height: 20),
-          // 仅 Windows：关闭窗口时退出还是隐藏到托盘（默认隐藏到托盘）
-          if (isDesktopWindow) ...[
-            ValueListenableBuilder<bool>(
-              valueListenable: DesktopTray.instance.closeToTray,
-              builder: (context, toTray, _) => VToggle(
-                label: '关闭窗口时最小化到托盘',
-                subtitle: toTray ? '点关闭只隐藏窗口；单击右下角托盘图标恢复，右键托盘图标可以退出' : '关闭：点关闭直接退出应用',
-                value: toTray,
-                onChanged: (v) => DesktopTray.instance.setCloseToTray(v),
-              ),
-            ),
-            const SizedBox(height: 12),
-          ],
           VToggle(
             label: '启动时自动检查更新',
             value: updater.settings.autoCheck,
@@ -499,31 +564,6 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
               setState(() {});
             },
           ),
-          const SizedBox(height: 12),
-          VToggle(
-            label: '通过反向代理检查和下载更新',
-            subtitle: updater.proxyAvailable
-                ? '电视连不上 GitHub 时打开（使用「反向代理」里的地址）。关闭时直连失败也会自动改走反向代理再试一次'
-                : '需要先在「设置 → 反向代理」填写地址',
-            value: updater.settings.useProxy && updater.proxyAvailable,
-            onChanged: (v) async {
-              if (v && !updater.proxyAvailable) {
-                showToast('请先在「设置 → 反向代理」填写地址');
-                return;
-              }
-              await updater.saveSettings(updater.settings.copyWith(useProxy: v));
-              setState(() {});
-            },
-          ),
-          const SizedBox(height: 20),
-          VTextField(
-            label: '自定义更新地址（latest.json，留空使用 GitHub Releases）',
-            controller: _manifest,
-            hint: 'https://example.com/viora/latest.json',
-            keyboardType: TextInputType.url,
-          ),
-          const SizedBox(height: 16),
-          PillButton(icon: Icons.save_rounded, label: '保存更新地址', onPressed: _saveManifest),
           const SizedBox(height: 24),
           SettingsEntry(
             title: '导出日志',
@@ -587,12 +627,10 @@ enum _Category {
   playback('播放', Icons.play_circle_outline_rounded),
   segments('片头片尾', Icons.fast_forward_outlined),
   danmaku('弹幕', Icons.chat_outlined),
-  metadata('元数据', Icons.auto_awesome_outlined),
-  proxy('反向代理', Icons.shield_outlined),
-  aggregate('聚合搜索', Icons.travel_explore_rounded),
-  sync('同步配置', Icons.qr_code_2_rounded),
-  parental('家长控制', Icons.child_care_rounded),
-  about('关于与更新', Icons.system_update_alt_rounded);
+  servers('媒体服务器', Icons.dns_outlined),
+  network('接口与网络', Icons.hub_outlined),
+  sync('同步与备份', Icons.qr_code_2_rounded),
+  general('通用与关于', Icons.tune_rounded);
 
   const _Category(this.label, this.icon);
   final String label;
@@ -669,6 +707,19 @@ class _Section extends StatelessWidget {
   Widget build(BuildContext context) {
     return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [SectionTitle(title), ...children]);
   }
+}
+
+/// 分类内的小标题
+class _Subtitle extends StatelessWidget {
+  const _Subtitle(this.text);
+
+  final String text;
+
+  @override
+  Widget build(BuildContext context) => Padding(
+    padding: const EdgeInsets.only(bottom: 14),
+    child: Text(text, style: VText.rowTitle.copyWith(fontSize: 26)),
+  );
 }
 
 class _InfoLine extends StatelessWidget {
