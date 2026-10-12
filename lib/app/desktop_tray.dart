@@ -15,8 +15,8 @@ class DesktopTray with TrayListener, WindowListener {
 
   static const _key = 'viora.window.closeToTray';
 
-  /// 关闭窗口时最小化到托盘（默认关：直接退出，与以前一致）
-  final closeToTray = ValueNotifier(false);
+  /// 关闭窗口时最小化到托盘（默认开）
+  final closeToTray = ValueNotifier(true);
 
   /// 窗口隐藏到托盘时为 true（播放器据此暂停）
   final hiddenToTray = ValueNotifier(false);
@@ -26,7 +26,7 @@ class DesktopTray with TrayListener, WindowListener {
   Future<void> init() async {
     if (!isDesktopWindow) return;
     try {
-      closeToTray.value = (await SharedPreferences.getInstance()).getBool(_key) ?? false;
+      closeToTray.value = (await SharedPreferences.getInstance()).getBool(_key) ?? true;
     } catch (_) {}
     windowManager.addListener(this);
     trayManager.addListener(this);

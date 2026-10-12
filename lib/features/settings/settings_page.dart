@@ -478,7 +478,7 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
             ],
           ),
           const SizedBox(height: 20),
-          // 仅 Windows：关闭窗口时退出还是隐藏到托盘
+          // 仅 Windows：关闭窗口时退出还是隐藏到托盘（默认隐藏到托盘）
           if (isDesktopWindow) ...[
             ValueListenableBuilder<bool>(
               valueListenable: DesktopTray.instance.closeToTray,
