@@ -4,6 +4,9 @@ import 'dart:math';
 import 'package:dio/dio.dart';
 import 'package:flutter/foundation.dart';
 
+import '../../core/log/load_metrics.dart';
+import '../cache/account_scope.dart';
+
 import '../config/app_config.dart';
 import '../media/media_models.dart';
 import '../media/zh.dart';
@@ -77,7 +80,8 @@ final Map<String, String> _autoLine = {};
 /// Emby / Jellyfin 客户端（两者 API 同源，差异见 docs/03-media-servers.md §2）。
 class EmbyClient {
   EmbyClient({required this.config, required ServerConfig server, required this.appVersion, this.onServerChanged})
-    : _server = server; // ignore: prefer_initializing_formals
+    : _server = server,
+      _metricsId = accountScope(server).substring(0, 10); // ignore: prefer_initializing_formals
 
   final AppConfig config;
   final String appVersion;
@@ -86,6 +90,7 @@ class EmbyClient {
   final void Function(ServerConfig server)? onServerChanged;
 
   ServerConfig _server;
+  final String _metricsId;
   ServerConfig get server => _server;
 
   static const _timeout = Duration(seconds: 15);
@@ -126,7 +131,12 @@ class EmbyClient {
     for (var i = 0; i < 3; i++) {
       final sw = Stopwatch()..start();
       try {
-        final r = await dio.getUri<dynamic>(url, options: Options(headers: c.headers(RequestKind.api)));
+        final r = await LoadTrace.request(
+          'media_api',
+          _metricsId,
+          () => dio.getUri<dynamic>(url, options: Options(headers: c.headers(RequestKind.api))),
+          isSuccess: (r) => (r.statusCode ?? 500) < 400,
+        );
         // 401 / 403 也算连得上：按 UA 白名单拦截的服务器到登录时再提示原因，不要报"连不上"
         final code = r.statusCode ?? 0;
         if (code >= 200 && code < 500 && code != 404) samples.add(sw.elapsedMilliseconds);
@@ -182,10 +192,15 @@ class EmbyClient {
       ..[_server.type == ServerType.emby ? 'X-Emby-Authorization' : 'Authorization'] = c.authorization(
         withToken: false,
       );
-    final r = await _dio().postUri<dynamic>(
-      url,
-      data: {'Username': _server.username, 'Pw': password},
-      options: Options(headers: headers, contentType: Headers.jsonContentType),
+    final r = await LoadTrace.request(
+      'media_api',
+      _metricsId,
+      () => _dio().postUri<dynamic>(
+        url,
+        data: {'Username': _server.username, 'Pw': password},
+        options: Options(headers: headers, contentType: Headers.jsonContentType),
+      ),
+      isSuccess: (r) => (r.statusCode ?? 500) < 400,
     );
     if (r.statusCode == 401 || r.statusCode == 403) {
       // 说明是哪个地址、是否经过反向代理拒绝的，方便排查（内网地址、代理、账号大小写等）
@@ -223,10 +238,15 @@ class EmbyClient {
       final c = composerFor(l);
       final url = c.finalUrl(c.resolve(path, query), RequestKind.api);
       try {
-        final r = await _dio().requestUri<dynamic>(
-          url,
-          data: body,
-          options: Options(method: method, headers: c.headers(RequestKind.api), contentType: Headers.jsonContentType),
+        final r = await LoadTrace.request(
+          'media_api',
+          _metricsId,
+          () => _dio().requestUri<dynamic>(
+            url,
+            data: body,
+            options: Options(method: method, headers: c.headers(RequestKind.api), contentType: Headers.jsonContentType),
+          ),
+          isSuccess: (r) => (r.statusCode ?? 500) < 400,
         );
         if (l.id != line.id) {
           _autoLine[_server.id] = l.id;
@@ -345,8 +365,25 @@ class EmbyClient {
         ..._imageQuery,
       },
     ) as Map<String, dynamic>;
-    final list = (data['Items'] as List? ?? const []).cast<Map<String, dynamic>>();
-    return PagedItems(_allowed(list.map(parseItem)).toList(), data['TotalRecordCount'] as int? ?? list.length);
+    final list = _pageItems(data);
+    final total = data['TotalRecordCount'] as int?;
+    if (total != null && (total < 0 || total < list.length)) throw const MediaServerException('服务器条目总数无效');
+    return PagedItems(
+      _allowed(list.map(parseItem)).toList(),
+      total ?? list.length,
+      rawCount: list.length,
+      totalKnown: total != null,
+    );
+  }
+
+  /// 成功响应也必须有合法列表，不能把错误 JSON / 缺失 Items 当作确定的空结果。
+  List<Map<String, dynamic>> _pageItems(Map<String, dynamic> data) {
+    if (data['Items'] is! List) throw const MediaServerException('服务器列表响应不完整');
+    final list = (data['Items'] as List).cast<Map<String, dynamic>>();
+    if (list.any((j) => j['Id'] is! String || (j['Id'] as String).isEmpty)) {
+      throw const MediaServerException('服务器列表条目无效');
+    }
+    return list;
   }
 
   Future<List<MediaItem>> latest({String? parentId, int limit = 20}) async {
@@ -364,7 +401,11 @@ class EmbyClient {
       '/Users/${await _userId()}/Items/Resume',
       query: {'Limit': '$limit', 'MediaTypes': 'Video', 'Fields': _userFields, ..._parentalQuery, ..._imageQuery},
     ) as Map<String, dynamic>;
-    return _allowed((data['Items'] as List? ?? const []).cast<Map<String, dynamic>>().map(parseItem)).toList();
+    final list = _pageItems(data);
+    if (list.isEmpty && (data['TotalRecordCount'] as num? ?? 0) > 0) {
+      throw const MediaServerException('服务器继续观看响应不完整');
+    }
+    return _allowed(list.map(parseItem)).toList();
   }
 
   Future<MediaItem> item(String id) async => parseItem(

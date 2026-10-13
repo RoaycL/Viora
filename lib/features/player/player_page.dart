@@ -11,6 +11,7 @@ import '../../app/platform_profile.dart';
 import '../../app/theme.dart';
 import '../../app/window_frame.dart';
 import '../../data/aggregate/sources.dart';
+import '../../data/cache/account_scope.dart';
 import '../../data/config/app_config.dart';
 import '../../data/config/config_store.dart';
 import '../../data/danmaku/danmaku_client.dart';
@@ -279,7 +280,7 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
     if (client == null || source == null || _stopped) return;
     final pos = _state.position;
     // 本机也记一份上次播放时间（部分服务器的继续观看不带 LastPlayedDate）
-    PlayHistory.record(widget.serverId, widget.itemId);
+    PlayHistory.record(widget.serverId, widget.itemId, scope: accountScope(client.server));
     if (start) {
       client.reportStart(source, pos, _playSessionId);
     } else {
@@ -297,7 +298,7 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
       final container = _container;
       final key = (serverId: widget.serverId, itemId: widget.itemId);
       Future(() => client.reportStopped(source, _state.position, _playSessionId)).catchError((_) {}).whenComplete(() {
-        container?.invalidate(resumeProvider);
+        container?.read(mediaFeedRefreshProvider.notifier).refresh(MediaFeedKind.resume);
         container?.invalidate(itemProvider(key));
       });
     }

@@ -653,7 +653,7 @@ class _SourcesPanelState extends ConsumerState<SourcesPanel> {
   @override
   Widget build(BuildContext context) {
     final async = ref.watch(sourceOptionsProvider((serverId: widget.serverId, itemId: widget.itemId)));
-    final options = async.value ?? const <SourceOption>[];
+    final options = visibleSourceOptions(ref.read(configProvider), async.value ?? const <SourceOption>[]);
     final groups = [
       for (final g in const ['4K', '1080P', '其他'])
         if (options.any((o) => o.group == g)) g,

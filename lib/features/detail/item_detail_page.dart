@@ -6,6 +6,8 @@ import 'package:go_router/go_router.dart';
 
 import '../../app/theme.dart';
 import '../../data/aggregate/sources.dart';
+import '../../data/cache/account_scope.dart';
+import '../../data/config/config_store.dart';
 import '../../data/media/media_models.dart';
 import '../../data/media/server_registry.dart';
 import '../../data/tmdb/tmdb_client.dart';
@@ -60,6 +62,7 @@ class _ItemDetailPageState extends ConsumerState<ItemDetailPage> {
   String? _sourceKey;
   bool? _favorite;
   bool? _played;
+  int _accountGeneration = 0;
 
   /// 已预热的默认版本（同一版本只预热一次）
   String? _warmedKey;
@@ -75,7 +78,11 @@ class _ItemDetailPageState extends ConsumerState<ItemDetailPage> {
       (_) => PlaybackPreloader.warm(
         client,
         o.source,
-        playSessionId: PlaybackPreloader.cached(o.serverId, o.item.id)?.playSessionId,
+        playSessionId: PlaybackPreloader.cached(
+          o.serverId,
+          o.item.id,
+          scope: accountScope(client.server),
+        )?.playSessionId,
         position: o.item.position,
       ),
     );
@@ -85,6 +92,20 @@ class _ItemDetailPageState extends ConsumerState<ItemDetailPage> {
 
   @override
   Widget build(BuildContext context) {
+    ref.listen(
+      configProvider.select((c) {
+        final server = c.server(widget.serverId);
+        return server == null || !server.loggedIn ? null : accountScope(server);
+      }),
+      (_, _) {
+        _accountGeneration++;
+        _favorite = null;
+        _played = null;
+        _seasonId = null;
+        _sourceKey = null;
+        _warmedKey = null;
+      },
+    );
     final async = ref.watch(itemProvider(_key));
     return Material(
       color: VColors.background,
@@ -153,7 +174,7 @@ class _ItemDetailPageState extends ConsumerState<ItemDetailPage> {
     final optionsAsync = playTarget == null
         ? null
         : ref.watch(sourceOptionsProvider((serverId: playTarget.serverId, itemId: playTarget.id)));
-    final options = optionsAsync?.value ?? const <SourceOption>[];
+    final options = visibleSourceOptions(ref.read(configProvider), optionsAsync?.value ?? const <SourceOption>[]);
     final selected = options.where((o) => sourceKeyOf(o) == _sourceKey).firstOrNull ?? options.firstOrNull;
     if (selected != null) _warmDefault(selected);
     void play(SourceOption? o, {bool fromStart = false}) {
@@ -310,22 +331,36 @@ class _ItemDetailPageState extends ConsumerState<ItemDetailPage> {
   }
 
   Future<void> _toggleFavorite(MediaItem item, bool value) async {
+    final client = ref.read(serverClientProvider(widget.serverId));
+    if (client == null) return;
+    final generation = _accountGeneration;
+    final refresh = ref.read(mediaFeedRefreshProvider.notifier);
     setState(() => _favorite = value);
     try {
-      await ref.read(serverClientProvider(widget.serverId))?.setFavorite(item.id, value);
+      await client.setFavorite(item.id, value);
+      refresh.refresh(MediaFeedKind.favorites);
+      if (!mounted || generation != _accountGeneration) return;
       showToast(value ? '已收藏' : '已取消收藏');
     } catch (e) {
+      if (!mounted || generation != _accountGeneration) return;
       setState(() => _favorite = !value);
       showToast('操作失败：$e');
     }
   }
 
   Future<void> _togglePlayed(MediaItem item, bool value) async {
+    final client = ref.read(serverClientProvider(widget.serverId));
+    if (client == null) return;
+    final generation = _accountGeneration;
+    final refresh = ref.read(mediaFeedRefreshProvider.notifier);
     setState(() => _played = value);
     try {
-      await ref.read(serverClientProvider(widget.serverId))?.setPlayed(item.id, value);
+      await client.setPlayed(item.id, value);
+      refresh.refresh(MediaFeedKind.recentlyPlayed);
+      if (!mounted || generation != _accountGeneration) return;
       showToast(value ? '已标记为已看' : '已标记为未看');
     } catch (e) {
+      if (!mounted || generation != _accountGeneration) return;
       setState(() => _played = !value);
       showToast('操作失败：$e');
     }
