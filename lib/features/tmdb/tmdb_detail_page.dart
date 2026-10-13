@@ -18,9 +18,9 @@ import '../../ui/widgets/buttons.dart';
 import '../../ui/widgets/tmdb_image.dart';
 import '../browse/media_cards.dart';
 import '../detail/detail_layout.dart';
+import '../detail/episode_catalog.dart';
 import '../detail/source_widgets.dart';
 import '../metadata/external_ratings.dart';
-import '../../ui/widgets/server_image.dart' show placeholderArt;
 import 'tmdb_cards.dart';
 
 /// TMDB 作品详情：媒体库里没有的作品（首页推荐、人物作品、相似推荐点进来）。
@@ -273,8 +273,8 @@ class _TmdbDetailState extends ConsumerState<_TmdbDetail> {
             // 媒体库里根本没有这部剧时不逐集标「无资源」（下面的播放资源区会说明）
             libraryLoaded: (libraryEpisodes?.hasValue ?? false) && copies.isNotEmpty,
             onSelect: (n) {
-              if (n == episode) {
-                if (selected != null) _play(selected);
+              if (n == episode && selected != null) {
+                _play(selected);
                 return;
               }
               setState(() {
@@ -329,7 +329,7 @@ class _EpisodeRow extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final async = ref.watch(tmdbSeasonProvider((tvId: tvId, season: season)));
-    final eps = async.value ?? const <TmdbEpisode>[];
+    final eps = mergeEpisodeCatalog(async.value ?? const <TmdbEpisode>[], library, season);
     if (eps.isEmpty) {
       return Padding(
         padding: const EdgeInsets.fromLTRB(VSpace.safeH, 8, VSpace.safeH, 8),
@@ -339,56 +339,15 @@ class _EpisodeRow extends ConsumerWidget {
         ),
       );
     }
-    MediaItem? inLibrary(TmdbEpisode e) =>
-        library.where((x) => x.seasonNumber == e.season && x.episodeNumber == e.number).firstOrNull;
-    String two(int n) => n.toString().padLeft(2, '0');
-    final initial = eps.indexWhere((e) => e.number == selected);
-    return FocusRow(
-      key: ValueKey('tmdb-season-$season'),
-      rowIndex: 2,
-      leading: VSpace.safeH,
-      title: seasonLabel,
-      initialIndex: initial < 0 ? 0 : initial,
-      itemCount: eps.length,
-      itemExtent: LandscapeCard.width,
-      height: LandscapeCard.height,
-      itemBuilder: (context, i, node) {
-        final e = eps[i];
-        final have = inLibrary(e);
-        final isSelected = e.number == selected;
-        final progress = have == null
-            ? null
-            : have.played
-            ? 1.0
-            : (have.playedPercentage ?? 0) > 0
-            ? have.playedPercentage! / 100
-            : null;
-        return LandscapeCard(
-          node: node,
-          art: placeholderArt('$tvId/${e.season}/${e.number}'),
-          image: TmdbImage(
-            path: e.stillPath,
-            kind: TmdbImageKind.still,
-            width: LandscapeCard.width,
-            fallbackSeed: '$tvId/${e.season}/${e.number}',
-          ),
-          title: '${e.number}. ${e.name}',
-          subtitle: [
-            if (e.airDate != null) '${e.airDate!.year}-${two(e.airDate!.month)}-${two(e.airDate!.day)}',
-            if (e.runtimeMinutes != null && e.runtimeMinutes! > 0) '${e.runtimeMinutes} 分钟',
-          ].join(' · '),
-          tag: isSelected
-              ? '已选择'
-              : e.upcoming
-              ? '未播出'
-              : libraryLoaded && have == null
-              ? '无资源'
-              : null,
-          tagIcon: isSelected ? Icons.check_circle_rounded : null,
-          progress: progress,
-          onActivate: () => onSelect(e.number),
-        );
-      },
+    return EpisodeCatalogRow(
+      tvId: tvId,
+      season: season,
+      episodes: eps,
+      selected: selected,
+      library: library,
+      libraryLoaded: libraryLoaded,
+      seasonLabel: seasonLabel,
+      onSelect: onSelect,
     );
   }
 }

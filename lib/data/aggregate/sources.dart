@@ -218,18 +218,10 @@ final tmdbSeriesEpisodesProvider = FutureProvider.autoDispose.family<List<MediaI
   ref.watch(mediaFeedScopeProvider);
   final copies = await ref.watch(tmdbLibrarySearchProvider(key).future);
   if (!key.isTv || copies.isEmpty) return const [];
-  final lists = await Future.wait(
-    copies.map((c) async {
-      final client = ref.read(serverClientProvider(c.serverId));
-      if (client == null) return const <MediaItem>[];
-      try {
-        return await client.episodes(c.id).timeout(const Duration(seconds: 10));
-      } catch (_) {
-        return const <MediaItem>[];
-      }
-    }),
-  );
-  return [for (final l in lists) ...l];
+  final lists = await Future.wait([
+    for (final copy in copies) ref.watch(seriesEpisodesProvider((serverId: copy.serverId, itemId: copy.id)).future),
+  ]);
+  return [for (final list in lists) ...list];
 });
 
 typedef TmdbEpisodeKey = ({TmdbSearchKey title, int season, int episode});
@@ -247,4 +239,52 @@ final tmdbEpisodeSourcesProvider = FutureProvider.autoDispose.family<List<Source
   final copies = await ref.watch(tmdbLibrarySearchProvider(key.title).future);
   final preferred = copies.isEmpty ? null : await PreferredServers.get(titleKeyOf(copies.first));
   return rankSources(options, preferredServerId: preferred);
+});
+
+/// 同一剧的全集只请求一次，TMDB 入口与媒体库入口共用。
+final seriesEpisodesProvider = FutureProvider.autoDispose.family<List<MediaItem>, SourcesKey>((ref, key) async {
+  final client = ref.watch(serverClientProvider(key.serverId));
+  if (client == null) return const [];
+  try {
+    return await client.episodes(key.itemId).timeout(const Duration(seconds: 10));
+  } catch (_) {
+    return const [];
+  }
+});
+
+typedef LibrarySeriesKey = ({SourcesKey home, TmdbSearchKey title});
+typedef LibraryEpisodeKey = ({LibrarySeriesKey series, int season, int episode});
+
+/// 当前服务器始终参与；其他服务器遵循聚合设置。即使当前来源关闭聚合，也能播放它自己的剧集。
+final librarySeriesEpisodesProvider = FutureProvider.autoDispose.family<List<MediaItem>, LibrarySeriesKey>((
+  ref,
+  key,
+) async {
+  ref.watch(
+    configProvider.select((c) => (c.serversKey, c.parental.enabled, c.parental.maxAge, c.parental.blockUnrated)),
+  );
+  final own = ref.watch(seriesEpisodesProvider(key.home).future);
+  final others = ref.watch(tmdbSeriesEpisodesProvider(key.title).future);
+  final lists = await Future.wait([own, others]);
+  final unique = <String, MediaItem>{};
+  for (final list in lists) {
+    for (final item in list) {
+      unique.putIfAbsent('${item.serverId}/${item.id}', () => item);
+    }
+  }
+  return unique.values.toList();
+});
+
+/// 用季号和集号查实际资源，不根据播出日期过滤，也不拿下一集替代用户选择的缺集。
+final libraryEpisodeSourcesProvider = FutureProvider.autoDispose.family<List<SourceOption>, LibraryEpisodeKey>((
+  ref,
+  key,
+) async {
+  final episodes = await ref.watch(librarySeriesEpisodesProvider(key.series).future);
+  final matches = episodes.where((e) => e.seasonNumber == key.season && e.episodeNumber == key.episode).toList();
+  if (matches.isEmpty) return const [];
+  final options = await _optionsOf(ref, matches);
+  final series = await ref.watch(itemProvider(key.series.home).future);
+  final preferred = await PreferredServers.get(titleKeyOf(series));
+  return rankSources(options, preferredServerId: preferred ?? key.series.home.serverId);
 });
