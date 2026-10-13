@@ -130,6 +130,7 @@ String watchAggregateServers(Ref ref) =>
 /// 进入 TMDB 详情页时才做的聚合搜索：本地索引 + 到每台参与聚合搜索的服务器按中文名 / 原名实时搜索，
 /// 按 TMDB ID 匹配（服务器条目没有 TMDB ID 时按标题 + 年份 ±1）。首页、推荐行不触发（docs/04-aggregation.md §7）。
 final tmdbLibrarySearchProvider = FutureProvider.autoDispose.family<List<MediaItem>, TmdbSearchKey>((ref, key) async {
+  ref.watch(mediaFeedScopeProvider);
   watchAggregateServers(ref);
   final servers = ref.read(configProvider).aggregateServerIds;
   final found = <String, MediaItem>{

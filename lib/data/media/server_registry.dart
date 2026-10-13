@@ -1,6 +1,8 @@
+import '../../player/preload.dart';
 import '../history/play_history.dart';
 
-import '../cache/snapshot_cache.dart';
+import '../cache/account_scope.dart';
+import '../cache/snapshot_cache.dart' show SnapshotBatch;
 
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -8,6 +10,9 @@ import '../config/app_config.dart';
 import '../config/config_store.dart';
 import '../emby/emby_client.dart';
 import 'media_models.dart';
+import 'media_feed.dart';
+
+export 'media_feed.dart' show MediaFeedKind, MediaFeedResult;
 
 /// 应用版本号（main() 启动时从 package_info 读入；测试中保持默认值）。
 String appVersion = '0.0.0';
@@ -19,7 +24,15 @@ final serverClientProvider = Provider.family<EmbyClient?, String>((ref, serverId
   ref.watch(configProvider.select((c) => c.clientKey(serverId)));
   final config = ref.read(configProvider);
   final server = config.server(serverId);
+  if (server == null || !server.loggedIn) {
+    PlayHistory.unbindAccount(serverId);
+    PlaybackPreloader.unbindAccount(serverId);
+  }
   if (server == null) return null;
+  if (server.loggedIn) {
+    PlayHistory.bindAccount(serverId, accountScope(server));
+    PlaybackPreloader.bindAccount(serverId, accountScope(server));
+  }
   final store = ref.read(configProvider.notifier);
   return EmbyClient(
     config: config,
@@ -27,7 +40,9 @@ final serverClientProvider = Provider.family<EmbyClient?, String>((ref, serverId
     appVersion: appVersion,
     onServerChanged: (s) => store.updateServer(
       s.id,
-      (old) => old.copyWith(token: s.token, userId: s.userId, lines: s.lines, clearSession: s.token == null),
+      (old) => accountScope(old) != accountScope(server)
+          ? old
+          : old.copyWith(token: s.token, userId: s.userId, lines: s.lines, clearSession: s.token == null),
     ),
   );
 });
@@ -36,37 +51,42 @@ final serverClientProvider = Provider.family<EmbyClient?, String>((ref, serverId
 EmbyClient clientForDraft(AppConfig config, ServerConfig server) =>
     EmbyClient(config: config, server: server, appVersion: appVersion);
 
-/// 所有已登录服务器的"继续观看"，按服务器返回顺序合并（docs/05 §2.1）。
-final resumeProvider = FutureProvider<List<MediaItem>>((ref) async {
-  ref.watch(configProvider.select((c) => c.serversKey));
+typedef MediaFeedKey = ({MediaFeedKind kind, String scope});
+
+final mediaFeedScopeProvider = Provider<String>((ref) => ref.watch(configProvider.select(mediaFeedScope)));
+
+class MediaFeedRefresh extends Notifier<Map<MediaFeedKind, int>> {
+  @override
+  Map<MediaFeedKind, int> build() => const {};
+  void refresh(MediaFeedKind kind) => state = {...state, kind: (state[kind] ?? 0) + 1};
+}
+
+final mediaFeedRefreshProvider = NotifierProvider<MediaFeedRefresh, Map<MediaFeedKind, int>>(MediaFeedRefresh.new);
+
+final mediaFeedProvider = FutureProvider.autoDispose.family<MediaFeedResult, MediaFeedKey>((ref, key) {
+  ref.watch(mediaFeedRefreshProvider.select((s) => s[key.kind] ?? 0));
   final config = ref.read(configProvider);
-  // 启动时先显示上次的列表，后台再拉最新
-  return snapshotFirst(
-    ref,
-    'resume',
-    encode: MediaItem.encodeList,
-    decode: (j) => [
-      for (final it in MediaItem.decodeList(j))
-        if (itemVisible(config, it)) it,
-    ],
-    fetch: () async {
-      final results = await Future.wait(
-        config.servers.where((s) => s.loggedIn).map((s) async {
-          try {
-            return await ref.read(serverClientProvider(s.id))!.resume(limit: 12);
-          } catch (_) {
-            return const <MediaItem>[];
-          }
-        }),
-      );
-      // 各服务器按上次播放时间合并
-      final all = [for (final list in results) ...list];
-      // 服务器没给上次播放时间时用本机记录的
-      final epoch = DateTime(1970);
-      all.sort((a, b) => (PlayHistory.lastPlayed(b) ?? epoch).compareTo(PlayHistory.lastPlayed(a) ?? epoch));
-      return all;
-    },
-  );
+  if (key.scope != mediaFeedScope(config)) return const MediaFeedResult(SnapshotBatch<List<MediaItem>>([]));
+  final clients = [
+    for (final server in config.servers.where((s) => s.loggedIn)) ?ref.watch(serverClientProvider(server.id)),
+  ];
+  return loadMediaFeed(ref, key.kind, key.scope, config, clients);
+});
+
+/// 切换账号 / 家长模式时切换 family 实例，避免 AsyncValue 继续携带上一账号的值。
+final mediaFeedStateProvider = Provider.family<AsyncValue<MediaFeedResult>, MediaFeedKind>((ref, kind) {
+  final scope = ref.watch(mediaFeedScopeProvider);
+  return ref.watch(mediaFeedProvider((kind: kind, scope: scope)));
+});
+
+final resumeProvider = Provider<AsyncValue<List<MediaItem>>>((ref) {
+  final config = ref.read(configProvider);
+  return ref.watch(mediaFeedStateProvider(MediaFeedKind.resume)).whenData((snapshot) {
+    final all = snapshot.items.where((it) => itemVisible(config, it)).toList();
+    final epoch = DateTime(1970);
+    all.sort((a, b) => (PlayHistory.lastPlayed(b) ?? epoch).compareTo(PlayHistory.lastPlayed(a) ?? epoch));
+    return all;
+  });
 });
 
 final librariesProvider = FutureProvider.family<List<Library>, String>((ref, serverId) async {
@@ -90,4 +110,5 @@ final itemProvider = FutureProvider.family<MediaItem, ({String serverId, String 
 /// 当前能显示的条目：所在服务器可见（儿童模式隐藏 R18 服务器），分级在允许范围内（单集跟随剧集）
 bool itemVisible(AppConfig c, MediaItem it) =>
     c.server(it.serverId) != null &&
+    (!c.parental.enabled || !c.server(it.serverId)!.adult) &&
     (!c.parental.enabled || it.kind == MediaKind.episode || c.parental.allows(it.officialRating));

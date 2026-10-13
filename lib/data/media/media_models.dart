@@ -161,6 +161,7 @@ class MediaItem {
     'd': dateCreated?.millisecondsSinceEpoch,
     'la': lastMediaAdded?.millisecondsSinceEpoch,
     'ov': overview,
+    'or': officialRating,
   };
 
   static MediaItem fromIndexJson(String serverId, String id, Map<String, Object?> j) => MediaItem(
@@ -182,6 +183,7 @@ class MediaItem {
     dateCreated: j['d'] == null ? null : DateTime.fromMillisecondsSinceEpoch(j['d'] as int),
     lastMediaAdded: j['la'] == null ? null : DateTime.fromMillisecondsSinceEpoch(j['la'] as int),
     overview: j['ov'] as String?,
+    officialRating: j['or'] as String?,
   );
 
   /// 完整字段（页面快照用，见 SnapshotCache）
@@ -418,9 +420,12 @@ class MediaSourceInfo {
 }
 
 class PagedItems {
-  const PagedItems(this.items, this.total);
+  const PagedItems(this.items, this.total, {this.rawCount, this.totalKnown = true});
   final List<MediaItem> items;
   final int total;
+  final int? rawCount;
+  final bool totalKnown;
+  int get receivedCount => rawCount ?? items.length;
 }
 
 const ticksPerMicrosecond = 10;

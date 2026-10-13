@@ -103,9 +103,11 @@ class _TmdbDetailState extends ConsumerState<_TmdbDetail> {
     final key = searchKeyOf(t);
     // 进入详情页才到各服务器搜索资源；电影取每个副本的所有版本，剧集取选中那一集的所有版本
     final search = ref.watch(tmdbLibrarySearchProvider(key));
-    final copies = search.value ?? const <MediaItem>[];
+    final copies = search.isLoading ? const <MediaItem>[] : search.value ?? const <MediaItem>[];
     final libraryEpisodes = t.isTv ? ref.watch(tmdbSeriesEpisodesProvider(key)) : null;
-    final episodes = libraryEpisodes?.value ?? const <MediaItem>[];
+    final episodes = libraryEpisodes?.isLoading == true
+        ? const <MediaItem>[]
+        : libraryEpisodes?.value ?? const <MediaItem>[];
     final seasons = [...t.seasonList.where((x) => x.number > 0), ...t.seasonList.where((x) => x.number == 0)];
     final start = pickStartEpisode(episodes);
     final season = _season ?? start?.$1 ?? seasons.firstOrNull?.number ?? 1;
@@ -115,7 +117,7 @@ class _TmdbDetailState extends ConsumerState<_TmdbDetail> {
     final optionsAsync = t.isTv
         ? ref.watch(tmdbEpisodeSourcesProvider((title: key, season: season, episode: episode)))
         : ref.watch(tmdbSourceOptionsProvider(key));
-    final options = optionsAsync.value ?? const <SourceOption>[];
+    final options = visibleSourceOptions(ref.read(configProvider), optionsAsync.value ?? const <SourceOption>[]);
     final loading = search.isLoading || (libraryEpisodes?.isLoading ?? false) || optionsAsync.isLoading;
     final selected = options.where((o) => sourceKeyOf(o) == _sourceKey).firstOrNull ?? options.firstOrNull;
     final hasServers = ref.watch(configProvider.select((c) => c.servers.isNotEmpty));

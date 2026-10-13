@@ -7,6 +7,8 @@ import '../../ui/widgets/fill_grid.dart';
 
 import '../../app/platform_profile.dart';
 import '../../app/theme.dart';
+import '../../core/log/load_metrics.dart';
+import '../../data/cache/account_scope.dart';
 import '../../data/config/config_store.dart';
 import '../../data/index/index_sync.dart';
 import '../../data/index/media_index.dart';
@@ -73,6 +75,7 @@ class _SearchPageState extends ConsumerState<SearchPage> {
   }
 
   Future<void> _search() async {
+    final trace = LoadTrace('search');
     final q = _query.text.trim();
     final gen = ++_generation;
     _searched = q;
@@ -82,11 +85,14 @@ class _SearchPageState extends ConsumerState<SearchPage> {
     }
     // 1. 本地索引（一个字母能匹配上万条，只取前 100 条）
     final index = await ref.read(mediaIndexProvider.future);
+    if (gen != _generation || !mounted) return;
     final config = ref.read(configProvider);
+    final localTrace = LoadTrace('search_local');
     final local = [
       for (final it in index?.search(q, limit: 100) ?? const <MediaItem>[])
         if (itemVisible(config, it)) it,
     ];
+    localTrace.event('complete', count: local.length);
     if (gen != _generation || !mounted) return;
     final all = [...local];
     setState(() {
@@ -94,6 +100,7 @@ class _SearchPageState extends ConsumerState<SearchPage> {
       _searchingRemote = false;
       _pendingServers = 0;
     });
+    trace.event('local_ready', count: _results.length);
 
     // 2. 各服务器实时搜索：只有一个字母时不查（结果太多也没意义，16 台服务器一起查会把电视卡死）
     if (q.characters.length < 2) return;
@@ -104,6 +111,7 @@ class _SearchPageState extends ConsumerState<SearchPage> {
     });
     // 服务器陆续返回：合并后重新分组，最多每 300 毫秒刷新一次界面
     Timer? regroup;
+    var firstRemote = true;
     void scheduleRegroup() {
       regroup ??= Timer(const Duration(milliseconds: 300), () {
         regroup = null;
@@ -119,6 +127,10 @@ class _SearchPageState extends ConsumerState<SearchPage> {
           final page = await client!.items(searchTerm: q, limit: 20).timeout(const Duration(seconds: 5));
           if (gen != _generation || !mounted) return;
           all.addAll(page.items);
+          if (firstRemote) {
+            firstRemote = false;
+            trace.event('first_remote', count: page.items.length, sources: servers.length);
+          }
           scheduleRegroup();
         } catch (_) {
         } finally {
@@ -131,6 +143,7 @@ class _SearchPageState extends ConsumerState<SearchPage> {
       setState(() => _results = groupTitles(all).take(maxResults).toList());
     }
     if (gen == _generation && mounted) setState(() => _searchingRemote = false);
+    if (gen == _generation && mounted) trace.event('complete', count: _results.length, sources: servers.length);
   }
 
   void _type(String s) {
@@ -146,6 +159,15 @@ class _SearchPageState extends ConsumerState<SearchPage> {
 
   @override
   Widget build(BuildContext context) {
+    ref.listen(configProvider.select(mediaFeedScope), (_, _) {
+      _generation++;
+      setState(() {
+        _results = const [];
+        _searched = '';
+        _searchingRemote = false;
+        _pendingServers = 0;
+      });
+    });
     final typed = _query.text.trim();
     final hasQuery = _searched.isNotEmpty;
     final field = VTextField(

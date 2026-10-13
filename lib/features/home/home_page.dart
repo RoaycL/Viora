@@ -294,6 +294,7 @@ class _HomeBodyState extends ConsumerState<_HomeBody> {
     final serverNames = {for (final s in servers) s.id: s.displayName};
     final resumeAsync = ref.watch(resumeProvider);
     final resume = servers.isEmpty ? const <MediaItem>[] : dedupeWatched(resumeAsync.value ?? const <MediaItem>[]);
+    final resumeState = ref.watch(mediaFeedStateProvider(MediaFeedKind.resume)).value;
     final resumeLoading = servers.isNotEmpty && resumeAsync.isLoading && resume.isEmpty;
     final recent = ref.watch(recentlyAddedProvider);
     List<TmdbTitle> row(TmdbRow r) => ref.watch(tmdbRowProvider(r)).value ?? const [];
@@ -389,10 +390,12 @@ class _HomeBodyState extends ConsumerState<_HomeBody> {
                     _Welcome(hasServers: servers.isNotEmpty, tmdbOn: tmdbOn),
                   if (resumeLoading)
                     const _SkeletonRow(title: '继续观看', landscape: true)
+                  else if (resume.isEmpty && (resumeState?.failures ?? 0) > 0)
+                    const _SkeletonRow(title: '继续观看', landscape: true, note: '暂时无法刷新，稍后重试', animate: false)
                   else if (resume.isNotEmpty)
                     FocusRow(
                       rowIndex: 1,
-                      title: '继续观看',
+                      title: resumeState?.failures == 0 || resumeState == null ? '继续观看' : '继续观看 · 部分记录暂未刷新',
                       itemCount: resume.length,
                       itemExtent: LandscapeCard.width,
                       height: LandscapeCard.height,

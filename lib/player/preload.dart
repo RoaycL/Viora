@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:dio/dio.dart';
 import 'package:flutter/foundation.dart';
 
+import '../data/cache/account_scope.dart';
 import '../data/emby/emby_client.dart';
 import '../data/media/media_models.dart';
 
@@ -32,39 +33,54 @@ class PlaybackPreloader {
   static final _pending = <String, Future<PlaybackInfoResult>>{};
   static final _warmed = <String, DateTime>{};
 
-  static String _key(String serverId, String itemId) => '$serverId/$itemId';
+  static final _accounts = <String, String>{};
+  static int _epoch = 0;
 
-  /// 记下（别处已经请求到的）播放信息
-  static void put(String serverId, String itemId, PlaybackInfoResult info) =>
-      _info[_key(serverId, itemId)] = (DateTime.now(), info);
+  static void bindAccount(String serverId, String scope) => _accounts[serverId] = scope;
+  static void unbindAccount(String serverId) => _accounts.remove(serverId);
 
-  /// 取预加载好的播放信息（过期返回 null）
-  static PlaybackInfoResult? cached(String serverId, String itemId) {
-    final hit = _info[_key(serverId, itemId)];
+  static String? _key(String serverId, String itemId, {String? scope}) {
+    final account = scope ?? _accounts[serverId];
+    return account == null ? null : '$account/$itemId';
+  }
+
+  /// 播放会话按账号隔离，未绑定账号时不复用。
+  static void put(String serverId, String itemId, PlaybackInfoResult info, {String? scope}) {
+    final key = _key(serverId, itemId, scope: scope);
+    if (key != null) _info[key] = (DateTime.now(), info);
+  }
+
+  static PlaybackInfoResult? cached(String serverId, String itemId, {String? scope}) {
+    final key = _key(serverId, itemId, scope: scope);
+    final hit = _info[key];
     if (hit == null) return null;
     if (DateTime.now().difference(hit.$1) > infoTtl) {
-      _info.remove(_key(serverId, itemId));
+      _info.remove(key);
       return null;
     }
     return hit.$2;
   }
 
-  /// 获取播放信息：有缓存用缓存，正在预加载就等它，否则现请求
   static Future<PlaybackInfoResult> info(EmbyClient client, String serverId, String itemId) {
-    final hit = cached(serverId, itemId);
+    final scope = accountScope(client.server);
+    final hit = cached(serverId, itemId, scope: scope);
     if (hit != null) return Future.value(hit);
-    final key = _key(serverId, itemId);
-    // 预加载 / 列资源只查询，不让服务器准备播放会话
-    return _pending[key] ??= client
+    final key = _key(serverId, itemId, scope: scope)!;
+    final existing = _pending[key];
+    if (existing != null) return existing;
+    final epoch = _epoch;
+    late final Future<PlaybackInfoResult> pending;
+    pending = client
         .playbackInfo(itemId, isPlayback: false)
         .then((r) {
-          put(serverId, itemId, r);
+          if (epoch == _epoch) put(serverId, itemId, r, scope: scope);
           return r;
         })
-        // 注意不能写成 `=> _pending.remove(key)`：remove 返回的正是这个 Future，whenComplete 会等它自己而死锁
         .whenComplete(() {
-          _pending.remove(key);
+          if (identical(_pending[key], pending)) _pending.remove(key);
         });
+    _pending[key] = pending;
+    return pending;
   }
 
   /// 预加载一个条目：取播放信息并预热默认版本（或 [sourceId] 指定的版本）
@@ -88,7 +104,7 @@ class PlaybackPreloader {
     Duration position = Duration.zero,
   }) async {
     if (!enabled) return;
-    final key = '${source.serverId}/${source.itemId}/${source.id}';
+    final key = '${accountScope(client.server)}/${source.itemId}/${source.id}';
     final last = _warmed[key];
     if (last != null && DateTime.now().difference(last) < warmTtl) return;
     _warmed[key] = DateTime.now();
@@ -150,6 +166,8 @@ class PlaybackPreloader {
 
   /// 清除预加载的播放信息与预热记录
   static void reset() {
+    _epoch++;
+    _accounts.clear();
     _info.clear();
     _pending.clear();
     _warmed.clear();

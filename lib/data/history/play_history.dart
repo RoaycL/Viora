@@ -11,8 +11,15 @@ abstract final class PlayHistory {
   static const _key = 'viora.playHistory.v1';
   static const _max = 500;
   static Map<String, int> _times = {};
+  static final _accounts = <String, String>{};
 
-  static String _id(String serverId, String itemId) => '$serverId/$itemId';
+  static void bindAccount(String serverId, String scope) => _accounts[serverId] = scope;
+  static void unbindAccount(String serverId) => _accounts.remove(serverId);
+
+  static String? _id(String serverId, String itemId, {String? scope}) {
+    final account = scope ?? _accounts[serverId];
+    return account == null ? null : 'v2/$account/$itemId';
+  }
 
   static Future<void> load() async {
     try {
@@ -30,8 +37,9 @@ abstract final class PlayHistory {
     return ms == null ? null : DateTime.fromMillisecondsSinceEpoch(ms);
   }
 
-  static Future<void> record(String serverId, String itemId) async {
-    final id = _id(serverId, itemId);
+  static Future<void> record(String serverId, String itemId, {String? scope}) async {
+    final id = _id(serverId, itemId, scope: scope);
+    if (id == null) return;
     _times.remove(id);
     _times[id] = DateTime.now().millisecondsSinceEpoch;
     while (_times.length > _max) {

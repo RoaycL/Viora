@@ -65,6 +65,10 @@ class MediaIndex {
         incr_at INTEGER,
         gen INTEGER NOT NULL DEFAULT 0
       );
+      CREATE TABLE IF NOT EXISTS index_accounts(
+        server_id TEXT PRIMARY KEY,
+        scope TEXT NOT NULL
+      );
     ''');
     // v2：索引多了剧集的 DateLastMediaAdded（最近入库按新集排序）→ 下次同步时每台服务器全量重建一次
     final version = _db.select('PRAGMA user_version').first['user_version'] as int;
@@ -75,6 +79,8 @@ class MediaIndex {
   }
 
   final Database _db;
+  bool _closed = false;
+  bool get isClosed => _closed;
 
   /// 打开（或创建）索引数据库；[path] 为空时放在应用数据目录。测试可传 ':memory:'。
   static Future<MediaIndex?> open({String? path}) async {
@@ -91,7 +97,42 @@ class MediaIndex {
     }
   }
 
-  void close() => _db.close();
+  void close() {
+    if (_closed) return;
+    _closed = true;
+    _db.close();
+  }
+
+  /// 旧索引没有账号信息：首次绑定时清理该来源，再全量重建；换账号 / 后端同样处理。
+  void bindAccounts(Map<String, String> accounts) {
+    final previous = {
+      for (final row in _db.select('SELECT server_id, scope FROM index_accounts'))
+        row['server_id'] as String: row['scope'] as String,
+    };
+    _db.execute('BEGIN');
+    try {
+      final known = {
+        ...previous.keys,
+        ...accounts.keys,
+        for (final r in _db.select('SELECT DISTINCT server_id FROM items')) r['server_id'] as String,
+        for (final r in _db.select('SELECT server_id FROM sync_state')) r['server_id'] as String,
+      };
+      for (final id in known) {
+        if (accounts[id] != previous[id] || !accounts.containsKey(id)) removeServer(id);
+      }
+      for (final entry in accounts.entries) {
+        _db.execute('INSERT OR REPLACE INTO index_accounts(server_id, scope) VALUES (?, ?)', [entry.key, entry.value]);
+      }
+      _db.execute('COMMIT');
+    } catch (_) {
+      _db.execute('ROLLBACK');
+      rethrow;
+    }
+  }
+
+  bool hasAccount(String serverId, String scope) =>
+      !_closed &&
+      _db.select('SELECT scope FROM index_accounts WHERE server_id = ?', [serverId]).firstOrNull?['scope'] == scope;
 
   // ───────────────────────── 写入 ─────────────────────────
 
@@ -153,6 +194,7 @@ class MediaIndex {
   void removeServer(String serverId) {
     _db.execute('DELETE FROM items WHERE server_id = ?', [serverId]);
     _db.execute('DELETE FROM sync_state WHERE server_id = ?', [serverId]);
+    _db.execute('DELETE FROM index_accounts WHERE server_id = ?', [serverId]);
   }
 
   /// 只保留这些服务器的数据（删除已移除服务器的残留）
