@@ -5,6 +5,8 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../config/config_store.dart';
+import '../config/app_config.dart';
+import '../cache/account_scope.dart';
 import '../index/index_sync.dart';
 import '../index/media_index.dart';
 import '../media/media_models.dart';
@@ -15,12 +17,21 @@ import '../../player/preload.dart';
 /// 一个可播放的版本：哪台服务器、哪个条目（电影 / 单集）、哪个 MediaSource（docs/04-aggregation.md §5）
 @immutable
 class SourceOption {
-  const SourceOption({required this.item, required this.source, required this.serverName, this.latencyMs});
+  const SourceOption({
+    required this.item,
+    required this.source,
+    required this.serverName,
+    this.latencyMs,
+    this.account,
+    this.view,
+  });
 
   final MediaItem item;
   final MediaSourceInfo source;
   final String serverName;
   final int? latencyMs;
+  final String? account;
+  final String? view;
 
   String get serverId => item.serverId;
 
@@ -41,6 +52,17 @@ class SourceOption {
   String playRoute({Duration position = Duration.zero}) =>
       '/play/${item.serverId}/${item.id}?pos=${position.inMilliseconds}&source=${source.id}';
 }
+
+/// 同一账号刷新时保留可用资源；账号 / 家长限制变化时不能复用旧 AsyncValue 中的资源。
+List<SourceOption> visibleSourceOptions(AppConfig config, Iterable<SourceOption> options) => [
+  for (final option in options)
+    if (config.server(option.serverId) case final server?
+        when server.loggedIn &&
+            option.account == accountScope(server) &&
+            option.view == mediaViewScope(config) &&
+            itemVisible(config, option.item))
+      option,
+];
 
 /// 排序（默认选中第一个）：本剧上次用的服务器 → 分辨率 → 线路延迟 → 码率
 List<SourceOption> rankSources(List<SourceOption> options, {String? preferredServerId}) {
@@ -79,8 +101,9 @@ typedef SourcesKey = ({String serverId, String itemId});
 
 /// 某个电影 / 单集在所有服务器上的可播放版本（已排序）。
 final sourceOptionsProvider = FutureProvider.family<List<SourceOption>, SourcesKey>((ref, key) async {
+  ref.watch(mediaFeedScopeProvider);
   ref.watch(indexRevisionProvider);
-  final home = ref.read(serverClientProvider(key.serverId));
+  final home = ref.watch(serverClientProvider(key.serverId));
   if (home == null) return const [];
   final target = await home.item(key.itemId);
   final index = await ref.read(mediaIndexProvider.future);
@@ -154,7 +177,14 @@ Future<List<SourceOption>> _optionsOf(Ref ref, List<MediaItem> targets) async {
         final latency = client.line.latencyMs;
         return [
           for (final s in info.sources)
-            SourceOption(item: it, source: s, serverName: server.displayName, latencyMs: latency),
+            SourceOption(
+              item: it,
+              source: s,
+              serverName: server.displayName,
+              latencyMs: latency,
+              account: accountScope(client.server),
+              view: mediaViewScope(config),
+            ),
         ];
       } catch (e) {
         debugPrint('playbackInfo ${server.name} failed: $e');
@@ -170,6 +200,7 @@ final tmdbSourceOptionsProvider = FutureProvider.autoDispose.family<List<SourceO
   ref,
   key,
 ) async {
+  ref.watch(mediaFeedScopeProvider);
   final copies = await ref.watch(tmdbLibrarySearchProvider(key).future);
   if (key.isTv || copies.isEmpty) return const [];
   final options = await _optionsOf(ref, copies);
@@ -184,6 +215,7 @@ Future<void> rememberSource(MediaItem titleItem, String serverId) =>
 /// TMDB 详情页（剧集）：聚合搜索找到的每个副本（各服务器上的这部剧）的全部单集。
 /// 选中某一季某一集时，在这里按季号 + 集号对上各服务器的单集
 final tmdbSeriesEpisodesProvider = FutureProvider.autoDispose.family<List<MediaItem>, TmdbSearchKey>((ref, key) async {
+  ref.watch(mediaFeedScopeProvider);
   final copies = await ref.watch(tmdbLibrarySearchProvider(key).future);
   if (!key.isTv || copies.isEmpty) return const [];
   final lists = await Future.wait([
@@ -199,6 +231,7 @@ final tmdbEpisodeSourcesProvider = FutureProvider.autoDispose.family<List<Source
   ref,
   key,
 ) async {
+  ref.watch(mediaFeedScopeProvider);
   final all = await ref.watch(tmdbSeriesEpisodesProvider(key.title).future);
   final matches = all.where((e) => e.seasonNumber == key.season && e.episodeNumber == key.episode).toList();
   if (matches.isEmpty) return const [];

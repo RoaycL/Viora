@@ -1,7 +1,5 @@
 import 'package:flutter/material.dart';
 
-import '../../data/cache/snapshot_cache.dart';
-
 import 'package:flutter/rendering.dart' show ScrollCacheExtent;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -19,76 +17,19 @@ import '../../ui/rows/cards.dart';
 import '../browse/media_cards.dart';
 
 /// 所有已登录服务器上收藏的电影 / 剧集，同一部作品合并
-final favoritesProvider = FutureProvider<List<AggregatedTitle>>((ref) async {
-  ref.watch(configProvider.select((c) => c.serversKey));
+final favoritesProvider = Provider<AsyncValue<List<AggregatedTitle>>>((ref) {
   final config = ref.read(configProvider);
-  final servers = config.servers.where((s) => s.loggedIn);
-  // 启动时先显示上次的收藏，后台再拉最新
-  final items = await snapshotFirst(
-    ref,
-    'favorites',
-    encode: MediaItem.encodeList,
-    decode: (j) => [
-      for (final it in MediaItem.decodeList(j))
-        if (itemVisible(config, it)) it,
-    ],
-    fetch: () async {
-      final lists = await Future.wait(
-        servers.map((s) async {
-          try {
-            final page = await ref
-                .read(serverClientProvider(s.id))!
-                .items(filters: 'IsFavorite', limit: 200, sortBy: 'SortName', sortOrder: 'Ascending')
-                .timeout(const Duration(seconds: 10));
-            return page.items;
-          } catch (_) {
-            return const <MediaItem>[];
-          }
-        }),
-      );
-      return [for (final l in lists) ...l];
-    },
-  );
-  return groupTitles(items);
+  return ref
+      .watch(mediaFeedStateProvider(MediaFeedKind.favorites))
+      .whenData((snapshot) => groupTitles(snapshot.items.where((it) => itemVisible(config, it)).toList()));
 });
 
 /// 最近看过：已看完的电影 / 单集按观看时间倒序，同一部剧只保留最近的一集
-final recentlyPlayedProvider = FutureProvider<List<MediaItem>>((ref) async {
-  ref.watch(configProvider.select((c) => c.serversKey));
+final recentlyPlayedProvider = Provider<AsyncValue<List<MediaItem>>>((ref) {
   final config = ref.read(configProvider);
-  final servers = config.servers.where((s) => s.loggedIn);
-  // 启动时先显示上次的记录，后台再拉最新
-  return snapshotFirst(
-    ref,
-    'recently-played',
-    encode: MediaItem.encodeList,
-    decode: (j) => [
-      for (final it in MediaItem.decodeList(j))
-        if (itemVisible(config, it)) it,
-    ],
-    fetch: () async {
-      final lists = await Future.wait(
-        servers.map((s) async {
-          try {
-            final page = await ref
-                .read(serverClientProvider(s.id))!
-                .items(
-                  types: 'Movie,Episode',
-                  filters: 'IsPlayed',
-                  limit: 60,
-                  sortBy: 'DatePlayed',
-                  sortOrder: 'Descending',
-                )
-                .timeout(const Duration(seconds: 10));
-            return page.items;
-          } catch (_) {
-            return const <MediaItem>[];
-          }
-        }),
-      );
-      return dedupeWatched([for (final l in lists) ...l]);
-    },
-  );
+  return ref
+      .watch(mediaFeedStateProvider(MediaFeedKind.recentlyPlayed))
+      .whenData((snapshot) => dedupeWatched(snapshot.items.where((it) => itemVisible(config, it))));
 });
 
 /// 继续观看 / 观看记录去重：单集按"剧名 + 季 + 集"，电影按作品键；保留先出现的（更近的）
@@ -108,11 +49,15 @@ class FavoritesPage extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final async = ref.watch(favoritesProvider);
+    final feed = ref.watch(mediaFeedStateProvider(MediaFeedKind.favorites)).value;
+    final note = feed?.note ?? '';
     return _CollectionScaffold(
       title: '收藏',
       itemWidth: PosterCard.width,
-      subtitle: async.value == null ? '加载中…' : '${async.value!.length} 部作品',
-      empty: async.hasValue && async.value!.isEmpty ? '还没有收藏：在详情页按 ♡ 收藏' : null,
+      subtitle: async.value == null ? '加载中…' : '${async.value!.length} 部作品${note.isEmpty ? '' : ' · $note'}',
+      empty: async.hasValue && async.value!.isEmpty
+          ? ((feed?.failures ?? 0) > 0 ? '暂时无法获取完整收藏，请稍后刷新' : '还没有收藏：在详情页按 ♡ 收藏')
+          : null,
       itemCount: async.value?.length ?? 0,
       itemBuilder: (context, i) {
         final g = async.value![i];
@@ -129,13 +74,23 @@ class HistoryPage extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final resume = dedupeWatched(ref.watch(resumeProvider).value ?? const []);
     final played = ref.watch(recentlyPlayedProvider).value ?? const <MediaItem>[];
+    final resumeState = ref.watch(mediaFeedStateProvider(MediaFeedKind.resume));
+    final playedState = ref.watch(mediaFeedStateProvider(MediaFeedKind.recentlyPlayed));
+    final failures = (resumeState.value?.failures ?? 0) + (playedState.value?.failures ?? 0);
+    final loading = resumeState.isLoading || playedState.isLoading;
     final names = {for (final s in ref.watch(configProvider).servers) s.id: s.displayName};
     final all = [...resume, ...played];
     return _CollectionScaffold(
       title: '观看记录',
       itemWidth: LandscapeCard.width,
-      subtitle: '继续观看 ${resume.length} · 最近看过 ${played.length}',
-      empty: resume.isEmpty && played.isEmpty ? '还没有观看记录' : null,
+      subtitle: '继续观看 ${resume.length} · 最近看过 ${played.length}${failures > 0 ? ' · 部分记录暂未刷新' : ''}',
+      empty: all.isEmpty
+          ? (loading
+                ? '正在加载观看记录…'
+                : failures > 0
+                ? '暂时无法获取完整记录，请稍后刷新'
+                : '还没有观看记录')
+          : null,
       itemCount: all.length,
       itemBuilder: (context, i) {
         final it = all[i];

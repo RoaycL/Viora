@@ -125,6 +125,7 @@ class _Client extends EmbyClient {
 void main() {
   setUp(() {
     SharedPreferences.setMockInitialValues({});
+    ConfigStore.vault = MemoryVault();
     PlaybackPreloader.reset();
     PlaybackPreloader.enabled = false;
   });
@@ -257,11 +258,13 @@ void main() {
     bool tmdb = true,
     bool seasonFails = false,
     bool tmdbEntry = false,
+    bool withSecondSeason = false,
   }) async {
     tester.view.physicalSize = const Size(1920, 1600);
     tester.view.devicePixelRatio = 1;
     addTearDown(tester.view.reset);
-    final a = _Client(home, [episode('home-first')]);
+    final a = _Client(home, [episode('home-first'), if (withSecondSeason) episode('old-season2', season: 2)]);
+    final bob = _Client(home.copyWith(username: 'bob', userId: 'bob'), [episode('bob-first')]);
     final b = _Client(other, [episode('advance', server: 'other', number: 2)]);
     final router = GoRouter(
       initialLocation: '/item',
@@ -280,7 +283,9 @@ void main() {
       ProviderScope(
         overrides: [
           configProvider.overrideWith(_Config.new),
-          serverClientProvider.overrideWith((ref, id) => id == 'home' ? a : b),
+          serverClientProvider.overrideWith(
+            (ref, id) => id == 'home' ? (ref.watch(configProvider).server(id)?.userId == 'bob' ? bob : a) : b,
+          ),
           tmdbTitleProvider.overrideWith((ref, key) async => tmdb ? title : null),
           tmdbSeasonProvider.overrideWith((ref, key) async {
             if (seasonFails) throw StateError('offline');
@@ -349,6 +354,28 @@ void main() {
     await tester.tap(card);
     await tester.pumpAndSettle();
     expect(find.text('playing advance'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('switching accounts resets the selected season and rejects old resources', (tester) async {
+    await pumpDetail(tester, withSecondSeason: true);
+    final season = find.text('第 2 季');
+    await tester.ensureVisible(season);
+    await tester.pumpAndSettle();
+    await tester.tap(season);
+    await tester.pumpAndSettle();
+    expect(find.text('播放 S2E1'), findsOneWidget);
+    final context = tester.element(find.byType(ItemDetailPage));
+    final container = ProviderScope.containerOf(context);
+    await container
+        .read(configProvider.notifier)
+        .updateServer('home', (server) => server.copyWith(username: 'bob', userId: 'bob'));
+    await tester.pumpAndSettle();
+    expect(find.text('播放 S1E1'), findsOneWidget);
+    expect(find.text('播放 S2E1'), findsNothing);
+    final row = tester.widget<EpisodeCatalogRow>(find.byType(EpisodeCatalogRow));
+    expect(row.season, 1);
+    expect(row.library.where((episode) => episode.serverId == 'home').single.id, 'bob-first');
     expect(tester.takeException(), isNull);
   });
 
