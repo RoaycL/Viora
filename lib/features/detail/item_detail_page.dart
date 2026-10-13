@@ -6,6 +6,7 @@ import 'package:go_router/go_router.dart';
 
 import '../../app/theme.dart';
 import '../../data/aggregate/sources.dart';
+import '../../data/aggregate/tmdb_link.dart';
 import '../../data/media/media_models.dart';
 import '../../data/media/server_registry.dart';
 import '../../data/tmdb/tmdb_client.dart';
@@ -21,6 +22,7 @@ import '../browse/media_cards.dart';
 import '../metadata/external_ratings.dart';
 import '../tmdb/tmdb_detail_page.dart';
 import 'detail_layout.dart';
+import 'episode_catalog.dart';
 import 'source_widgets.dart';
 
 typedef _Key = ({String serverId, String itemId});
@@ -55,11 +57,27 @@ class ItemDetailPage extends ConsumerStatefulWidget {
 
 class _ItemDetailPageState extends ConsumerState<ItemDetailPage> {
   String? _seasonId;
+  int? _catalogSeason;
+  int? _catalogEpisode;
 
   /// 选中的版本（[sourceKeyOf]）；没选时用排在第一的
   String? _sourceKey;
   bool? _favorite;
   bool? _played;
+
+  @override
+  void didUpdateWidget(ItemDetailPage oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.serverId != widget.serverId || oldWidget.itemId != widget.itemId) {
+      _seasonId = null;
+      _catalogSeason = null;
+      _catalogEpisode = null;
+      _sourceKey = null;
+      _warmedKey = null;
+      _favorite = null;
+      _played = null;
+    }
+  }
 
   /// 已预热的默认版本（同一版本只预热一次）
   String? _warmedKey;
@@ -114,18 +132,32 @@ class _ItemDetailPageState extends ConsumerState<ItemDetailPage> {
     final isSeries = item.kind == MediaKind.series;
     final seasons = isSeries ? ref.watch(_seasonsProvider(_key)).value ?? const <MediaItem>[] : const <MediaItem>[];
     final seasonId = _seasonId ?? seasons.firstOrNull?.id;
-    final episodes = isSeries && seasonId != null
-        ? ref.watch(_episodesProvider((serverId: widget.serverId, seriesId: item.id, seasonId: seasonId))).value ??
-              const <MediaItem>[]
-        : const <MediaItem>[];
     final nextUp = isSeries ? ref.watch(_nextUpProvider(_key)).value : null;
-
     final zh = localizedMeta(ref, item);
-    // TMDB 补全：演职员与相似推荐
     final tmdbId = int.tryParse(item.tmdbId ?? '');
     final tmdb = tmdbId != null && (isSeries || item.kind == MediaKind.movie)
         ? ref.watch(tmdbTitleProvider((isTv: isSeries, id: tmdbId))).value
         : null;
+    final useCatalog = isSeries && tmdb != null && tmdb.seasonList.isNotEmpty;
+    final catalogSeasons = useCatalog ? mergeSeasonCatalog(tmdb.seasonList, seasons) : const <TmdbSeason>[];
+    final libraryKey = useCatalog ? (home: _key, title: searchKeyOf(tmdb)) : null;
+    final libraryAsync = libraryKey == null ? null : ref.watch(librarySeriesEpisodesProvider(libraryKey));
+    final library = libraryAsync?.isLoading == true ? const <MediaItem>[] : libraryAsync?.value ?? const <MediaItem>[];
+    final start = nextUp?.seasonNumber != null && nextUp?.episodeNumber != null
+        ? (nextUp!.seasonNumber!, nextUp.episodeNumber!)
+        : pickStartEpisode(library);
+    final desiredSeason = _catalogSeason ?? start?.$1 ?? catalogSeasons.firstOrNull?.number ?? 1;
+    final catalogSeason = catalogSeasons.any((s) => s.number == desiredSeason)
+        ? desiredSeason
+        : catalogSeasons.firstOrNull?.number ?? 1;
+    final catalogAsync = useCatalog ? ref.watch(tmdbSeasonProvider((tvId: tmdb.id, season: catalogSeason))) : null;
+    final catalog = mergeEpisodeCatalog(catalogAsync?.value ?? const <TmdbEpisode>[], library, catalogSeason);
+    final catalogEpisode =
+        _catalogEpisode ?? (start?.$1 == catalogSeason ? start?.$2 : null) ?? catalog.firstOrNull?.number ?? 1;
+    final episodes = isSeries && !useCatalog && seasonId != null
+        ? ref.watch(_episodesProvider((serverId: widget.serverId, seriesId: item.id, seasonId: seasonId))).value ??
+              const <MediaItem>[]
+        : const <MediaItem>[];
     final parent = item.kind == MediaKind.episode && item.seriesId != null
         ? ref.watch(itemProvider((serverId: item.serverId, itemId: item.seriesId!))).value
         : null;
@@ -147,14 +179,18 @@ class _ItemDetailPageState extends ConsumerState<ItemDetailPage> {
     };
     final favorite = _favorite ?? item.favorite;
     final played = _played ?? item.played;
-    final playTarget = isSeries ? (nextUp ?? episodes.firstOrNull) : item;
-    final resumeAt = playTarget?.position ?? Duration.zero;
-    // 所有服务器上的可播放版本（已按偏好服务器 / 分辨率 / 延迟 / 码率排序）
-    final optionsAsync = playTarget == null
+    final serverTarget = isSeries ? (nextUp ?? episodes.firstOrNull) : item;
+    final optionsAsync = libraryKey != null
+        ? ref.watch(libraryEpisodeSourcesProvider((series: libraryKey, season: catalogSeason, episode: catalogEpisode)))
+        : serverTarget == null
         ? null
-        : ref.watch(sourceOptionsProvider((serverId: playTarget.serverId, itemId: playTarget.id)));
-    final options = optionsAsync?.value ?? const <SourceOption>[];
+        : ref.watch(sourceOptionsProvider((serverId: serverTarget.serverId, itemId: serverTarget.id)));
+    final options = optionsAsync?.isLoading == true
+        ? const <SourceOption>[]
+        : optionsAsync?.value ?? const <SourceOption>[];
     final selected = options.where((o) => sourceKeyOf(o) == _sourceKey).firstOrNull ?? options.firstOrNull;
+    final playTarget = useCatalog ? selected?.item : serverTarget;
+    final resumeAt = playTarget?.position ?? Duration.zero;
     if (selected != null) _warmDefault(selected);
     void play(SourceOption? o, {bool fromStart = false}) {
       final target = playTarget;
@@ -168,7 +204,12 @@ class _ItemDetailPageState extends ConsumerState<ItemDetailPage> {
     }
 
     final playLabel = switch (playTarget) {
-      null => '暂无可播放内容',
+      null =>
+        useCatalog
+            ? (optionsAsync?.isLoading == true
+                  ? '正在查找 S${catalogSeason}E$catalogEpisode'
+                  : '暂无 S${catalogSeason}E$catalogEpisode 资源')
+            : '暂无可播放内容',
       final t when resumeAt > Duration.zero =>
         '继续${t.episodeLabel == null ? '' : ' ${t.episodeLabel}'} · ${formatClock(resumeAt)}',
       final t when t.kind == MediaKind.episode => '播放 ${t.episodeLabel ?? t.name}',
@@ -179,7 +220,8 @@ class _ItemDetailPageState extends ConsumerState<ItemDetailPage> {
       if (item.year != null) '${item.year}',
       if (zh.genres.isNotEmpty) zh.genres.take(3).join(' / '),
       if (item.runtime != null && !isSeries) formatDuration(item.runtime!),
-      if (isSeries && seasons.isNotEmpty) '${seasons.length} 季',
+      if (isSeries && (useCatalog ? catalogSeasons : seasons).isNotEmpty)
+        '${useCatalog ? catalogSeasons.length : seasons.length} 季',
       ?item.officialRating,
     ].join('  •  ');
 
@@ -263,7 +305,61 @@ class _ItemDetailPageState extends ConsumerState<ItemDetailPage> {
       ),
       below: [
         const SizedBox(height: 48),
-        if (isSeries && seasons.length > 1)
+        if (useCatalog) ...[
+          if (catalogSeasons.length > 1)
+            Padding(
+              padding: const EdgeInsets.only(left: VSpace.safeH),
+              child: FocusButtonRow(
+                rowIndex: 1,
+                spacing: 12,
+                children: [
+                  for (final season in catalogSeasons)
+                    (node) => SelectChip(
+                      node: node,
+                      label: season.name,
+                      selected: season.number == catalogSeason,
+                      onTap: () => setState(() {
+                        _catalogSeason = season.number;
+                        _catalogEpisode = null;
+                        _sourceKey = null;
+                        _warmedKey = null;
+                      }),
+                    ),
+                ],
+              ),
+            ),
+          if (catalog.isNotEmpty)
+            EpisodeCatalogRow(
+              tvId: tmdb.id,
+              season: catalogSeason,
+              episodes: catalog,
+              selected: catalogEpisode,
+              library: library,
+              libraryLoaded: libraryAsync?.hasValue == true && !libraryAsync!.isLoading,
+              seasonLabel: catalogSeasons.length == 1 ? catalogSeasons.first.name : null,
+              onSelect: (number) {
+                if (number == catalogEpisode && selected != null) {
+                  play(selected);
+                  return;
+                }
+                setState(() {
+                  _catalogSeason = catalogSeason;
+                  _catalogEpisode = number;
+                  _sourceKey = null;
+                  _warmedKey = null;
+                });
+              },
+            )
+          else
+            Padding(
+              padding: const EdgeInsets.only(left: VSpace.safeH, top: 12),
+              child: Text(
+                catalogAsync?.isLoading == true || libraryAsync?.isLoading == true ? '正在加载剧集…' : '没有找到这一季的剧集信息',
+                style: VText.label,
+              ),
+            ),
+        ],
+        if (isSeries && !useCatalog && seasons.length > 1)
           Padding(
             padding: const EdgeInsets.only(left: VSpace.safeH),
             child: FocusButtonRow(
@@ -280,7 +376,7 @@ class _ItemDetailPageState extends ConsumerState<ItemDetailPage> {
               ],
             ),
           ),
-        if (episodes.isNotEmpty)
+        if (!useCatalog && episodes.isNotEmpty)
           FocusRow(
             rowIndex: 2,
             leading: VSpace.safeH,
@@ -300,7 +396,8 @@ class _ItemDetailPageState extends ConsumerState<ItemDetailPage> {
             onSelect: (o) => setState(() => _sourceKey = sourceKeyOf(o)),
             onPlay: play,
             firstRow: 3,
-            caption: playTarget?.episodeLabel,
+            caption: useCatalog ? 'S${catalogSeason}E$catalogEpisode' : playTarget?.episodeLabel,
+            emptyText: useCatalog ? '暂未找到第 $catalogSeason 季第 $catalogEpisode 集的播放资源' : null,
           ),
         ],
         if (tmdb != null) ...[const SizedBox(height: 24), ...tmdbExtraRows(tmdb, firstRow: 3 + SourcesSection.rows)],
