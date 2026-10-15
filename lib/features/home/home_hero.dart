@@ -1,12 +1,11 @@
 import 'dart:async';
+import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
+import 'package:flutter/foundation.dart' show ValueListenable;
 
-import '../../app/input/intents.dart';
 import '../../app/platform_profile.dart';
 import '../../app/theme.dart';
-import '../../ui/focus/input_mode.dart';
 import '../../ui/focus/row_focus.dart';
 import '../../ui/widgets/buttons.dart';
 import '../../ui/widgets/status_bar.dart';
@@ -54,7 +53,7 @@ class HeroEntry {
 
 /// 首页 Hero（效果图：首页 · 焦点在 Hero 播放按钮）。
 ///
-/// 焦点在 Hero 按钮上且 8 秒无操作时自动轮播到下一部；按钮行作为第 0 行参与行导航。
+/// 操作区持有焦点或鼠标停留时保持当前作品；离开后重新计时。
 class HomeHero extends StatefulWidget {
   const HomeHero({
     super.key,
@@ -63,7 +62,11 @@ class HomeHero extends StatefulWidget {
     required this.index,
     required this.onIndexChanged,
     required this.onFocused,
-    this.showDots = true,
+    required this.rotationPaused,
+    required this.onToggleRotation,
+    this.pendingIndex,
+    this.height,
+    this.showCarousel = true,
     this.autoRotate = true,
     this.isReady,
     this.autofocus = true,
@@ -72,21 +75,29 @@ class HomeHero extends StatefulWidget {
   /// 第 i 部是否已经准备好（图片已下载解码）；没准备好时轮播先等着，不切过去
   final bool Function(int index)? isReady;
   final bool autofocus;
+  final bool rotationPaused;
+  final VoidCallback onToggleRotation;
+  final int? pendingIndex;
+  final double? height;
 
-  /// 显示轮播指示点（显示推荐行焦点的预览时隐藏）
-  final bool showDots;
+  /// 显示轮播控件（显示推荐行焦点的预览时隐藏）
+  final bool showCarousel;
 
   /// 是否自动轮播（正在预览推荐行作品、Hero 已滚出视野时为 false）
   final bool autoRotate;
 
-  /// 无操作多久后自动切到下一部：Windows 3 秒；电视 8 秒（电视远看、性能弱，切太快显得卡）
-  static Duration get rotateEvery => PlatformProfile.isTv ? const Duration(seconds: 8) : const Duration(seconds: 3);
+  static const rotateEvery = Duration(seconds: 8);
 
-  /// Hero 高度：占屏幕约 72%（封面背景更大，下面的行往下移）
-  static double heightOf(BuildContext context) => (MediaQuery.sizeOf(context).height * 0.72).clamp(660.0, 1200.0);
+  /// 有续播时为整行留空间；大字/较矮窗口优先保证 Hero 可读，允许内容继续向下滚动。
+  static double heightOf(BuildContext context, {double reserveBelow = 0}) {
+    final viewport = MediaQuery.sizeOf(context).height;
+    final minimum = 600.0 + MediaQuery.textScalerOf(context).scale(280) - 280;
+    final preferred = (viewport * 0.68).clamp(minimum, math.max(minimum, 1100.0)).toDouble();
+    return reserveBelow > 0 ? math.min(preferred, math.max(minimum, viewport - reserveBelow)) : preferred;
+  }
 
   /// 按钮行距 Hero 底部的距离（按钮位置固定，不随标题、简介长短上下移动）
-  static const buttonsBottom = 96.0;
+  static const buttonsBottom = 56.0;
 
   final int rowIndex;
   final List<HeroEntry> items;
@@ -98,8 +109,8 @@ class HomeHero extends StatefulWidget {
   State<HomeHero> createState() => HomeHeroState();
 }
 
-class HomeHeroState extends State<HomeHero> implements FocusRowHandle {
-  late final List<FocusNode> _nodes = List.generate(2, (i) {
+class HomeHeroState extends State<HomeHero> with WidgetsBindingObserver implements FocusRowHandle {
+  late final List<FocusNode> _nodes = List.generate(5, (i) {
     final node = FocusNode(debugLabel: 'hero#$i');
     node.addListener(() => _onFocusChanged(i, node));
     return node;
@@ -107,12 +118,20 @@ class HomeHeroState extends State<HomeHero> implements FocusRowHandle {
   RowFocusController? _controller;
   int _remembered = 0;
   Timer? _rotate;
+  ValueListenable<TickerModeData>? _tickerMode;
+  bool _hovered = false;
+  bool _dragging = false;
+  bool _appActive = true;
 
   bool get hasFocus => _nodes.any((n) => n.hasFocus);
 
+  int get _actions => !PlatformProfile.isDesktop && _entry.onPlay != null ? 2 : 1;
+  bool get _carousel => widget.showCarousel && widget.items.length > 1;
+  HeroEntry get _entry => widget.items[widget.index.clamp(0, widget.items.length - 1)];
+  int get _navigationIndex => widget.pendingIndex ?? widget.index;
+
   @override
-  int get length =>
-      !PlatformProfile.isDesktop && widget.items[widget.index.clamp(0, widget.items.length - 1)].onPlay != null ? 2 : 1;
+  int get length => _actions + (_carousel ? 3 : 0);
 
   @override
   FocusNode nodeAt(int index) => _nodes[index];
@@ -128,11 +147,19 @@ class HomeHeroState extends State<HomeHero> implements FocusRowHandle {
       _controller?.unregister(widget.rowIndex, this);
       _controller = controller..register(widget.rowIndex, this);
     }
+    final mode = TickerMode.getValuesNotifier(context);
+    if (!identical(mode, _tickerMode)) {
+      _tickerMode?.removeListener(_armRotation);
+      _tickerMode = mode..addListener(_armRotation);
+    }
+    _armRotation();
   }
 
   @override
   void dispose() {
     _rotate?.cancel();
+    WidgetsBinding.instance.removeObserver(this);
+    _tickerMode?.removeListener(_armRotation);
     _controller?.unregister(widget.rowIndex, this);
     for (final n in _nodes) {
       n.dispose();
@@ -140,35 +167,58 @@ class HomeHeroState extends State<HomeHero> implements FocusRowHandle {
     super.dispose();
   }
 
-  DateTime _lastSwitch = DateTime.now();
-
   @override
   void initState() {
     super.initState();
-    // 每秒检查一次：无操作、且距上次切换都满 rotateEvery 时切到下一部（下一部还没准备好就先等）
-    _rotate = Timer.periodic(const Duration(seconds: 1), (_) {
-      if (!mounted || !widget.autoRotate || widget.items.length < 2) return;
-      // Hero 已经滚出视野（在看下面的行）时不轮播
-      final pos = Scrollable.maybeOf(context)?.position;
-      if (pos != null && pos.hasPixels && pos.pixels > HomeHero.heightOf(context) / 2) return;
-      final now = DateTime.now();
-      if (InputMode.idle < HomeHero.rotateEvery || now.difference(_lastSwitch) < HomeHero.rotateEvery) return;
+    WidgetsBinding.instance.addObserver(this);
+  }
+
+  bool get _canRotate =>
+      mounted &&
+      _appActive &&
+      widget.autoRotate &&
+      _carousel &&
+      !widget.rotationPaused &&
+      widget.pendingIndex == null &&
+      !hasFocus &&
+      !_hovered &&
+      !_dragging &&
+      _tickerMode?.value.enabled != false &&
+      !VMotion.reduced(context);
+
+  void _armRotation() {
+    _rotate?.cancel();
+    if (!_canRotate) return;
+    _rotate = Timer(HomeHero.rotateEvery, () {
+      if (!_canRotate) return;
       final next = (widget.index + 1) % widget.items.length;
-      if (widget.isReady?.call(next) == false) return;
-      _switchTo(widget.index + 1);
+      if (widget.isReady?.call(next) != false) _switchTo(next);
+      _armRotation();
     });
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    _appActive = state == AppLifecycleState.resumed;
+    _armRotation();
   }
 
   @override
   void didUpdateWidget(HomeHero oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (oldWidget.index != widget.index) _lastSwitch = DateTime.now();
+    if (oldWidget.index != widget.index ||
+        oldWidget.autoRotate != widget.autoRotate ||
+        oldWidget.rotationPaused != widget.rotationPaused ||
+        oldWidget.pendingIndex != widget.pendingIndex ||
+        oldWidget.items.length != widget.items.length) {
+      _armRotation();
+    }
   }
 
   void _switchTo(int i) {
     if (widget.items.length < 2) return;
-    _lastSwitch = DateTime.now();
-    widget.onIndexChanged(i % widget.items.length);
+    widget.onIndexChanged((i + widget.items.length) % widget.items.length);
+    _armRotation();
   }
 
   void _onFocusChanged(int i, FocusNode node) {
@@ -176,133 +226,168 @@ class HomeHeroState extends State<HomeHero> implements FocusRowHandle {
       _remembered = i;
       widget.onFocused();
     }
+    _armRotation();
   }
 
   @override
   Widget build(BuildContext context) {
-    final t = widget.items[widget.index.clamp(0, widget.items.length - 1)];
-    final hasPlay = t.onPlay != null;
-    // Windows：点封面大图进详情，不放「详情 / 查看详情」按钮（只保留播放）；
-    // 电视：遥控器需要能聚焦的按钮，保留「播放 + 详情」或「查看详情」
+    final t = _entry;
     final desktop = PlatformProfile.isDesktop;
-    final showButtons = !desktop || hasPlay;
-    const buttonsHeight = 76.0;
+    final compact = (widget.height ?? HomeHero.heightOf(context)) < 740;
+    final infoWidth = math.min(900.0, MediaQuery.sizeOf(context).width - VSpace.contentLeft - VSpace.safeH);
+    final reduced = VMotion.reduced(context);
     final hero = SizedBox(
-      height: HomeHero.heightOf(context),
+      height: widget.height ?? HomeHero.heightOf(context),
       child: Stack(
         children: [
-          // 标题、简介：底部对齐在按钮上方，内容长短只影响向上延伸，不推动按钮
           Positioned(
             left: VSpace.contentLeft,
-            bottom: showButtons ? HomeHero.buttonsBottom + buttonsHeight + 34 : HomeHero.buttonsBottom + 20,
-            width: 900,
+            bottom: HomeHero.buttonsBottom + 76 + 24,
+            width: infoWidth,
             child: AnimatedSwitcher(
-              duration: VMotion.backdrop,
-              layoutBuilder: (current, previous) =>
-                  Stack(alignment: Alignment.bottomLeft, children: [...previous, ?current]),
-              child: _HeroInfo(key: ValueKey(t.key), title: t),
-            ),
-          ),
-          if (showButtons)
-            Positioned(
-              left: VSpace.contentLeft,
-              bottom: HomeHero.buttonsBottom,
-              height: buttonsHeight,
-              child: Row(
+              duration: VMotion.duration(context, const Duration(milliseconds: 180)),
+              layoutBuilder: (current, previous) => Stack(
+                alignment: Alignment.bottomLeft,
                 children: [
-                  PillButton(
-                    focusNode: _nodes[0],
-                    autofocus: widget.autofocus,
-                    large: true,
-                    icon: hasPlay ? Icons.play_arrow_rounded : Icons.info_outline_rounded,
-                    label: hasPlay ? '播放' : '查看详情',
-                    onPressed: hasPlay ? t.onPlay : t.onDetail,
-                  ),
-                  // 电视上 TMDB 推荐只有「查看详情」（资源在详情页里搜索）；Windows 点封面进详情
-                  if (hasPlay && !desktop) ...[
-                    const SizedBox(width: 40),
-                    PillButton(
-                      focusNode: _nodes[1],
-                      icon: Icons.info_outline_rounded,
-                      label: '详情',
-                      onPressed: t.onDetail,
-                    ),
-                  ],
+                  if (previous.isNotEmpty) ExcludeSemantics(key: previous.last.key, child: previous.last),
+                  if (current != null) ExcludeSemantics(key: current.key, excluding: false, child: current),
                 ],
               ),
+              child: _HeroInfo(key: ValueKey(t.key), title: t, compact: compact),
             ),
-          // 状态栏随 Hero 一起滚走，不遮挡下方内容
+          ),
+          Positioned(
+            left: VSpace.contentLeft,
+            bottom: HomeHero.buttonsBottom,
+            child: Row(
+              children: [
+                PillButton(
+                  focusNode: _nodes[0],
+                  autofocus: widget.autofocus,
+                  large: true,
+                  icon: t.onPlay != null ? Icons.play_arrow_rounded : Icons.info_outline_rounded,
+                  label: t.onPlay != null ? '播放' : '查看详情',
+                  onPressed: t.onPlay ?? t.onDetail,
+                ),
+                if (_actions == 2) ...[
+                  const SizedBox(width: 32),
+                  PillButton(
+                    focusNode: _nodes[1],
+                    icon: Icons.info_outline_rounded,
+                    label: '详情',
+                    onPressed: t.onDetail,
+                  ),
+                ],
+              ],
+            ),
+          ),
           const Positioned(right: VSpace.safeH, top: VSpace.safeV, child: StatusBar()),
-          if (widget.showDots && widget.items.length > 1)
+          if (_carousel)
             Positioned(
               right: VSpace.safeH,
-              bottom: HomeHero.buttonsBottom + 30,
+              bottom: HomeHero.buttonsBottom + 4,
               child: Row(
                 children: [
-                  for (var i = 0; i < widget.items.length; i++)
-                    GestureDetector(
-                      onTap: () => _switchTo(i),
-                      child: MouseRegion(
-                        cursor: SystemMouseCursors.click,
-                        child: Padding(
-                          padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 10),
-                          child: AnimatedContainer(
-                            duration: VMotion.scroll,
-                            width: i == widget.index ? 36 : 8,
-                            height: 8,
-                            decoration: BoxDecoration(
-                              color: i == widget.index ? Colors.white : const Color(0x59FFFFFF),
-                              borderRadius: BorderRadius.circular(4),
-                            ),
-                          ),
-                        ),
-                      ),
+                  Tooltip(
+                    message: '上一部推荐',
+                    excludeFromSemantics: true,
+                    child: CircleIconButton(
+                      focusNode: _nodes[_actions],
+                      icon: Icons.chevron_left_rounded,
+                      tooltip: '上一部推荐',
+                      onPressed: () => _switchTo(_navigationIndex - 1),
                     ),
+                  ),
+                  const SizedBox(width: 16),
+                  SizedBox(
+                    width: 184,
+                    child: Text(
+                      widget.pendingIndex != null
+                          ? '正在准备…'
+                          : '${widget.index + 1} / ${widget.items.length}${widget.rotationPaused || reduced ? ' · 手动' : ''}',
+                      textAlign: TextAlign.center,
+                      style: VText.caption,
+                    ),
+                  ),
+                  const SizedBox(width: 16),
+                  Tooltip(
+                    message: reduced ? '系统已减少动画，自动轮播关闭' : (widget.rotationPaused ? '开启自动轮播' : '暂停自动轮播'),
+                    excludeFromSemantics: true,
+                    child: CircleIconButton(
+                      focusNode: _nodes[_actions + 1],
+                      icon: widget.rotationPaused || reduced ? Icons.play_arrow_rounded : Icons.pause_rounded,
+                      tooltip: reduced ? '系统已减少动画，自动轮播关闭' : (widget.rotationPaused ? '开启自动轮播' : '暂停自动轮播'),
+                      onPressed: reduced ? null : widget.onToggleRotation,
+                    ),
+                  ),
+                  const SizedBox(width: 16),
+                  Tooltip(
+                    message: '下一部推荐',
+                    excludeFromSemantics: true,
+                    child: CircleIconButton(
+                      focusNode: _nodes[_actions + 2],
+                      icon: Icons.chevron_right_rounded,
+                      tooltip: '下一部推荐',
+                      onPressed: () => _switchTo(_navigationIndex + 1),
+                    ),
+                  ),
                 ],
               ),
             ),
         ],
       ),
     );
-    // 点击封面（标题、简介、背景）进详情；按住左右拖动切换上一部 / 下一部
-    return GestureDetector(
-      behavior: HitTestBehavior.translucent,
-      onTap: desktop ? t.onDetail : null,
-      onHorizontalDragEnd: (d) {
-        final v = d.primaryVelocity ?? 0;
-        if (v < -150) _switchTo(widget.index + 1);
-        if (v > 150) _switchTo(widget.index - 1 + widget.items.length);
+    return MouseRegion(
+      onEnter: (_) {
+        _hovered = true;
+        _armRotation();
       },
-      child: MouseRegion(
-        cursor: desktop ? SystemMouseCursors.click : MouseCursor.defer,
-        child: showButtons
-            ? hero
-            // Windows 没有按钮时：封面本身作为第 0 行的焦点（键盘回车进详情）
-            : Focus(
-                focusNode: _nodes[0],
-                autofocus: widget.autofocus,
-                onKeyEvent: (node, e) {
-                  if (e is KeyDownEvent && confirmKeys.contains(e.logicalKey)) {
-                    t.onDetail();
-                    return KeyEventResult.handled;
-                  }
-                  return KeyEventResult.ignored;
-                },
-                child: hero,
-              ),
+      onExit: (_) {
+        _hovered = false;
+        _armRotation();
+      },
+      cursor: desktop ? SystemMouseCursors.click : MouseCursor.defer,
+      child: GestureDetector(
+        behavior: HitTestBehavior.translucent,
+        onTap: desktop ? t.onDetail : null,
+        onHorizontalDragStart: (_) {
+          _dragging = true;
+          _armRotation();
+        },
+        onHorizontalDragCancel: () {
+          _dragging = false;
+          _armRotation();
+        },
+        onHorizontalDragEnd: (d) {
+          _dragging = false;
+          final velocity = d.primaryVelocity ?? 0;
+          if (velocity < -150) _switchTo(_navigationIndex + 1);
+          if (velocity > 150) _switchTo(_navigationIndex - 1);
+          _armRotation();
+        },
+        child: hero,
       ),
     );
   }
 }
 
 class _HeroInfo extends StatelessWidget {
-  const _HeroInfo({super.key, required this.title});
+  const _HeroInfo({super.key, required this.title, this.compact = false});
 
   final HeroEntry title;
+  final bool compact;
 
   @override
   Widget build(BuildContext context) {
     final t = title;
+    final gap = compact ? 16.0 : 22.0;
+    final scale = MediaQuery.textScalerOf(context);
+    final titleStyle = DefaultTextStyle.of(context).style
+        .merge(VText.titleFor(t.title))
+        .copyWith(
+          fontSize: compact ? (t.title.length > 8 ? 56 : 76) : null,
+          shadows: const [Shadow(color: Color(0x73000000), blurRadius: 40, offset: Offset(0, 6))],
+        );
     final meta = <Widget>[
       if (t.year != null) Text('${t.year}'),
       if (t.genres.isNotEmpty) Text(t.genres.take(3).join(' / ')),
@@ -319,19 +404,14 @@ class _HeroInfo extends StatelessWidget {
           ],
         ),
     ];
-    final titleText = Text(
-      t.title,
-      maxLines: 2,
-      overflow: TextOverflow.ellipsis,
-      style: VText.titleFor(t.title).copyWith(
-        shadows: const [Shadow(color: Color(0x73000000), blurRadius: 40, offset: Offset(0, 6))],
-      ),
-    );
+    final titleText = Text(t.title, maxLines: 2, overflow: TextOverflow.ellipsis, style: titleStyle);
     const dot = Text('  •  ', style: TextStyle(fontSize: 22, color: Color(0x66FFFFFF)));
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Row(
+        Wrap(
+          spacing: 12,
+          runSpacing: 8,
           children: [
             Container(
               padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
@@ -341,18 +421,24 @@ class _HeroInfo extends StatelessWidget {
               ),
               child: Text(t.badge, style: const TextStyle(fontSize: 20, letterSpacing: 1)),
             ),
-            const SizedBox(width: 12),
             Text(
               [t.kindLabel, if (t.resources != null) t.resources! > 0 ? '${t.resources} 个资源' : '媒体库暂无'].join(' · '),
               style: const TextStyle(fontSize: 20, color: Color(0xB8FFFFFF), letterSpacing: 2),
             ),
           ],
         ),
-        const SizedBox(height: 22),
+        SizedBox(height: gap),
         // 标题区不固定高度（向上延伸，两行长标题也完整显示）；Logo 图最高 150
         ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 760, maxHeight: 160, minHeight: 100),
-          child: Align(alignment: Alignment.bottomLeft, widthFactor: 1, heightFactor: 1, child: t.logo ?? titleText),
+          constraints: BoxConstraints(
+            maxWidth: 760,
+            maxHeight: scale.scale(compact ? 112 : 160),
+            minHeight: scale.scale(compact ? 76 : 100),
+          ),
+          child: DefaultTextStyle(
+            style: titleStyle,
+            child: Align(alignment: Alignment.bottomLeft, widthFactor: 1, heightFactor: 1, child: t.logo ?? titleText),
+          ),
         ),
         if (t.latinTitle != null && t.latinTitle != t.title)
           Padding(
@@ -364,23 +450,24 @@ class _HeroInfo extends StatelessWidget {
               style: const TextStyle(fontSize: 22, letterSpacing: 4, color: Color(0xB8FFFFFF)),
             ),
           ),
-        const SizedBox(height: 22),
+        SizedBox(height: gap),
         DefaultTextStyle.merge(
           style: const TextStyle(fontSize: 22, color: Color(0xD1FFFFFF)),
-          child: Row(
+          child: Wrap(
+            crossAxisAlignment: WrapCrossAlignment.center,
             children: [
               for (var i = 0; i < meta.length; i++) ...[if (i > 0) dot, meta[i]],
             ],
           ),
         ),
-        const SizedBox(height: 22),
+        SizedBox(height: gap),
         SizedBox(
           width: 780,
           child: Text(
             t.overview,
             maxLines: 2,
             overflow: TextOverflow.ellipsis,
-            style: VText.body.copyWith(color: const Color(0xC7FFFFFF)),
+            style: VText.body.copyWith(fontSize: compact ? 22 : null, color: VColors.textSecondary),
           ),
         ),
       ],

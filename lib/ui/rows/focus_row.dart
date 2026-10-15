@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/rendering.dart' show ScrollCacheExtent;
+import 'package:flutter/gestures.dart';
+import 'package:flutter/services.dart';
 
 import '../../app/platform_profile.dart';
 import '../../app/theme.dart';
@@ -31,12 +33,14 @@ class FocusRow extends StatefulWidget {
     this.initialIndex = 0,
     this.itemKeys,
     this.autoScrollVertical = true,
+    this.forwardShiftWheelAtEdge = false,
   });
 
   /// 初始位置：行一出现就滚到这一项，↓ 进入本行时焦点也落在这里（如详情页当前看到的那一集）
   final int initialIndex;
   final List<Object>? itemKeys;
   final bool autoScrollVertical;
+  final bool forwardShiftWheelAtEdge;
 
   final int rowIndex;
   final int itemCount;
@@ -184,6 +188,25 @@ class _FocusRowState extends State<FocusRow> implements RevealableFocusRow {
     }
   }
 
+  void _forwardEdgeScroll(PointerSignalEvent event) {
+    if (event is! PointerScrollEvent || event.kind != PointerDeviceKind.mouse || !_scroll.hasClients) return;
+    final keys = HardwareKeyboard.instance.logicalKeysPressed;
+    if (!keys.contains(LogicalKeyboardKey.shiftLeft) && !keys.contains(LogicalKeyboardKey.shiftRight)) return;
+    final delta = event.scrollDelta.dy;
+    final row = _scroll.position;
+    if (delta == 0 || (row.pixels + delta).clamp(row.minScrollExtent, row.maxScrollExtent) != row.pixels) return;
+    final parent = Scrollable.maybeOf(context, axis: Axis.vertical)?.position;
+    if (parent == null ||
+        (parent.pixels + delta).clamp(parent.minScrollExtent, parent.maxScrollExtent) == parent.pixels) {
+      return;
+    }
+    // 行内可以移动时交给 Flutter；只有行边界的 Shift+滚轮才转交纵向页面。
+    GestureBinding.instance.pointerSignalResolver.register(event, (e) {
+      InputMode.markPointer();
+      parent.pointerScroll((e as PointerScrollEvent).scrollDelta.dy);
+    });
+  }
+
   @override
   Widget build(BuildContext context) {
     final title = widget.title;
@@ -207,26 +230,29 @@ class _FocusRowState extends State<FocusRow> implements RevealableFocusRow {
           clipper: _LeftEdgeClipper(widget.leading - FocusRow.focusBleed),
           child: SizedBox(
             height: widget.height + FocusRow.focusBleed * 2,
-            child: ListView.separated(
-              controller: _scroll,
-              scrollDirection: Axis.horizontal,
-              clipBehavior: Clip.none,
-              // 屏幕外提前构建的范围：电视 800 像素（左右各多两三张卡），电脑 1600。
-              // 电视上每行少建一半屏外卡片，首页十来行加起来少解码几十张海报
-              scrollCacheExtent: ScrollCacheExtent.pixels(PlatformProfile.isTv ? 800 : 1600),
-              padding: EdgeInsets.fromLTRB(widget.leading, FocusRow.focusBleed, VSpace.safeH, FocusRow.focusBleed),
-              itemCount: widget.itemCount,
-              findItemIndexCallback: widget.itemKeys == null
-                  ? null
-                  : (key) {
-                      final i = widget.itemKeys!.indexOf((key as ValueKey<Object>).value);
-                      return i < 0 ? null : i;
-                    },
-              separatorBuilder: (_, _) => SizedBox(width: widget.gap),
-              itemBuilder: (context, index) => SizedBox(
-                key: widget.itemKeys == null ? null : ValueKey(widget.itemKeys![index]),
-                width: widget.itemExtent,
-                child: widget.itemBuilder(context, index, nodeAt(index)),
+            child: Listener(
+              onPointerSignal: widget.forwardShiftWheelAtEdge && PlatformProfile.isDesktop ? _forwardEdgeScroll : null,
+              child: ListView.separated(
+                controller: _scroll,
+                scrollDirection: Axis.horizontal,
+                clipBehavior: Clip.none,
+                // 屏幕外提前构建的范围：电视 800 像素（左右各多两三张卡），电脑 1600。
+                // 电视上每行少建一半屏外卡片，首页十来行加起来少解码几十张海报
+                scrollCacheExtent: ScrollCacheExtent.pixels(PlatformProfile.isTv ? 800 : 1600),
+                padding: EdgeInsets.fromLTRB(widget.leading, FocusRow.focusBleed, VSpace.safeH, FocusRow.focusBleed),
+                itemCount: widget.itemCount,
+                findItemIndexCallback: widget.itemKeys == null
+                    ? null
+                    : (key) {
+                        final i = widget.itemKeys!.indexOf((key as ValueKey<Object>).value);
+                        return i < 0 ? null : i;
+                      },
+                separatorBuilder: (_, _) => SizedBox(width: widget.gap),
+                itemBuilder: (context, index) => SizedBox(
+                  key: widget.itemKeys == null ? null : ValueKey(widget.itemKeys![index]),
+                  width: widget.itemExtent,
+                  child: widget.itemBuilder(context, index, nodeAt(index)),
+                ),
               ),
             ),
           ),
