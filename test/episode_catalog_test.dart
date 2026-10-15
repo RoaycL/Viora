@@ -379,6 +379,31 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
+  for (final tmdbEntry in [false, true]) {
+    testWidgets('${tmdbEntry ? 'TMDB' : 'library'} resource shortcut preserves selected future episode', (
+      tester,
+    ) async {
+      await pumpDetail(tester, tmdbEntry: tmdbEntry);
+      final card = find.byKey(const ValueKey('episode-1-2'));
+      await tester.ensureVisible(card);
+      await tester.pumpAndSettle();
+      await tester.tap(card);
+      await tester.pumpAndSettle();
+      final shortcut = find.text('选择资源');
+      await tester.ensureVisible(shortcut);
+      await tester.pumpAndSettle();
+      await tester.tap(shortcut);
+      await tester.pumpAndSettle();
+      expect(FocusManager.instance.primaryFocus?.debugLabel, 'row4#0');
+      expect(find.text('播放 S1E2'), findsOneWidget);
+      expect(find.textContaining('playing'), findsNothing);
+      await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+      await tester.pumpAndSettle();
+      expect(find.text('playing advance'), findsOneWidget);
+      expect(tester.takeException(), isNull);
+    });
+  }
+
   testWidgets('TMDB unavailable preserves ordinary server season/episode controls', (tester) async {
     await pumpDetail(tester, tmdb: false);
     expect(find.byType(EpisodeCatalogRow), findsNothing);

@@ -1,4 +1,7 @@
 import 'package:flutter/widgets.dart';
+import 'package:flutter/rendering.dart' show RenderAbstractViewport;
+
+import '../../app/theme.dart';
 
 import 'shell_focus.dart';
 import 'input_mode.dart';
@@ -178,10 +181,14 @@ class FocusButtonRow extends StatefulWidget {
     this.spacing = 18,
     this.autoScroll = true,
     this.scrollToTop = false,
+    this.scrollable = false,
   });
 
   /// 获得焦点时把页面滚回最顶部（详情页的第一行按钮：上面的 Logo、标题、简介要完整露出来）
   final bool scrollToTop;
+
+  /// 有宽度约束的详情操作/季选择，焦点移动时只横向露出当前按钮。
+  final bool scrollable;
 
   /// 获得焦点时把按钮行滚到视口约 30% 处；页面顶部的按钮行（如首页引导）不需要
   final bool autoScroll;
@@ -213,13 +220,43 @@ class _FocusButtonRowState extends State<FocusButtonRow> implements FocusRowHand
       node.addListener(() {
         if (node.hasPrimaryFocus) {
           _remembered = i;
+          if (InputMode.shouldAutoScroll && widget.scrollable) {
+            final ctx = node.context;
+            final box = ctx?.findRenderObject();
+            final horizontal = ctx == null ? null : Scrollable.maybeOf(ctx, axis: Axis.horizontal);
+            if (box != null && horizontal != null) {
+              final start = RenderAbstractViewport.of(box).getOffsetToReveal(box, 0).offset;
+              horizontal.position.ensureVisible(
+                box,
+                duration: VMotion.duration(context, VMotion.scroll),
+                alignmentPolicy: start < horizontal.position.pixels
+                    ? ScrollPositionAlignmentPolicy.keepVisibleAtStart
+                    : ScrollPositionAlignmentPolicy.keepVisibleAtEnd,
+              );
+            }
+          }
           if (InputMode.shouldAutoScroll && widget.scrollToTop) {
-            final pos = Scrollable.maybeOf(context)?.position;
-            if (pos != null && pos.pixels > 0) {
-              pos.animateTo(0, duration: const Duration(milliseconds: 250), curve: Curves.easeOutCubic);
+            final pos = Scrollable.maybeOf(context, axis: Axis.vertical)?.position;
+            if (pos != null) {
+              final box = context.findRenderObject();
+              final end = box == null ? 0 : RenderAbstractViewport.of(box).getOffsetToReveal(box, 1).offset;
+              if (widget.scrollable && end > 0 && box != null) {
+                // 放大文字令首屏增高时，先保证按钮可见，不把焦点滚到屏外。
+                pos.ensureVisible(
+                  box,
+                  duration: VMotion.duration(context, VMotion.scroll),
+                  alignmentPolicy: ScrollPositionAlignmentPolicy.keepVisibleAtEnd,
+                );
+              } else if (pos.pixels > 0) {
+                if (VMotion.reduced(context)) {
+                  pos.jumpTo(0);
+                } else {
+                  pos.animateTo(0, duration: VMotion.scroll, curve: Curves.easeOutCubic);
+                }
+              }
             }
           } else if (InputMode.shouldAutoScroll && widget.autoScroll) {
-            Scrollable.ensureVisible(context, alignment: 0.3, duration: const Duration(milliseconds: 250));
+            Scrollable.ensureVisible(context, alignment: 0.3, duration: VMotion.duration(context, VMotion.scroll));
           }
         }
       });
@@ -250,11 +287,19 @@ class _FocusButtonRowState extends State<FocusButtonRow> implements FocusRowHand
   @override
   Widget build(BuildContext context) {
     if (_remembered >= length) _remembered = 0;
-    return Row(
+    final row = Row(
       mainAxisSize: MainAxisSize.min,
       children: [
         for (var i = 0; i < length; i++) ...[if (i > 0) SizedBox(width: widget.spacing), widget.children[i](nodeAt(i))],
       ],
     );
+    return widget.scrollable
+        ? SingleChildScrollView(
+            scrollDirection: Axis.horizontal,
+            clipBehavior: Clip.none,
+            padding: const EdgeInsets.symmetric(vertical: 8),
+            child: row,
+          )
+        : row;
   }
 }

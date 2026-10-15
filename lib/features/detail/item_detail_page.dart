@@ -24,6 +24,7 @@ import '../browse/media_cards.dart';
 import '../metadata/external_ratings.dart';
 import '../tmdb/tmdb_detail_page.dart';
 import 'detail_layout.dart';
+import 'detail_panels.dart';
 import 'episode_catalog.dart';
 import 'source_widgets.dart';
 
@@ -58,6 +59,7 @@ class ItemDetailPage extends ConsumerStatefulWidget {
 }
 
 class _ItemDetailPageState extends ConsumerState<ItemDetailPage> {
+  final _sources = GlobalKey<SourcesSectionState>();
   String? _seasonId;
   int? _catalogSeason;
   int? _catalogEpisode;
@@ -147,7 +149,7 @@ class _ItemDetailPageState extends ConsumerState<ItemDetailPage> {
             ],
           ),
         ),
-        _ => const Center(child: Text('加载中…', style: VText.label)),
+        _ => DetailLoading(seed: '${widget.serverId}/${widget.itemId}', onBack: () => context.pop()),
       },
     );
   }
@@ -294,6 +296,7 @@ class _ItemDetailPageState extends ConsumerState<ItemDetailPage> {
           FocusButtonRow(
             rowIndex: 0,
             scrollToTop: true,
+            scrollable: true,
             children: [
               (node) => PillButton(
                 focusNode: node,
@@ -308,6 +311,23 @@ class _ItemDetailPageState extends ConsumerState<ItemDetailPage> {
                   icon: Icons.replay_rounded,
                   label: '从头播放',
                   onPressed: () => play(selected, fromStart: true),
+                ),
+              if (optionsAsync != null)
+                (node) => PillButton(
+                  focusNode: node,
+                  icon: Icons.video_library_outlined,
+                  label: '选择资源',
+                  onPressed: () => _sources.currentState?.reveal(),
+                ),
+              if (zh.overview?.isNotEmpty == true)
+                (node) => Tooltip(
+                  message: '完整简介',
+                  child: CircleIconButton(
+                    focusNode: node,
+                    icon: Icons.subject_rounded,
+                    tooltip: '完整简介',
+                    onPressed: () => showDetailOverview(context, title: zh.title, overview: zh.overview!),
+                  ),
                 ),
               (node) => CircleIconButton(
                 focusNode: node,
@@ -329,26 +349,16 @@ class _ItemDetailPageState extends ConsumerState<ItemDetailPage> {
         const SizedBox(height: 48),
         if (useCatalog) ...[
           if (catalogSeasons.length > 1)
-            Padding(
-              padding: const EdgeInsets.only(left: VSpace.safeH),
-              child: FocusButtonRow(
-                rowIndex: 1,
-                spacing: 12,
-                children: [
-                  for (final season in catalogSeasons)
-                    (node) => SelectChip(
-                      node: node,
-                      label: season.name,
-                      selected: season.number == catalogSeason,
-                      onTap: () => setState(() {
-                        _catalogSeason = season.number;
-                        _catalogEpisode = null;
-                        _sourceKey = null;
-                        _warmedKey = null;
-                      }),
-                    ),
-                ],
-              ),
+            SeasonSelector(
+              key: ValueKey(_accountGeneration),
+              seasons: [for (final s in catalogSeasons) (id: s.number, label: s.name)],
+              selected: catalogSeason,
+              onSelect: (id) => setState(() {
+                _catalogSeason = id as int;
+                _catalogEpisode = null;
+                _sourceKey = null;
+                _warmedKey = null;
+              }),
             ),
           if (catalog.isNotEmpty)
             EpisodeCatalogRow(
@@ -382,21 +392,11 @@ class _ItemDetailPageState extends ConsumerState<ItemDetailPage> {
             ),
         ],
         if (isSeries && !useCatalog && seasons.length > 1)
-          Padding(
-            padding: const EdgeInsets.only(left: VSpace.safeH),
-            child: FocusButtonRow(
-              rowIndex: 1,
-              spacing: 12,
-              children: [
-                for (final s in seasons)
-                  (node) => SelectChip(
-                    node: node,
-                    label: s.name,
-                    selected: s.id == seasonId,
-                    onTap: () => setState(() => _seasonId = s.id),
-                  ),
-              ],
-            ),
+          SeasonSelector(
+            key: ValueKey(_accountGeneration),
+            seasons: [for (final s in seasons) (id: s.id, label: s.name)],
+            selected: seasonId!,
+            onSelect: (id) => setState(() => _seasonId = id as String),
           ),
         if (!useCatalog && episodes.isNotEmpty)
           FocusRow(
@@ -412,6 +412,7 @@ class _ItemDetailPageState extends ConsumerState<ItemDetailPage> {
         if (optionsAsync != null) ...[
           const SizedBox(height: 24),
           SourcesSection(
+            key: _sources,
             options: options,
             loading: optionsAsync.isLoading,
             selected: selected,
@@ -419,7 +420,7 @@ class _ItemDetailPageState extends ConsumerState<ItemDetailPage> {
             onPlay: play,
             firstRow: 3,
             caption: useCatalog ? 'S${catalogSeason}E$catalogEpisode' : playTarget?.episodeLabel,
-            emptyText: useCatalog ? '暂未找到第 $catalogSeason 季第 $catalogEpisode 集的播放资源' : null,
+            emptyText: useCatalog ? '暂未找到第 $catalogSeason 季第 $catalogEpisode 集的播放资源' : '暂未找到播放资源',
           ),
         ],
         if (tmdb != null) ...[const SizedBox(height: 24), ...tmdbExtraRows(tmdb, firstRow: 3 + SourcesSection.rows)],
@@ -475,7 +476,12 @@ class _Title extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final text = Text(title, maxLines: 2, overflow: TextOverflow.ellipsis, style: VText.titleFor(title));
+    final text = Text(
+      title,
+      maxLines: 2,
+      overflow: TextOverflow.ellipsis,
+      style: DefaultTextStyle.of(context).style.merge(VText.titleFor(title)),
+    );
     // 标题已换成中文时不用（通常是英文的）Logo 图
     if (item.logo == null || item.kind == MediaKind.episode || title != item.name) return text;
     return SizedBox(
