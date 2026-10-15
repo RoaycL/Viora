@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/rendering.dart' show ScrollCacheExtent;
 
 import '../../app/platform_profile.dart';
@@ -28,10 +29,14 @@ class FocusRow extends StatefulWidget {
     this.verticalAlignment = 0.32,
     this.onItemFocused,
     this.initialIndex = 0,
+    this.itemKeys,
+    this.autoScrollVertical = true,
   });
 
   /// 初始位置：行一出现就滚到这一项，↓ 进入本行时焦点也落在这里（如详情页当前看到的那一集）
   final int initialIndex;
+  final List<Object>? itemKeys;
+  final bool autoScrollVertical;
 
   final int rowIndex;
   final int itemCount;
@@ -56,9 +61,9 @@ class FocusRow extends StatefulWidget {
   State<FocusRow> createState() => _FocusRowState();
 }
 
-class _FocusRowState extends State<FocusRow> implements FocusRowHandle {
-  final _scroll = ScrollController();
-  final _nodes = <FocusNode>[];
+class _FocusRowState extends State<FocusRow> implements RevealableFocusRow {
+  late final ScrollController _scroll;
+  final _nodes = <Object, FocusNode>{};
   RowFocusController? _controller;
   int _remembered = 0;
 
@@ -70,28 +75,48 @@ class _FocusRowState extends State<FocusRow> implements FocusRowHandle {
 
   @override
   FocusNode nodeAt(int index) {
-    while (_nodes.length <= index) {
-      final i = _nodes.length;
-      final node = FocusNode(debugLabel: 'row${widget.rowIndex}#$i');
+    final key = widget.itemKeys?[index] ?? index;
+    return _nodes.putIfAbsent(key, () {
+      final node = FocusNode(debugLabel: 'row${widget.rowIndex}#$index');
       node.addListener(() {
-        if (node.hasPrimaryFocus) _onItemFocused(i);
+        final i = widget.itemKeys?.indexOf(key) ?? index;
+        if (node.hasPrimaryFocus && i >= 0 && i < widget.itemCount) _onItemFocused(i);
       });
-      _nodes.add(node);
+      return node;
+    });
+  }
+
+  @override
+  Future<FocusNode?> revealNode(int index) async {
+    if (!mounted || index < 0 || index >= length) return null;
+    var node = nodeAt(index);
+    if (node.context != null) return node;
+    if (!_scroll.hasClients) return null;
+    _scroll.jumpTo((index * (widget.itemExtent + widget.gap)).clamp(0.0, _scroll.position.maxScrollExtent));
+    await WidgetsBinding.instance.endOfFrame;
+    if (!mounted || index >= length) return null;
+    node = nodeAt(index);
+    return node.context == null ? null : node;
+  }
+
+  @override
+  int? indexOfNode(FocusNode node) {
+    for (final entry in _nodes.entries) {
+      if (!identical(entry.value, node)) continue;
+      final index = widget.itemKeys?.indexOf(entry.key) ?? entry.key as int;
+      return index >= 0 && index < length ? index : null;
     }
-    return _nodes[index];
+    return null;
   }
 
   @override
   void initState() {
     super.initState();
-    if (widget.initialIndex > 0 && widget.initialIndex < widget.itemCount) {
-      _remembered = widget.initialIndex;
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (!mounted || !_scroll.hasClients) return;
-        final position = _scroll.position;
-        _scroll.jumpTo((_remembered * (widget.itemExtent + widget.gap)).clamp(0.0, position.maxScrollExtent));
-      });
-    }
+    _remembered = widget.itemCount == 0 ? 0 : widget.initialIndex.clamp(0, widget.itemCount - 1);
+    _scroll = ScrollController(
+      initialScrollOffset: _remembered * (widget.itemExtent + widget.gap),
+      keepScrollOffset: widget.itemKeys == null,
+    );
   }
 
   @override
@@ -112,12 +137,22 @@ class _FocusRowState extends State<FocusRow> implements FocusRowHandle {
       _controller?.register(widget.rowIndex, this);
     }
     if (_remembered >= widget.itemCount) _remembered = 0;
+    final keys = widget.itemKeys;
+    if (keys != null && !listEquals(oldWidget.itemKeys, keys)) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+        final retired = _nodes.keys.where((k) => !widget.itemKeys!.contains(k) && _nodes[k]!.context == null).toList();
+        for (final key in retired) {
+          _nodes.remove(key)?.dispose();
+        }
+      });
+    }
   }
 
   @override
   void dispose() {
     _controller?.unregister(widget.rowIndex, this);
-    for (final node in _nodes) {
+    for (final node in _nodes.values) {
       node.dispose();
     }
     _scroll.dispose();
@@ -133,14 +168,20 @@ class _FocusRowState extends State<FocusRow> implements FocusRowHandle {
     if (_scroll.hasClients) {
       final position = _scroll.position;
       final target = (index * (widget.itemExtent + widget.gap)).clamp(0.0, position.maxScrollExtent);
-      _scroll.animateTo(target, duration: VMotion.scroll, curve: Curves.easeOutCubic);
+      if (VMotion.reduced(context)) {
+        _scroll.jumpTo(target);
+      } else {
+        _scroll.animateTo(target, duration: VMotion.scroll, curve: Curves.easeOutCubic);
+      }
     }
-    Scrollable.ensureVisible(
-      context,
-      alignment: widget.verticalAlignment,
-      duration: VMotion.scroll,
-      curve: Curves.easeOutCubic,
-    );
+    if (widget.autoScrollVertical) {
+      Scrollable.ensureVisible(
+        context,
+        alignment: widget.verticalAlignment,
+        duration: VMotion.duration(context, VMotion.scroll),
+        curve: Curves.easeOutCubic,
+      );
+    }
   }
 
   @override
@@ -175,9 +216,18 @@ class _FocusRowState extends State<FocusRow> implements FocusRowHandle {
               scrollCacheExtent: ScrollCacheExtent.pixels(PlatformProfile.isTv ? 800 : 1600),
               padding: EdgeInsets.fromLTRB(widget.leading, FocusRow.focusBleed, VSpace.safeH, FocusRow.focusBleed),
               itemCount: widget.itemCount,
+              findItemIndexCallback: widget.itemKeys == null
+                  ? null
+                  : (key) {
+                      final i = widget.itemKeys!.indexOf((key as ValueKey<Object>).value);
+                      return i < 0 ? null : i;
+                    },
               separatorBuilder: (_, _) => SizedBox(width: widget.gap),
-              itemBuilder: (context, index) =>
-                  SizedBox(width: widget.itemExtent, child: widget.itemBuilder(context, index, nodeAt(index))),
+              itemBuilder: (context, index) => SizedBox(
+                key: widget.itemKeys == null ? null : ValueKey(widget.itemKeys![index]),
+                width: widget.itemExtent,
+                child: widget.itemBuilder(context, index, nodeAt(index)),
+              ),
             ),
           ),
         ),

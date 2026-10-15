@@ -12,10 +12,18 @@ abstract class FocusRowHandle {
   int get rememberedIndex;
 }
 
+/// 按需构建的横排先挂载目标卡片，再由页面确认本次导航仍然有效后请求焦点。
+abstract interface class RevealableFocusRow implements FocusRowHandle {
+  Future<FocusNode?> revealNode(int index);
+  int? indexOfNode(FocusNode node);
+}
+
 /// 管理一个页面上的所有行（docs/07-input-control.md §2.2）：
 /// ↑↓ 在行之间移动并恢复行记忆，←→ 在行内移动，最左再按 ← 交给应用壳（进入导航栏）。
 class RowFocusController {
   final Map<int, FocusRowHandle> _rows = <int, FocusRowHandle>{};
+
+  FocusRowHandle? rowAt(int rowIndex) => _rows[rowIndex];
 
   void register(int rowIndex, FocusRowHandle row) => _rows[rowIndex] = row;
 
@@ -29,6 +37,11 @@ class RowFocusController {
     if (node == null) return null;
     for (final entry in _rows.entries) {
       final row = entry.value;
+      if (row is RevealableFocusRow) {
+        final index = row.indexOfNode(node);
+        if (index != null) return (row: entry.key, index: index);
+        continue;
+      }
       for (var i = 0; i < row.length; i++) {
         if (identical(row.nodeAt(i), node)) return (row: entry.key, index: i);
       }
@@ -81,9 +94,10 @@ class RowFocusController {
 
 /// 给子树提供 [RowFocusController]，并接管方向键。
 class RowFocusScope extends StatefulWidget {
-  const RowFocusScope({super.key, required this.child});
+  const RowFocusScope({super.key, required this.child, this.controller});
 
   final Widget child;
+  final RowFocusController? controller;
 
   static RowFocusController of(BuildContext context) =>
       context.getInheritedWidgetOfExactType<_RowFocusInherited>()!.controller;
@@ -93,7 +107,8 @@ class RowFocusScope extends StatefulWidget {
 }
 
 class _RowFocusScopeState extends State<RowFocusScope> {
-  final _controller = RowFocusController();
+  late final _ownController = RowFocusController();
+  RowFocusController get _controller => widget.controller ?? _ownController;
 
   @override
   Widget build(BuildContext context) {
@@ -126,7 +141,7 @@ class _RowFocusInherited extends InheritedWidget {
   final RowFocusController controller;
 
   @override
-  bool updateShouldNotify(_RowFocusInherited oldWidget) => false;
+  bool updateShouldNotify(_RowFocusInherited oldWidget) => !identical(controller, oldWidget.controller);
 }
 
 /// 放在 [RowFocusScope] 内：首次构建后，如果页面里还没有焦点，就聚焦最上面的一行。

@@ -1,6 +1,8 @@
 import 'dart:async';
+import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart' show ScrollCacheExtent;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
@@ -30,6 +32,7 @@ import '../browse/media_cards.dart';
 import '../collections/collections_pages.dart';
 import '../tmdb/tmdb_cards.dart';
 import 'home_hero.dart';
+import 'home_focus.dart';
 import '../../player/preload.dart';
 
 /// 首页（docs/05-metadata-and-segments.md §2.1、docs/06-ui-design.md §4）：
@@ -38,7 +41,7 @@ class HomePage extends StatelessWidget {
   const HomePage({super.key});
 
   @override
-  Widget build(BuildContext context) => const RowFocusScope(child: _HomeBody());
+  Widget build(BuildContext context) => const _HomeBody();
 }
 
 /// 背景：占位渐变 + 真实图片；[hero] 为焦点在推荐行上时 Hero 区显示的预览信息
@@ -61,6 +64,11 @@ class _HomeBody extends ConsumerStatefulWidget {
 
 class _HomeBodyState extends ConsumerState<_HomeBody> {
   final _scroll = ScrollController();
+  final _anchor = FocusScopeNode(debugLabel: 'home-navigation');
+  late final _focus = HomeFocusController(anchor: _anchor, revealRow: _revealRow);
+  final _offsets = <int, double>{};
+  final _extents = <int, double>{};
+  String? _mediaScope;
   final _heroKey = GlobalKey<HomeHeroState>();
   int _heroIndex = 0;
   _Backdrop? _backdrop;
@@ -165,6 +173,8 @@ class _HomeBodyState extends ConsumerState<_HomeBody> {
     _preloadDebounce?.cancel();
     _hoverReset?.cancel();
     _scroll.dispose();
+    _focus.dispose();
+    _anchor.dispose();
     super.dispose();
   }
 
@@ -266,13 +276,28 @@ class _HomeBodyState extends ConsumerState<_HomeBody> {
   }
 
   bool _onBack() {
-    final heroFocused = _heroKey.currentState?.hasFocus ?? false;
-    if (_scroll.hasClients && _scroll.offset > 0 || !heroFocused) {
-      _scroll.animateTo(0, duration: VMotion.scroll, curve: Curves.easeOutCubic);
-      RowFocusScope.of(context).focusRow(0, index: 0);
+    if ((_scroll.hasClients && _scroll.offset > 0) || !_focus.atHero) {
+      _focus.focusRow(0, index: 0);
       return true;
     }
     return false;
+  }
+
+  Future<void> _revealRow(int row) async {
+    if (!mounted || !_scroll.hasClients || !_offsets.containsKey(row)) return;
+    final viewport = _scroll.position.viewportDimension;
+    final target = row == 0 ? 0.0 : _offsets[row]! - (viewport - _extents[row]!) * 0.32;
+    final offset = target.clamp(0.0, _scroll.position.maxScrollExtent);
+    if ((_scroll.offset - offset).abs() < 1) {
+      // 快速反向回到当前位置时，也要停止尚在向旧目标移动的滚动动画。
+      if (_scroll.position.isScrollingNotifier.value) _scroll.jumpTo(offset);
+      return;
+    }
+    if (VMotion.reduced(context)) {
+      _scroll.jumpTo(offset);
+    } else {
+      await _scroll.animateTo(offset, duration: VMotion.scroll, curve: Curves.easeOutCubic);
+    }
   }
 
   List<(HeroEntry, _Backdrop)> _heroes(List<TmdbTitle> trending, List<AggregatedTitle> recent) {
@@ -289,19 +314,27 @@ class _HomeBodyState extends ConsumerState<_HomeBody> {
 
   @override
   Widget build(BuildContext context) {
+    final scope = ref.watch(mediaFeedScopeProvider);
+    if (_mediaScope != null && _mediaScope != scope) {
+      _focus.resetMemory();
+      _backdropDebounce?.cancel();
+      _preloadDebounce?.cancel();
+      _preview = null;
+      _backdrop = null;
+    }
+    _mediaScope = scope;
     final servers = ref.watch(configProvider.select((c) => c.servers));
     final tmdbOn = ref.watch(tmdbClientProvider) != null;
     final serverNames = {for (final s in servers) s.id: s.displayName};
     final resumeAsync = ref.watch(resumeProvider);
     final resume = servers.isEmpty ? const <MediaItem>[] : dedupeWatched(resumeAsync.value ?? const <MediaItem>[]);
     final resumeState = ref.watch(mediaFeedStateProvider(MediaFeedKind.resume)).value;
-    final resumeLoading = servers.isNotEmpty && resumeAsync.isLoading && resume.isEmpty;
     final recent = ref.watch(recentlyAddedProvider);
-    List<TmdbTitle> row(TmdbRow r) => ref.watch(tmdbRowProvider(r)).value ?? const [];
-    bool rowLoading(TmdbRow r) => tmdbOn && ref.watch(tmdbRowProvider(r)).isLoading;
-    final heroes = _heroes(row(TmdbRow.trendingDay), recent);
-    // 与 _heroes 里的 TMDB 轮播项一一对应
-    final heroTitles = row(TmdbRow.trendingDay).where((t) => t.backdropPath != null).take(8).toList();
+    // Hero 是首屏内容；其余远端行只在相应列表项接近视口时订阅。
+    final heroAsync = ref.watch(tmdbRowProvider(TmdbRow.trendingDay));
+    final trending = heroAsync.value ?? const <TmdbTitle>[];
+    final heroes = _heroes(trending, recent);
+    final heroTitles = trending.where((t) => t.backdropPath != null).take(8).toList();
     if (heroTitles.isNotEmpty) {
       final next = heroTitles[(_heroIndex + 1) % heroTitles.length].key;
       if (!_readyHeroes.contains(next) && !_warming.contains(next)) {
@@ -310,201 +343,390 @@ class _HomeBodyState extends ConsumerState<_HomeBody> {
         });
       }
     }
-    final heroLoading = rowLoading(TmdbRow.trendingDay) || (servers.isNotEmpty && !tmdbOn && recent.isEmpty);
-    final peopleAsync = ref.watch(tmdbPeopleProvider);
-    final people = peopleAsync.value ?? const <TmdbPerson>[];
     final heroIndex = heroes.isEmpty ? 0 : _heroIndex % heroes.length;
     final preview = _preview;
     final backdrop = _backdrop ?? (heroes.isEmpty ? null : heroes[heroIndex].$2);
-    // 没配置 TMDB 时，推荐行显示占位并说明
-    const tmdbHint = '配置 TMDB 后显示（设置 → 接口与网络）';
-
-    Widget tmdbRow(int index, String title, TmdbRow r) {
-      if (!tmdbOn) return _SkeletonRow(title: title, note: tmdbHint, animate: false);
-      if (rowLoading(r)) return _SkeletonRow(title: title);
-      return _tmdbRow(index, title, row(r));
+    final textScale = MediaQuery.textScalerOf(context);
+    final posterHeight = math.max(
+      PosterCard.height,
+      PosterCard.imageHeight + 16 + textScale.scale(22) * 1.5 + textScale.scale(18) * 1.5,
+    );
+    final landscapeHeight = math.max(
+      LandscapeCard.height,
+      LandscapeCard.imageHeight + 16 + textScale.scale(22) * 1.5 + textScale.scale(18) * 1.5,
+    );
+    final peopleHeight = math.max(
+      PersonCard.height,
+      PersonCard.size + 12 + textScale.scale(20) * 1.5 + textScale.scale(16) * 1.5,
+    );
+    final header = math.max(48.0, textScale.scale(28) * 1.5);
+    double extent(double cards) => header + cards + FocusRow.focusBleed * 2 + 24;
+    final sections = <({int row, double height, WidgetBuilder build})>[
+      (
+        row: 0,
+        height: HomeHero.heightOf(context),
+        build: (context) {
+          if (heroes.isNotEmpty || preview != null) {
+            return HomeHero(
+              key: _heroKey,
+              rowIndex: 0,
+              autofocus: _focus.atHero,
+              items: preview != null ? [preview] : [for (final h in heroes) h.$1],
+              index: preview != null ? 0 : heroIndex,
+              showDots: preview == null,
+              autoRotate: preview == null,
+              isReady: heroTitles.isEmpty || heroTitles.length != heroes.length
+                  ? null
+                  : (i) => _heroReady(heroTitles[i % heroTitles.length].key),
+              onIndexChanged: (i) {
+                setState(() {
+                  _heroIndex = i;
+                  _preview = null;
+                });
+                _setBackdrop(heroes[i % heroes.length].$2);
+              },
+              onFocused: () {
+                if (!_focus.remember(0, _heroKey.currentState?.rememberedIndex ?? 0)) return;
+                if (InputMode.shouldAutoScroll) {
+                  if (heroes.isNotEmpty && _preview != null) setState(() => _preview = null);
+                  if (heroes.isNotEmpty) _setBackdrop(heroes[heroIndex].$2);
+                  _revealRow(0);
+                }
+              },
+            );
+          }
+          if (!tmdbOn && servers.isEmpty) return _Welcome(hasServers: false, tmdbOn: false, autofocus: _focus.atHero);
+          if (tmdbOn && heroAsync.hasError) {
+            return _HomeRowStatus(
+              row: 0,
+              autofocus: _focus.atHero,
+              title: '今日推荐',
+              note: '推荐加载失败',
+              onRetry: () => ref.invalidate(tmdbRowProvider(TmdbRow.trendingDay)),
+            );
+          }
+          if (tmdbOn && heroAsync.isLoading) {
+            return _HomeRowStatus(row: 0, autofocus: _focus.atHero, title: '今日推荐', note: '正在加载推荐…', loading: true);
+          }
+          if (tmdbOn) {
+            return _HomeRowStatus(
+              row: 0,
+              autofocus: _focus.atHero,
+              title: '今日推荐',
+              note: '暂无今日推荐',
+              onRetry: () => ref.invalidate(tmdbRowProvider(TmdbRow.trendingDay)),
+            );
+          }
+          return _Welcome(hasServers: servers.isNotEmpty, tmdbOn: tmdbOn, autofocus: _focus.atHero);
+        },
+      ),
+      if (servers.isNotEmpty && (resume.isNotEmpty || resumeAsync.isLoading || (resumeState?.failures ?? 0) > 0))
+        (
+          row: 1,
+          height: extent(landscapeHeight),
+          build: (context) {
+            if (resume.isEmpty) {
+              if (_focus.rowAt(1) is RevealableFocusRow) _focus.preserveRow(1);
+              return _HomeRowStatus(
+                row: 1,
+                title: '继续观看',
+                note: resumeAsync.isLoading ? '正在加载…' : '暂时无法刷新继续观看',
+                loading: resumeAsync.isLoading,
+                landscape: true,
+                onRetry: resumeAsync.isLoading
+                    ? null
+                    : () => ref.read(mediaFeedRefreshProvider.notifier).refresh(MediaFeedKind.resume),
+              );
+            }
+            final keys = [for (final it in resume) '${it.serverId}/${it.id}'];
+            final initial = _focus.updateItems(1, keys);
+            return FocusRow(
+              rowIndex: 1,
+              title: (resumeState?.failures ?? 0) == 0 ? '继续观看' : '继续观看 · 部分记录暂未刷新',
+              itemKeys: keys,
+              initialIndex: initial,
+              autoScrollVertical: false,
+              itemCount: resume.length,
+              itemExtent: LandscapeCard.width,
+              height: landscapeHeight,
+              onItemFocused: (i) {
+                if (!_focus.remember(1, i)) return;
+                _setBackdrop(_itemBackdrop(resume[i], badge: '继续观看', server: serverNames[resume[i].serverId]));
+                _preloadResume(resume[i]);
+              },
+              itemBuilder: (context, i, node) => _hoverTrack(
+                mediaLandscapeCard(
+                  context,
+                  resume[i],
+                  node,
+                  watchedOn: serverNames[resume[i].serverId] ?? '未知服务器',
+                  onMenu: () => openMediaItem(context, resume[i]),
+                ),
+              ),
+            );
+          },
+        ),
+      if (recent.isNotEmpty)
+        (
+          row: 2,
+          height: extent(posterHeight),
+          build: (context) {
+            final keys = [for (final g in recent) '${g.primary.serverId}/${g.primary.id}'];
+            return FocusRow(
+              rowIndex: 2,
+              title: '最近入库',
+              itemCount: recent.length,
+              itemKeys: keys,
+              initialIndex: _focus.updateItems(2, keys),
+              autoScrollVertical: false,
+              itemExtent: PosterCard.width,
+              height: posterHeight,
+              onItemFocused: (i) {
+                if (!_focus.remember(2, i)) return;
+                _setBackdrop(
+                  _itemBackdrop(recent[i].primary, badge: '最近入库', server: serverNames[recent[i].primary.serverId]),
+                );
+              },
+              itemBuilder: (context, i, node) => _hoverTrack(mediaPosterCard(context, recent[i].primary, node)),
+            );
+          },
+        ),
+      for (final (index, title, row) in [
+        (3, '正在热映', TmdbRow.nowPlaying),
+        (4, '正在播出', TmdbRow.onTheAir),
+        (5, '本周趋势', TmdbRow.trendingWeek),
+        (6, '今日动漫', TmdbRow.animeToday),
+        (9, '高分剧集', TmdbRow.topRatedTv),
+      ])
+        (
+          row: index,
+          height: extent(posterHeight),
+          build: (context) => Consumer(
+            builder: (context, rowRef, _) => _recommendation(context, rowRef, index, title, row, tmdbOn, posterHeight),
+          ),
+        ),
+      (
+        row: 7,
+        height: extent(peopleHeight),
+        build: (context) => Consumer(
+          builder: (context, rowRef, _) {
+            if (!tmdbOn) return _unconfigured(7, '热门人物');
+            final async = rowRef.watch(tmdbPeopleProvider);
+            final people = async.value ?? const <TmdbPerson>[];
+            if (people.isEmpty) {
+              if (_focus.rowAt(7) is RevealableFocusRow) _focus.preserveRow(7);
+              return _HomeRowStatus(
+                row: 7,
+                title: '热门人物',
+                note: async.hasError
+                    ? '人物加载失败'
+                    : async.isLoading
+                    ? '正在加载…'
+                    : '暂无人物推荐',
+                loading: async.isLoading,
+                circle: true,
+                onRetry: () => rowRef.invalidate(tmdbPeopleProvider),
+              );
+            }
+            final keys = [for (final p in people) p.id];
+            return FocusRow(
+              rowIndex: 7,
+              title: '热门人物',
+              itemCount: people.length,
+              itemKeys: keys,
+              initialIndex: _focus.updateItems(7, keys),
+              autoScrollVertical: false,
+              itemExtent: PersonCard.size,
+              gap: 40,
+              height: peopleHeight,
+              onItemFocused: (i) => _focus.remember(7, i),
+              itemBuilder: (context, i, node) => TmdbPersonCard(person: people[i], node: node),
+            );
+          },
+        ),
+      ),
+      if (tmdbOn)
+        (
+          row: 8,
+          height: extent(BrandCard.height),
+          build: (context) {
+            final keys = [for (final n in tmdbNetworks) n.id];
+            return FocusRow(
+              rowIndex: 8,
+              title: '播出平台',
+              itemCount: tmdbNetworks.length,
+              itemKeys: keys,
+              initialIndex: _focus.updateItems(8, keys),
+              autoScrollVertical: false,
+              itemExtent: BrandCard.width,
+              height: BrandCard.height,
+              onItemFocused: (i) => _focus.remember(8, i),
+              itemBuilder: (context, i, node) {
+                final n = tmdbNetworks[i];
+                return BrandCard(
+                  node: node,
+                  art: placeholderArt(n.name),
+                  name: n.name,
+                  backgroundColor: BrandCard.logoBackground,
+                  logo: TmdbImage(
+                    path: n.logoPath,
+                    kind: TmdbImageKind.logo,
+                    width: 190,
+                    fit: BoxFit.contain,
+                    transparentFallback: true,
+                    fallback: Center(
+                      child: Text(
+                        n.name,
+                        style: const TextStyle(color: Color(0xFF121218), fontSize: 28, fontWeight: FontWeight.w700),
+                      ),
+                    ),
+                  ),
+                  onActivate: () => context.push('/tmdb/network/${n.id}?name=${Uri.encodeComponent(n.name)}'),
+                );
+              },
+            );
+          },
+        ),
+    ]..sort((a, b) => a.row.compareTo(b.row));
+    _focus.order = [for (final section in sections) section.row];
+    _offsets.clear();
+    _extents.clear();
+    var offset = 0.0;
+    for (final section in sections) {
+      _offsets[section.row] = offset;
+      _extents[section.row] = section.height;
+      offset += section.height;
     }
-
-    return BackHandler(
-      onBack: _onBack,
-      child: Stack(
-        children: [
-          Positioned.fill(
-            child: PageBackdrop(
-              art: backdrop?.art ?? const ArtSpec(Color(0xFF1A2233), Color(0xFF07080B), Color(0xFF3A4766)),
-              image: backdrop?.image,
-              imageKey: backdrop?.key,
-            ),
-          ),
-          // 往下浏览推荐行时整体压暗背景，突出海报
-          Positioned.fill(
-            child: IgnorePointer(
-              child: ListenableBuilder(
-                listenable: _scroll,
-                builder: (context, _) {
-                  final offset = _scroll.hasClients ? _scroll.offset : 0.0;
-                  return ColoredBox(color: VColors.background.withValues(alpha: (offset / 500).clamp(0.0, 1.0) * 0.45));
-                },
-              ),
-            ),
-          ),
-          Positioned.fill(
-            child: SingleChildScrollView(
-              controller: _scroll,
-              padding: const EdgeInsets.only(bottom: 40),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  if (heroes.isNotEmpty || preview != null)
-                    HomeHero(
-                      key: _heroKey,
-                      rowIndex: 0,
-                      items: preview != null ? [preview] : [for (final h in heroes) h.$1],
-                      index: preview != null ? 0 : heroIndex,
-                      showDots: preview == null,
-                      autoRotate: preview == null,
-                      isReady: heroTitles.isEmpty || heroTitles.length != heroes.length
-                          ? null
-                          : (i) => _heroReady(heroTitles[i % heroTitles.length].key),
-                      onIndexChanged: (i) {
-                        setState(() {
-                          _heroIndex = i;
-                          _preview = null;
-                        });
-                        _setBackdrop(heroes[i % heroes.length].$2);
-                      },
-                      onFocused: () {
-                        // 遥控器 / 键盘回到 Hero：恢复轮播；鼠标从卡片移到 Hero 按钮上：保留预览，按钮作用于刚才那部作品
-                        if (InputMode.shouldAutoScroll) {
-                          if (heroes.isNotEmpty) {
-                            setState(() => _preview = null);
-                            _setBackdrop(heroes[heroIndex].$2);
-                          }
-                          _scroll.animateTo(0, duration: VMotion.scroll, curve: Curves.easeOutCubic);
-                        }
-                      },
-                    )
-                  else if (heroLoading)
-                    const _HeroSkeleton()
-                  else
-                    _Welcome(hasServers: servers.isNotEmpty, tmdbOn: tmdbOn),
-                  if (resumeLoading)
-                    const _SkeletonRow(title: '继续观看', landscape: true)
-                  else if (resume.isEmpty && (resumeState?.failures ?? 0) > 0)
-                    const _SkeletonRow(title: '继续观看', landscape: true, note: '暂时无法刷新，稍后重试', animate: false)
-                  else if (resume.isNotEmpty)
-                    FocusRow(
-                      rowIndex: 1,
-                      title: resumeState?.failures == 0 || resumeState == null ? '继续观看' : '继续观看 · 部分记录暂未刷新',
-                      itemCount: resume.length,
-                      itemExtent: LandscapeCard.width,
-                      height: LandscapeCard.height,
-                      onItemFocused: (i) {
-                        final server = serverNames[resume[i].serverId] ?? '未知服务器';
-                        _setBackdrop(_itemBackdrop(resume[i], badge: '继续观看', server: server));
-                        _preloadResume(resume[i]);
-                      },
-                      itemBuilder: (context, i, node) => _hoverTrack(
-                        mediaLandscapeCard(
-                          context,
-                          resume[i],
-                          node,
-                          // 和 Rex 一致：图上"看到 26:16"，下面"5 小时前 · 服务器名"
-                          watchedOn: serverNames[resume[i].serverId] ?? '未知服务器',
-                          onMenu: () => openMediaItem(context, resume[i]),
+    return FocusScope(
+      node: _anchor,
+      child: RowFocusScope(
+        controller: _focus,
+        child: BackHandler(
+          onBack: _onBack,
+          child: Listener(
+            onPointerDown: (_) => _focus.cancelNavigation(),
+            onPointerHover: (_) => _focus.cancelNavigation(),
+            onPointerSignal: (_) {
+              InputMode.markPointer();
+              _focus.cancelNavigation();
+            },
+            child: Stack(
+              children: [
+                Positioned.fill(
+                  child: PageBackdrop(
+                    art: backdrop?.art ?? const ArtSpec(Color(0xFF1A2233), Color(0xFF07080B), Color(0xFF3A4766)),
+                    image: backdrop?.image,
+                    imageKey: backdrop?.key,
+                  ),
+                ),
+                Positioned.fill(
+                  child: IgnorePointer(
+                    child: ListenableBuilder(
+                      listenable: _scroll,
+                      builder: (context, _) => ColoredBox(
+                        color: VColors.background.withValues(
+                          alpha: ((_scroll.hasClients ? _scroll.offset : 0.0) / 500).clamp(0.0, 1.0) * 0.45,
                         ),
                       ),
                     ),
-                  if (recent.isNotEmpty)
-                    FocusRow(
-                      rowIndex: 2,
-                      title: '最近入库',
-                      itemCount: recent.length,
-                      itemExtent: PosterCard.width,
-                      height: PosterCard.height,
-                      onItemFocused: (i) => _setBackdrop(
-                        _itemBackdrop(
-                          recent[i].primary,
-                          badge: '最近入库',
-                          server: serverNames[recent[i].primary.serverId],
+                  ),
+                ),
+                Positioned.fill(
+                  child: ListView.builder(
+                    controller: _scroll,
+                    padding: const EdgeInsets.only(bottom: 40),
+                    scrollCacheExtent: const ScrollCacheExtent.pixels(160),
+                    itemCount: sections.length + 1,
+                    itemExtentBuilder: (i, _) =>
+                        i == sections.length ? math.max(112.0, 72 + textScale.scale(20) * 1.5) : sections[i].height,
+                    findChildIndexCallback: (key) {
+                      if (key == const ValueKey('home-end')) return sections.length;
+                      final i = sections.indexWhere((s) => key == ValueKey(s.row));
+                      return i < 0 ? null : i;
+                    },
+                    itemBuilder: (context, i) {
+                      if (i == sections.length) return const EndOfPage(key: ValueKey('home-end'));
+                      final section = sections[i];
+                      return HomeFocusSlot(
+                        key: ValueKey(section.row),
+                        row: section.row,
+                        controller: _focus,
+                        child: ListenableBuilder(
+                          listenable: _scroll,
+                          child: Align(alignment: Alignment.topLeft, child: section.build(context)),
+                          builder: (context, child) {
+                            final top = _scroll.hasClients ? _scroll.offset : 0.0;
+                            final viewport = _scroll.hasClients
+                                ? _scroll.position.viewportDimension
+                                : MediaQuery.sizeOf(context).height;
+                            return TickerMode(
+                              enabled:
+                                  _offsets[section.row]! < top + viewport &&
+                                  _offsets[section.row]! + section.height > top,
+                              child: child!,
+                            );
+                          },
                         ),
-                      ),
-                      itemBuilder: (context, i, node) => _hoverTrack(mediaPosterCard(context, recent[i].primary, node)),
-                    ),
-                  tmdbRow(3, '正在热映', TmdbRow.nowPlaying),
-                  tmdbRow(4, '正在播出', TmdbRow.onTheAir),
-                  tmdbRow(5, '本周趋势', TmdbRow.trendingWeek),
-                  tmdbRow(6, '今日动漫', TmdbRow.animeToday),
-                  if (!tmdbOn)
-                    const _SkeletonRow(title: '热门人物', note: tmdbHint, circle: true, animate: false)
-                  else if (peopleAsync.isLoading && people.isEmpty)
-                    const _SkeletonRow(title: '热门人物', circle: true)
-                  else if (people.isNotEmpty)
-                    FocusRow(
-                      rowIndex: 7,
-                      title: '热门人物',
-                      itemCount: people.length,
-                      itemExtent: PersonCard.size,
-                      gap: 40,
-                      height: PersonCard.height,
-                      itemBuilder: (context, i, node) => TmdbPersonCard(person: people[i], node: node),
-                    ),
-                  if (tmdbOn)
-                    FocusRow(
-                      rowIndex: 8,
-                      title: '播出平台',
-                      itemCount: tmdbNetworks.length,
-                      itemExtent: BrandCard.width,
-                      height: BrandCard.height,
-                      itemBuilder: (context, i, node) {
-                        final n = tmdbNetworks[i];
-                        return BrandCard(
-                          node: node,
-                          art: placeholderArt(n.name),
-                          name: n.name,
-                          // 统一浅底：HBO、Apple TV+、腾讯视频、优酷等原色 Logo 含黑 / 深灰字形，深底上看不清
-                          backgroundColor: BrandCard.logoBackground,
-                          logo: TmdbImage(
-                            path: n.logoPath,
-                            kind: TmdbImageKind.logo,
-                            width: 190,
-                            fit: BoxFit.contain,
-                            transparentFallback: true,
-                            fallback: Center(
-                              child: Text(
-                                n.name,
-                                style: TextStyle(
-                                  color: const Color(0xFF121218),
-                                  fontSize: 28,
-                                  fontWeight: FontWeight.w700,
-                                ),
-                              ),
-                            ),
-                          ),
-                          onActivate: () => context.push('/tmdb/network/${n.id}?name=${Uri.encodeComponent(n.name)}'),
-                        );
-                      },
-                    ),
-                  tmdbRow(9, '高分剧集', TmdbRow.topRatedTv),
-                  const EndOfPage(),
-                ],
-              ),
+                      );
+                    },
+                  ),
+                ),
+              ],
             ),
           ),
-        ],
+        ),
       ),
     );
   }
 
-  Widget _tmdbRow(int rowIndex, String title, List<TmdbTitle> items) {
-    if (items.isEmpty) return const SizedBox.shrink();
+  Widget _unconfigured(int row, String title) => _HomeRowStatus(
+    row: row,
+    title: title,
+    note: '配置 TMDB 后显示（设置 → 接口与网络）',
+    actionLabel: '设置 TMDB',
+    onRetry: () => context.go('/settings'),
+  );
+
+  Widget _recommendation(
+    BuildContext context,
+    WidgetRef rowRef,
+    int index,
+    String title,
+    TmdbRow row,
+    bool enabled,
+    double height,
+  ) {
+    if (!enabled) return _unconfigured(index, title);
+    final async = rowRef.watch(tmdbRowProvider(row));
+    final items = async.value ?? const <TmdbTitle>[];
+    if (items.isEmpty) {
+      if (_focus.rowAt(index) is RevealableFocusRow) _focus.preserveRow(index);
+      return _HomeRowStatus(
+        row: index,
+        title: title,
+        note: async.hasError
+            ? '推荐加载失败'
+            : async.isLoading
+            ? '正在加载…'
+            : '暂无推荐内容',
+        loading: async.isLoading,
+        onRetry: () => rowRef.invalidate(tmdbRowProvider(row)),
+      );
+    }
+    final keys = [for (final item in items) item.key];
     return FocusRow(
-      rowIndex: rowIndex,
-      title: title,
+      rowIndex: index,
+      title: async.hasError ? '$title · 暂未刷新' : title,
       itemCount: items.length,
+      itemKeys: keys,
+      initialIndex: _focus.updateItems(index, keys),
+      autoScrollVertical: false,
       itemExtent: PosterCard.width,
-      height: PosterCard.height,
-      onItemFocused: (i) => _setBackdrop(_tmdbBackdrop(items[i], badge: title)),
+      height: height,
+      onItemFocused: (i) {
+        if (!_focus.remember(index, i)) return;
+        _setBackdrop(_tmdbBackdrop(items[i], badge: title));
+      },
       itemBuilder: (context, i, node) => _hoverTrack(TmdbPosterCard(title: items[i], node: node)),
     );
   }
@@ -549,10 +771,11 @@ class _TmdbLogo extends ConsumerWidget {
 
 /// 首次使用 / 未配置：占据 Hero 区，结构和正常首页一致（右上角状态栏、左侧说明与按钮）
 class _Welcome extends StatelessWidget {
-  const _Welcome({required this.hasServers, required this.tmdbOn});
+  const _Welcome({required this.hasServers, required this.tmdbOn, this.autofocus = true});
 
   final bool hasServers;
   final bool tmdbOn;
+  final bool autofocus;
 
   @override
   Widget build(BuildContext context) {
@@ -595,7 +818,7 @@ class _Welcome extends StatelessWidget {
                     if (!hasServers)
                       (node) => PillButton(
                         focusNode: node,
-                        autofocus: true,
+                        autofocus: autofocus,
                         large: true,
                         icon: Icons.add_rounded,
                         label: '添加服务器',
@@ -604,7 +827,7 @@ class _Welcome extends StatelessWidget {
                     if (!tmdbOn)
                       (node) => PillButton(
                         focusNode: node,
-                        autofocus: hasServers,
+                        autofocus: autofocus && hasServers,
                         large: hasServers,
                         icon: Icons.movie_filter_outlined,
                         label: '设置 TMDB',
@@ -619,6 +842,83 @@ class _Welcome extends StatelessWidget {
       ),
     );
   }
+}
+
+/// 分区状态保留原行的几何尺寸，并提供一个可导航的焦点锚点。
+class _HomeRowStatus extends StatelessWidget {
+  const _HomeRowStatus({
+    required this.row,
+    required this.title,
+    required this.note,
+    this.loading = false,
+    this.landscape = false,
+    this.circle = false,
+    this.onRetry,
+    this.actionLabel = '重试',
+    this.autofocus = false,
+  });
+  final int row;
+  final String title;
+  final String note;
+  final bool loading;
+  final bool landscape;
+  final bool circle;
+  final VoidCallback? onRetry;
+  final String actionLabel;
+  final bool autofocus;
+
+  @override
+  Widget build(BuildContext context) => Stack(
+    children: [
+      if (loading)
+        Positioned.fill(
+          child: row == 0
+              ? const _HeroSkeleton()
+              : _SkeletonRow(
+                  title: title,
+                  landscape: landscape,
+                  circle: circle,
+                  animate: !PlatformProfile.isTv && !VMotion.reduced(context),
+                ),
+        )
+      else
+        Positioned(
+          left: VSpace.contentLeft,
+          right: VSpace.safeH,
+          top: 12,
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(title, style: VText.rowTitle),
+              const SizedBox(height: 20),
+              Text(note, style: VText.label.copyWith(color: VColors.textSecondary)),
+            ],
+          ),
+        ),
+      Positioned(
+        left: VSpace.contentLeft,
+        top: row == 0 ? null : 120,
+        bottom: row == 0 ? HomeHero.buttonsBottom : null,
+        child: FocusButtonRow(
+          rowIndex: row,
+          autoScroll: false,
+          children: [
+            (node) => PillButton(
+              focusNode: node,
+              autofocus: autofocus,
+              label: loading
+                  ? note
+                  : onRetry == null
+                  ? '暂无内容'
+                  : actionLabel,
+              icon: loading ? null : Icons.refresh_rounded,
+              onPressed: loading ? null : onRetry,
+            ),
+          ],
+        ),
+      ),
+    ],
+  );
 }
 
 /// 加载中的 Hero 占位：和真实 Hero 同样的位置与尺寸
@@ -674,16 +974,9 @@ Widget _block(double w, double h, {double radius = 10}) => Container(
 
 /// 推荐行占位：加载中时呼吸闪烁；未配置时静态并显示说明
 class _SkeletonRow extends StatelessWidget {
-  const _SkeletonRow({
-    required this.title,
-    this.note,
-    this.landscape = false,
-    this.circle = false,
-    this.animate = true,
-  });
+  const _SkeletonRow({required this.title, this.landscape = false, this.circle = false, this.animate = true});
 
   final String title;
-  final String? note;
   final bool landscape;
   final bool circle;
   final bool animate;
@@ -692,9 +985,11 @@ class _SkeletonRow extends StatelessWidget {
   Widget build(BuildContext context) {
     final w = circle ? PersonCard.size : (landscape ? LandscapeCard.width : PosterCard.width);
     final h = circle ? PersonCard.size : (landscape ? LandscapeCard.imageHeight : PosterCard.imageHeight);
+    final count =
+        ((MediaQuery.sizeOf(context).width - VSpace.contentLeft) / (w + (circle ? 40 : VSpace.rowGap))).ceil() + 1;
     final cards = Row(
       children: [
-        for (var i = 0; i < 9; i++) ...[
+        for (var i = 0; i < count; i++) ...[
           Column(
             crossAxisAlignment: circle ? CrossAxisAlignment.center : CrossAxisAlignment.start,
             children: [
@@ -718,7 +1013,7 @@ class _SkeletonRow extends StatelessWidget {
             children: [
               Text(title, style: VText.rowTitle.copyWith(color: const Color(0xEBFFFFFF))),
               const SizedBox(width: 16),
-              Text(note ?? '加载中…', style: VText.caption.copyWith(color: VColors.textTertiary)),
+              Text('加载中…', style: VText.caption.copyWith(color: VColors.textTertiary)),
             ],
           ),
           const SizedBox(height: 20),
@@ -746,7 +1041,18 @@ class _Shimmer extends StatefulWidget {
 }
 
 class _ShimmerState extends State<_Shimmer> with SingleTickerProviderStateMixin {
-  late final _c = AnimationController(vsync: this, duration: const Duration(milliseconds: 1100))..repeat(reverse: true);
+  late final _c = AnimationController(vsync: this, duration: const Duration(milliseconds: 1100));
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    if (PlatformProfile.isTv || VMotion.reduced(context)) {
+      _c.stop();
+      _c.value = 0.6;
+    } else if (!_c.isAnimating) {
+      _c.repeat(reverse: true);
+    }
+  }
 
   @override
   void dispose() {

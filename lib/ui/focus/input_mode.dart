@@ -25,14 +25,18 @@ abstract final class InputMode {
   /// 焦点变化时是否应该自动滚动
   static bool get shouldAutoScroll => !_pointer;
 
+  static bool _onKey(KeyEvent event) {
+    _pointer = false;
+    lastInteraction = DateTime.now();
+    return false;
+  }
+
   static void install() {
+    // 应用重新挂载（含测试绑定重置）时恢复键盘监听；稳定回调避免重复注册。
+    HardwareKeyboard.instance.removeHandler(_onKey);
+    HardwareKeyboard.instance.addHandler(_onKey);
     if (_installed) return;
     _installed = true;
-    HardwareKeyboard.instance.addHandler((event) {
-      _pointer = false;
-      lastInteraction = DateTime.now();
-      return false;
-    });
     GestureBinding.instance.pointerRouter.addGlobalRoute((event) {
       if (event is PointerDownEvent || event is PointerHoverEvent) lastPointer = event.position;
       if (event is PointerDownEvent ||

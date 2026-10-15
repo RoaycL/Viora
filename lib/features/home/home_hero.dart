@@ -66,10 +66,12 @@ class HomeHero extends StatefulWidget {
     this.showDots = true,
     this.autoRotate = true,
     this.isReady,
+    this.autofocus = true,
   });
 
   /// 第 i 部是否已经准备好（图片已下载解码）；没准备好时轮播先等着，不切过去
   final bool Function(int index)? isReady;
+  final bool autofocus;
 
   /// 显示轮播指示点（显示推荐行焦点的预览时隐藏）
   final bool showDots;
@@ -109,7 +111,8 @@ class HomeHeroState extends State<HomeHero> implements FocusRowHandle {
   bool get hasFocus => _nodes.any((n) => n.hasFocus);
 
   @override
-  int get length => _nodes.length;
+  int get length =>
+      !PlatformProfile.isDesktop && widget.items[widget.index.clamp(0, widget.items.length - 1)].onPlay != null ? 2 : 1;
 
   @override
   FocusNode nodeAt(int index) => _nodes[index];
@@ -209,7 +212,7 @@ class HomeHeroState extends State<HomeHero> implements FocusRowHandle {
                 children: [
                   PillButton(
                     focusNode: _nodes[0],
-                    autofocus: true,
+                    autofocus: widget.autofocus,
                     large: true,
                     icon: hasPlay ? Icons.play_arrow_rounded : Icons.info_outline_rounded,
                     label: hasPlay ? '播放' : '查看详情',
@@ -277,7 +280,7 @@ class HomeHeroState extends State<HomeHero> implements FocusRowHandle {
             // Windows 没有按钮时：封面本身作为第 0 行的焦点（键盘回车进详情）
             : Focus(
                 focusNode: _nodes[0],
-                autofocus: true,
+                autofocus: widget.autofocus,
                 onKeyEvent: (node, e) {
                   if (e is KeyDownEvent && confirmKeys.contains(e.logicalKey)) {
                     t.onDetail();
