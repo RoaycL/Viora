@@ -259,23 +259,14 @@ final tmdbClientProvider = Provider<TmdbClient?>((ref) {
 final tmdbRowProvider = FutureProvider.family<List<TmdbTitle>, TmdbRow>((ref, row) async {
   final client = ref.watch(tmdbClientProvider);
   if (client == null) return const [];
-  try {
-    return await client.row(row);
-  } catch (e) {
-    debugPrint('tmdb $row failed: $e');
-    return const [];
-  }
-});
+  return client.row(row);
+}, retry: (_, _) => null);
 
 final tmdbPeopleProvider = FutureProvider<List<TmdbPerson>>((ref) async {
   final client = ref.watch(tmdbClientProvider);
   if (client == null) return const [];
-  try {
-    return await client.popularPeople();
-  } catch (_) {
-    return const [];
-  }
-});
+  return client.popularPeople();
+}, retry: (_, _) => null);
 
 final tmdbTitleProvider = FutureProvider.family<TmdbTitle?, ({bool isTv, int id})>((ref, key) async {
   final client = ref.watch(tmdbClientProvider);
