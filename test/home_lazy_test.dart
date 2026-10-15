@@ -32,6 +32,7 @@ Future<void> pumpHome(
   Map<TmdbRow, int>? requests,
   VoidCallback? people,
   List<Override> overrides = const [],
+  TmdbClient? client,
 }) async {
   PlatformProfile.debugOverride = PlatformProfile.tv;
   autoCheckUpdatesOnLaunch = false;
@@ -42,7 +43,9 @@ Future<void> pumpHome(
     ProviderScope(
       overrides: [
         ...overrides,
-        tmdbClientProvider.overrideWithValue(TmdbClient(const TmdbConfig(apiKey: 'fixture'), const ProxyConfig())),
+        tmdbClientProvider.overrideWithValue(
+          client ?? TmdbClient(const TmdbConfig(apiKey: 'fixture'), const ProxyConfig()),
+        ),
         tmdbRowProvider.overrideWith((ref, row) {
           requests?.update(row, (n) => n + 1, ifAbsent: () => 1);
           return fetch == null ? titles(row) : fetch(row);
@@ -87,6 +90,16 @@ class FailingRecommendations extends TmdbClient {
   Future<List<TmdbPerson>> popularPeople() async => throw StateError('offline');
 }
 
+class RecordingImages extends TmdbClient {
+  RecordingImages() : super(const TmdbConfig(apiKey: 'fixture'), const ProxyConfig());
+  final requested = <({String path, String size})>[];
+  @override
+  String image(String path, {String size = 'w500'}) {
+    requested.add((path: path, size: size));
+    return super.image(path, size: size);
+  }
+}
+
 class ResumeFixture extends Notifier<List<MediaItem>> {
   @override
   List<MediaItem> build() => const [MediaItem(serverId: 's', id: 'resume', kind: MediaKind.movie, name: '续播电影')];
@@ -113,15 +126,87 @@ void main() {
     await expectLater(container.read(tmdbPeopleProvider.future), throwsStateError);
   });
 
-  testWidgets('首屏只启动 Hero 与邻近推荐，远端行和人物未请求，海报数量有界', (tester) async {
+  testWidgets('数据提前准备，远端卡片仍不挂载，首屏海报数量有界', (tester) async {
     final requests = <TmdbRow, int>{};
     var people = 0;
     await pumpHome(tester, requests: requests, people: () => people++);
-    expect(requests.keys, unorderedEquals([TmdbRow.trendingDay, TmdbRow.nowPlaying]));
-    expect(people, 0);
+    expect(requests.keys, unorderedEquals(TmdbRow.values));
+    expect(requests.values, everyElement(1));
+    expect(people, 1);
     expect(find.byType(PosterCard).evaluate().length, lessThan(20));
     expect(find.text('高分剧集'), findsNothing);
     expect(focused, 'hero#0');
+    await unmount(tester);
+  });
+
+  testWidgets('下一行仍在屏外时已请求数据，等到结果后下翻不再经历列表加载', (tester) async {
+    final loading = Completer<List<TmdbTitle>>();
+    final requests = <TmdbRow, int>{};
+    await pumpHome(tester, requests: requests, fetch: (r) => r == TmdbRow.onTheAir ? loading.future : titles(r));
+    expect(find.text('正在播出'), findsNothing);
+    expect(requests[TmdbRow.onTheAir], 1);
+    loading.complete(titles(TmdbRow.onTheAir));
+    await tester.pumpAndSettle();
+    expect(find.text('onTheAir-0'), findsNothing);
+    await press(tester, LogicalKeyboardKey.arrowDown, repeats: 1);
+    expect(focused, 'row4#0');
+    expect(requests[TmdbRow.onTheAir], 1);
+    await unmount(tester);
+  });
+
+  testWidgets('两个慢预取不能阻塞直接翻到远端行', (tester) async {
+    final slow = Completer<List<TmdbTitle>>();
+    final requests = <TmdbRow, int>{};
+    await pumpHome(
+      tester,
+      requests: requests,
+      fetch: (r) => r == TmdbRow.nowPlaying || r == TmdbRow.onTheAir ? slow.future : titles(r),
+    );
+    expect(requests.keys, unorderedEquals([TmdbRow.trendingDay, TmdbRow.nowPlaying, TmdbRow.onTheAir]));
+    await press(tester, LogicalKeyboardKey.arrowDown, repeats: 6);
+    expect(focused, 'row9#0');
+    expect(requests[TmdbRow.topRatedTv], 1);
+    await unmount(tester);
+    slow.complete(const []);
+    await tester.pump();
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('进入详情停止后续预取，返回首页才继续，完成回调不抢焦点', (tester) async {
+    final slow = Completer<List<TmdbTitle>>();
+    final requests = <TmdbRow, int>{};
+    await pumpHome(
+      tester,
+      requests: requests,
+      fetch: (r) => r == TmdbRow.onTheAir || r == TmdbRow.trendingWeek ? slow.future : titles(r),
+    );
+    expect(requests.containsKey(TmdbRow.animeToday), isFalse);
+    await press(tester, LogicalKeyboardKey.select);
+    expect(find.text('暂无可播放资源'), findsOneWidget);
+    slow.complete(const []);
+    await tester.pumpAndSettle();
+    expect(requests.containsKey(TmdbRow.animeToday), isFalse);
+    await press(tester, LogicalKeyboardKey.escape);
+    expect(requests.containsKey(TmdbRow.animeToday), isTrue);
+    expect(focused, 'hero#0');
+    await unmount(tester);
+  });
+
+  testWidgets('屏外下一行的首屏海报提前准备，不挂载整行或预取全部海报', (tester) async {
+    final client = RecordingImages();
+    await pumpHome(
+      tester,
+      client: client,
+      fetch: (row) => row == TmdbRow.onTheAir
+          ? [for (var i = 0; i < 30; i++) TmdbTitle(id: i, isTv: true, title: '待看-$i', posterPath: '/ahead-$i.jpg')]
+          : titles(row),
+    );
+    expect(find.text('待看-0'), findsNothing);
+    final images = client.requested.where((r) => r.path.startsWith('/ahead-')).toSet();
+    expect(images.length, inInclusiveRange(1, 8));
+    expect(images.any((r) => r.path == '/ahead-0.jpg'), isTrue);
+    expect(images.any((r) => r.path == '/ahead-29.jpg'), isFalse);
+    expect(images.every((r) => r.size == 'w342'), isTrue);
     await unmount(tester);
   });
 

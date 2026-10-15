@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart' show ValueListenable;
 import 'package:flutter/rendering.dart' show ScrollCacheExtent;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
@@ -33,6 +34,7 @@ import '../collections/collections_pages.dart';
 import '../tmdb/tmdb_cards.dart';
 import 'home_hero.dart';
 import 'home_focus.dart';
+import 'home_prefetch.dart';
 import '../../player/preload.dart';
 
 /// 首页（docs/05-metadata-and-segments.md §2.1、docs/06-ui-design.md §4）：
@@ -63,16 +65,135 @@ class _HomeBody extends ConsumerStatefulWidget {
 }
 
 class _HomeBodyState extends ConsumerState<_HomeBody> {
+  static const _recommendationRows = {
+    3: TmdbRow.nowPlaying,
+    4: TmdbRow.onTheAir,
+    5: TmdbRow.trendingWeek,
+    6: TmdbRow.animeToday,
+    9: TmdbRow.topRatedTv,
+  };
   final _scroll = ScrollController();
   final _anchor = FocusScopeNode(debugLabel: 'home-navigation');
   late final _focus = HomeFocusController(anchor: _anchor, revealRow: _revealRow);
   final _offsets = <int, double>{};
   final _extents = <int, double>{};
   String? _mediaScope;
+  TmdbClient? _prefetchClient;
+  HomePrefetchQueue<int>? _dataPrefetch;
+  HomePrefetchQueue<ImageProvider>? _imagePrefetch;
+  final _prefetchTitles = <int, List<TmdbTitle>>{};
+  List<TmdbPerson> _prefetchPeople = const [];
+  bool _prefetchScheduled = false;
+  ValueListenable<TickerModeData>? _tickerMode;
   final _heroKey = GlobalKey<HomeHeroState>();
   int _heroIndex = 0;
   _Backdrop? _backdrop;
   Timer? _backdropDebounce;
+
+  @override
+  void initState() {
+    super.initState();
+    _scroll.addListener(_schedulePrefetch);
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final mode = TickerMode.getValuesNotifier(context);
+    if (identical(mode, _tickerMode)) return;
+    _tickerMode?.removeListener(_prefetchVisibilityChanged);
+    _tickerMode = mode..addListener(_prefetchVisibilityChanged);
+  }
+
+  void _prefetchVisibilityChanged() {
+    if (_tickerMode?.value.enabled == false) {
+      _dataPrefetch?.schedule(const []);
+      _imagePrefetch?.schedule(const []);
+    } else {
+      _schedulePrefetch();
+    }
+  }
+
+  void _configurePrefetch(TmdbClient? client) {
+    if (identical(client, _prefetchClient)) return;
+    _dataPrefetch?.dispose();
+    _imagePrefetch?.dispose();
+    _prefetchTitles.clear();
+    _prefetchPeople = const [];
+    _prefetchClient = client;
+    _dataPrefetch = client == null
+        ? null
+        : HomePrefetchQueue<int>(
+            concurrency: 2,
+            load: (row) async {
+              if (row == 7) {
+                final people = await ref.read(tmdbPeopleProvider.future);
+                if (!mounted || !identical(client, _prefetchClient)) return;
+                _prefetchPeople = people;
+              } else {
+                final titles = await ref.read(tmdbRowProvider(_recommendationRows[row]!).future);
+                if (!mounted || !identical(client, _prefetchClient)) return;
+                _prefetchTitles[row] = titles;
+              }
+              _schedulePrefetch();
+            },
+          );
+    _imagePrefetch = client == null
+        ? null
+        : HomePrefetchQueue<ImageProvider>(
+            concurrency: 1,
+            load: (image) => precacheImage(image, context, onError: (_, _) {}),
+          );
+  }
+
+  void _schedulePrefetch() {
+    if (!mounted || _prefetchScheduled) return;
+    _prefetchScheduled = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _prefetchScheduled = false;
+      if (!mounted) return;
+      if (_tickerMode?.value.enabled == false || !_scroll.hasClients) {
+        _dataPrefetch?.schedule(const []);
+        _imagePrefetch?.schedule(const []);
+        return;
+      }
+      final top = _scroll.offset;
+      final bottom = top + _scroll.position.viewportDimension;
+      // 轻量 JSON 先准备，前方行优先；最多两个后台任务，可见行不受队列阻塞。
+      final rows = [..._recommendationRows.keys, 7]
+        ..sort((a, b) {
+          double priority(int row) => _offsets[row]! >= top ? _offsets[row]! - top : 100000 + top - _offsets[row]!;
+          return priority(a).compareTo(priority(b));
+        });
+      _dataPrefetch?.schedule(rows);
+      // 卡片仍只挂载到视口外 160；只预取下一未挂载行的首屏小图，不提前取大背景/详情。
+      final next = _focus.order.where((row) => _offsets[row]! >= bottom + 160).firstOrNull;
+      _imagePrefetch?.schedule(next == null ? const [] : _rowImages(next));
+    });
+    WidgetsBinding.instance.ensureVisualUpdate();
+  }
+
+  Iterable<ImageProvider> _rowImages(int row) sync* {
+    final client = _prefetchClient;
+    if (client == null) return;
+    final circle = row == 7;
+    final brand = row == 8;
+    final width = circle ? PersonCard.size : (brand ? BrandCard.width : PosterCard.width);
+    final count = ((MediaQuery.sizeOf(context).width - VSpace.contentLeft) / (width + VSpace.rowGap)).ceil().clamp(
+      1,
+      8,
+    );
+    final paths = circle
+        ? _prefetchPeople.take(count).map((p) => p.profilePath)
+        : brand
+        ? tmdbNetworks.take(count).map((n) => n.logoPath)
+        : (_prefetchTitles[row] ?? const <TmdbTitle>[]).take(count).map((t) => t.posterPath);
+    final kind = circle ? TmdbImageKind.profile : (brand ? TmdbImageKind.logo : TmdbImageKind.poster);
+    final px = ImageSizing.physicalWidth(context, brand ? 190 : (circle ? PersonCard.size : PosterCard.width));
+    for (final path in paths) {
+      if (path != null && path.isNotEmpty) yield netImage(client.image(path, size: kind.sizeFor(px)), cacheWidth: px);
+    }
+  }
 
   /// 已经准备好（详情、Logo、背景图都已下载解码）的 Hero：轮播只切到准备好的，避免切过去后标题、Logo、背景依次闪出来
   final _readyHeroes = <String>{};
@@ -169,6 +290,9 @@ class _HomeBodyState extends ConsumerState<_HomeBody> {
 
   @override
   void dispose() {
+    _tickerMode?.removeListener(_prefetchVisibilityChanged);
+    _dataPrefetch?.dispose();
+    _imagePrefetch?.dispose();
     _backdropDebounce?.cancel();
     _preloadDebounce?.cancel();
     _hoverReset?.cancel();
@@ -324,13 +448,15 @@ class _HomeBodyState extends ConsumerState<_HomeBody> {
     }
     _mediaScope = scope;
     final servers = ref.watch(configProvider.select((c) => c.servers));
-    final tmdbOn = ref.watch(tmdbClientProvider) != null;
+    final tmdbClient = ref.watch(tmdbClientProvider);
+    final tmdbOn = tmdbClient != null;
+    _configurePrefetch(tmdbClient);
     final serverNames = {for (final s in servers) s.id: s.displayName};
     final resumeAsync = ref.watch(resumeProvider);
     final resume = servers.isEmpty ? const <MediaItem>[] : dedupeWatched(resumeAsync.value ?? const <MediaItem>[]);
     final resumeState = ref.watch(mediaFeedStateProvider(MediaFeedKind.resume)).value;
     final recent = ref.watch(recentlyAddedProvider);
-    // Hero 是首屏内容；其余远端行只在相应列表项接近视口时订阅。
+    // Hero 是首屏内容；其余行提前准备轻量数据，海报构建仍由可见范围驱动。
     final heroAsync = ref.watch(tmdbRowProvider(TmdbRow.trendingDay));
     final trending = heroAsync.value ?? const <TmdbTitle>[];
     final heroes = _heroes(trending, recent);
@@ -597,6 +723,7 @@ class _HomeBodyState extends ConsumerState<_HomeBody> {
       _extents[section.row] = section.height;
       offset += section.height;
     }
+    _schedulePrefetch();
     return FocusScope(
       node: _anchor,
       child: RowFocusScope(
