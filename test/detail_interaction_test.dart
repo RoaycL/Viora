@@ -361,6 +361,51 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
+  testWidgets('async restart action insertion keeps held confirmation on original action', (tester) async {
+    var restarting = false;
+    var resourceCalls = 0, restartCalls = 0;
+    late StateSetter update;
+    await _pump(
+      tester,
+      StatefulBuilder(
+        builder: (context, set) {
+          update = set;
+          return RowFocusScope(
+            child: FocusButtonRow(
+              rowIndex: 0,
+              itemKeys: ['play', if (restarting) 'restart', 'resources'],
+              children: [
+                (node) => PillButton(focusNode: node, label: '播放', onPressed: () {}),
+                if (restarting) (node) => PillButton(focusNode: node, label: '从头播放', onPressed: () => restartCalls++),
+                (node) => PillButton(focusNode: node, label: '选择资源', onPressed: () => resourceCalls++),
+              ],
+            ),
+          );
+        },
+      ),
+    );
+    final ctx = tester.element(find.byType(FocusButtonRow));
+    final controller = RowFocusScope.of(ctx);
+    controller.focusRow(0, index: 1);
+    await tester.pumpAndSettle();
+    final focused = FocusManager.instance.primaryFocus;
+    await tester.sendKeyDownEvent(LogicalKeyboardKey.enter);
+    update(() => restarting = true);
+    await tester.pump();
+    expect(FocusManager.instance.primaryFocus, same(focused));
+    expect(controller.locate(focused), (row: 0, index: 2));
+    await tester.sendKeyUpEvent(LogicalKeyboardKey.enter);
+    await tester.pumpAndSettle();
+    expect(resourceCalls, 1);
+    expect(restartCalls, 0);
+    await tester.sendKeyEvent(LogicalKeyboardKey.arrowLeft);
+    await tester.pumpAndSettle();
+    await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+    await tester.pumpAndSettle();
+    expect(restartCalls, 1);
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets('200 episode catalog builds a window around selected future episode', (tester) async {
     int? picked;
     await _pump(

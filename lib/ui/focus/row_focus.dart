@@ -182,13 +182,17 @@ class FocusButtonRow extends StatefulWidget {
     this.autoScroll = true,
     this.scrollToTop = false,
     this.scrollable = false,
-  });
+    this.itemKeys,
+  }) : assert(itemKeys == null || itemKeys.length == children.length);
 
   /// 获得焦点时把页面滚回最顶部（详情页的第一行按钮：上面的 Logo、标题、简介要完整露出来）
   final bool scrollToTop;
 
   /// 有宽度约束的详情操作/季选择，焦点移动时只横向露出当前按钮。
   final bool scrollable;
+
+  /// 异步插入/删除操作时，以动作身份保留节点、按键状态与行记忆。
+  final List<Object>? itemKeys;
 
   /// 获得焦点时把按钮行滚到视口约 30% 处；页面顶部的按钮行（如首页引导）不需要
   final bool autoScroll;
@@ -202,7 +206,7 @@ class FocusButtonRow extends StatefulWidget {
 }
 
 class _FocusButtonRowState extends State<FocusButtonRow> implements FocusRowHandle {
-  final _nodes = <FocusNode>[];
+  final _nodes = <Object, FocusNode>{};
   RowFocusController? _controller;
   int _remembered = 0;
 
@@ -214,11 +218,12 @@ class _FocusButtonRowState extends State<FocusButtonRow> implements FocusRowHand
 
   @override
   FocusNode nodeAt(int index) {
-    while (_nodes.length <= index) {
-      final i = _nodes.length;
-      final node = FocusNode(debugLabel: 'buttons${widget.rowIndex}#$i');
+    final key = widget.itemKeys?[index] ?? index;
+    return _nodes.putIfAbsent(key, () {
+      final node = FocusNode(debugLabel: 'buttons${widget.rowIndex}#$index');
       node.addListener(() {
-        if (node.hasPrimaryFocus) {
+        final i = widget.itemKeys?.indexOf(key) ?? index;
+        if (node.hasPrimaryFocus && i >= 0 && i < length) {
           _remembered = i;
           if (InputMode.shouldAutoScroll && widget.scrollable) {
             final ctx = node.context;
@@ -260,9 +265,8 @@ class _FocusButtonRowState extends State<FocusButtonRow> implements FocusRowHand
           }
         }
       });
-      _nodes.add(node);
-    }
-    return _nodes[index];
+      return node;
+    });
   }
 
   @override
@@ -276,9 +280,23 @@ class _FocusButtonRowState extends State<FocusButtonRow> implements FocusRowHand
   }
 
   @override
+  void didUpdateWidget(FocusButtonRow oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    final key = oldWidget.itemKeys == null || _remembered >= oldWidget.children.length
+        ? null
+        : oldWidget.itemKeys![_remembered];
+    final index = key == null ? -1 : widget.itemKeys?.indexOf(key) ?? -1;
+    if (index >= 0) _remembered = index;
+    if (oldWidget.rowIndex != widget.rowIndex) {
+      _controller?.unregister(oldWidget.rowIndex, this);
+      _controller?.register(widget.rowIndex, this);
+    }
+  }
+
+  @override
   void dispose() {
     _controller?.unregister(widget.rowIndex, this);
-    for (final n in _nodes) {
+    for (final n in _nodes.values) {
       n.dispose();
     }
     super.dispose();
@@ -290,7 +308,13 @@ class _FocusButtonRowState extends State<FocusButtonRow> implements FocusRowHand
     final row = Row(
       mainAxisSize: MainAxisSize.min,
       children: [
-        for (var i = 0; i < length; i++) ...[if (i > 0) SizedBox(width: widget.spacing), widget.children[i](nodeAt(i))],
+        for (var i = 0; i < length; i++) ...[
+          if (i > 0) SizedBox(width: widget.spacing),
+          if (widget.itemKeys == null)
+            widget.children[i](nodeAt(i))
+          else
+            KeyedSubtree(key: ValueKey(widget.itemKeys![i]), child: widget.children[i](nodeAt(i))),
+        ],
       ],
     );
     return widget.scrollable

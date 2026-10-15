@@ -230,6 +230,13 @@ class _TmdbDetailState extends ConsumerState<_TmdbDetail> {
             rowIndex: 0,
             scrollToTop: true,
             scrollable: true,
+            itemKeys: [
+              'play',
+              if (selected != null && resumeAt > Duration.zero) 'restart',
+              'resources',
+              if (t.overview.isNotEmpty) 'overview',
+              if (copies.isNotEmpty) 'library',
+            ],
             children: [
               // 查找中、没找到时按钮也在：遥控器焦点停在这里，页面不会滚到演职员行把标题顶出屏幕
               (node) => PillButton(

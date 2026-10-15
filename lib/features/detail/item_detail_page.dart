@@ -297,6 +297,14 @@ class _ItemDetailPageState extends ConsumerState<ItemDetailPage> {
             rowIndex: 0,
             scrollToTop: true,
             scrollable: true,
+            itemKeys: [
+              'play',
+              if (resumeAt > Duration.zero) 'restart',
+              if (optionsAsync != null) 'resources',
+              if (zh.overview?.isNotEmpty == true) 'overview',
+              'favorite',
+              'played',
+            ],
             children: [
               (node) => PillButton(
                 focusNode: node,
