@@ -254,14 +254,11 @@ class _TmdbDetailState extends ConsumerState<_TmdbDetail> {
                 onPressed: () => _sources.currentState?.reveal(),
               ),
               if (t.overview.isNotEmpty)
-                (node) => Tooltip(
-                  message: '完整简介',
-                  child: CircleIconButton(
-                    focusNode: node,
-                    icon: Icons.subject_rounded,
-                    tooltip: '完整简介',
-                    onPressed: () => showDetailOverview(context, title: t.title, overview: t.overview),
-                  ),
+                (node) => PillButton(
+                  focusNode: node,
+                  icon: Icons.subject_rounded,
+                  label: '完整简介',
+                  onPressed: () => showDetailOverview(context, title: t.title, overview: t.overview),
                 ),
               if (copies.isNotEmpty)
                 (node) => CircleIconButton(

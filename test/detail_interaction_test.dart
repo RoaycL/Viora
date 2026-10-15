@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/gestures.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -21,6 +22,7 @@ Future<void> _pump(
   Widget child, {
   Size size = const Size(1920, 1080),
   double textScale = 1,
+  bool reduced = true,
 }) async {
   tester.view.physicalSize = size;
   tester.view.devicePixelRatio = 1;
@@ -30,7 +32,7 @@ Future<void> _pump(
       child: MaterialApp(
         shortcuts: appShortcuts,
         builder: (context, child) => MediaQuery(
-          data: MediaQuery.of(context).copyWith(disableAnimations: true, textScaler: TextScaler.linear(textScale)),
+          data: MediaQuery.of(context).copyWith(disableAnimations: reduced, textScaler: TextScaler.linear(textScale)),
           child: child!,
         ),
         home: Material(child: child),
@@ -168,6 +170,69 @@ void main() {
     await tester.pumpAndSettle();
     expect(trigger.hasPrimaryFocus, isTrue);
     expect(find.text('长篇简介'), findsNothing);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('Windows wheel scrolls overview without moving background page', (tester) async {
+    PlatformProfile.debugOverride = PlatformProfile.desktop;
+    final overview = List.filled(100, '可以用鼠标滚轮阅读的简介。').join('\n');
+    final background = ScrollController();
+    addTearDown(background.dispose);
+    await _pump(
+      tester,
+      Builder(
+        builder: (context) => SingleChildScrollView(
+          controller: background,
+          child: Column(
+            children: [
+              PillButton(
+                label: '阅读',
+                onPressed: () => showDetailOverview(context, title: '简介', overview: overview),
+              ),
+              const SizedBox(height: 2000),
+            ],
+          ),
+        ),
+      ),
+      size: const Size(1280, 720),
+      reduced: false,
+    );
+    await tester.tap(find.text('阅读'));
+    await tester.pumpAndSettle();
+    await tester.sendEventToBinding(const PointerScrollEvent(position: Offset(640, 400), scrollDelta: Offset(0, 300)));
+    await tester.pumpAndSettle();
+    final scroll = tester.state<ScrollableState>(
+      find.ancestor(of: find.text(overview), matching: find.byType(Scrollable)).first,
+    );
+    expect(scroll.position.pixels, greaterThan(0));
+    expect(background.offset, 0);
+    await tester.sendKeyEvent(LogicalKeyboardKey.escape);
+    await tester.pumpAndSettle();
+    expect(find.text(overview), findsNothing);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('normal panel entrance can be interrupted by repeated back without popping page', (tester) async {
+    await _pump(
+      tester,
+      Builder(
+        builder: (context) => Center(
+          child: PillButton(
+            label: '阅读',
+            onPressed: () => showDetailOverview(context, title: '简介', overview: '剧情'),
+          ),
+        ),
+      ),
+      reduced: false,
+    );
+    await tester.tap(find.text('阅读'));
+    await tester.pump(const Duration(milliseconds: 30));
+    await tester.sendKeyEvent(LogicalKeyboardKey.escape);
+    await tester.pump(const Duration(milliseconds: 10));
+    await tester.sendKeyEvent(LogicalKeyboardKey.escape);
+    await tester.pumpAndSettle();
+    expect(find.text('阅读'), findsOneWidget);
+    expect(find.text('剧情'), findsNothing);
     expect(tester.takeException(), isNull);
   });
 

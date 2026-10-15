@@ -320,14 +320,11 @@ class _ItemDetailPageState extends ConsumerState<ItemDetailPage> {
                   onPressed: () => _sources.currentState?.reveal(),
                 ),
               if (zh.overview?.isNotEmpty == true)
-                (node) => Tooltip(
-                  message: '完整简介',
-                  child: CircleIconButton(
-                    focusNode: node,
-                    icon: Icons.subject_rounded,
-                    tooltip: '完整简介',
-                    onPressed: () => showDetailOverview(context, title: zh.title, overview: zh.overview!),
-                  ),
+                (node) => PillButton(
+                  focusNode: node,
+                  icon: Icons.subject_rounded,
+                  label: '完整简介',
+                  onPressed: () => showDetailOverview(context, title: zh.title, overview: zh.overview!),
                 ),
               (node) => CircleIconButton(
                 focusNode: node,
