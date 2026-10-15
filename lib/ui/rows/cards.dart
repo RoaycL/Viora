@@ -56,6 +56,8 @@ class LandscapeCard extends StatelessWidget {
       children: [
         VFocusable(
           focusNode: node,
+          semanticLabel: title,
+          semanticValue: [?titleSuffix, ?subtitle, ?tag, ?caption].join('，'),
           onActivate: onActivate,
           onMenu: onMenu,
           builder: (context, focused) => ClipRRect(
@@ -120,27 +122,34 @@ class LandscapeCard extends StatelessWidget {
           ),
         ),
         const SizedBox(height: 12),
-        if (titleSuffix == null)
-          Text(title, style: _titleStyle, maxLines: 1, overflow: TextOverflow.ellipsis)
-        else
-          Text.rich(
-            TextSpan(
-              children: [
-                TextSpan(text: title),
-                TextSpan(
-                  text: '  $titleSuffix',
-                  style: _subStyle.copyWith(fontSize: _titleStyle.fontSize),
+        ExcludeSemantics(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              if (titleSuffix == null)
+                Text(title, style: _titleStyle, maxLines: 1, overflow: TextOverflow.ellipsis)
+              else
+                Text.rich(
+                  TextSpan(
+                    children: [
+                      TextSpan(text: title),
+                      TextSpan(
+                        text: '  $titleSuffix',
+                        style: _subStyle.copyWith(fontSize: _titleStyle.fontSize),
+                      ),
+                    ],
+                  ),
+                  style: _titleStyle,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
                 ),
+              if (subtitle != null && subtitle!.isNotEmpty) ...[
+                const SizedBox(height: 4),
+                Text(subtitle!, style: _subStyle, maxLines: 1, overflow: TextOverflow.ellipsis),
               ],
-            ),
-            style: _titleStyle,
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
+            ],
           ),
-        if (subtitle != null && subtitle!.isNotEmpty) ...[
-          const SizedBox(height: 4),
-          Text(subtitle!, style: _subStyle, maxLines: 1, overflow: TextOverflow.ellipsis),
-        ],
+        ),
       ],
     );
   }
@@ -188,6 +197,8 @@ class PosterCard extends StatelessWidget {
       children: [
         VFocusable(
           focusNode: node,
+          semanticLabel: title,
+          semanticValue: [?subtitle, if (resources != null) resources == 0 ? '无资源' : '$resources 个资源'].join('，'),
           onActivate: onActivate,
           onMenu: onMenu,
           onFocusChange: onFocusChange,
@@ -219,7 +230,7 @@ class PosterCard extends StatelessWidget {
                   IgnorePointer(
                     child: AnimatedOpacity(
                       opacity: focused || resources != 0 ? 0 : 0.5,
-                      duration: VMotion.focus,
+                      duration: VMotion.duration(context, VMotion.focus),
                       child: const ColoredBox(color: VColors.background),
                     ),
                   ),
@@ -232,12 +243,14 @@ class PosterCard extends StatelessWidget {
         const SizedBox(height: 12),
         Opacity(
           opacity: dimmed,
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(title, style: _titleStyle, maxLines: 1, overflow: TextOverflow.ellipsis),
-              if (subtitle != null) ...[const SizedBox(height: 4), Text(subtitle!, style: _subStyle, maxLines: 1)],
-            ],
+          child: ExcludeSemantics(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(title, style: _titleStyle, maxLines: 1, overflow: TextOverflow.ellipsis),
+                if (subtitle != null) ...[const SizedBox(height: 4), Text(subtitle!, style: _subStyle, maxLines: 1)],
+              ],
+            ),
           ),
         ),
       ],
@@ -300,6 +313,8 @@ class PersonCard extends StatelessWidget {
       children: [
         VFocusable(
           focusNode: node,
+          semanticLabel: name,
+          semanticValue: role,
           radius: size / 2,
           onActivate: onActivate,
           builder: (context, focused) => ClipOval(
@@ -307,25 +322,29 @@ class PersonCard extends StatelessWidget {
           ),
         ),
         const SizedBox(height: 12),
-        SizedBox(
-          width: size + 20,
-          child: Text(
-            name,
-            style: const TextStyle(fontSize: 20),
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            textAlign: TextAlign.center,
-          ),
-        ),
-        if (role != null)
-          SizedBox(
+        ExcludeSemantics(
+          child: SizedBox(
             width: size + 20,
             child: Text(
-              role!,
-              style: const TextStyle(fontSize: 16, color: VColors.textTertiary),
+              name,
+              style: const TextStyle(fontSize: 20),
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
               textAlign: TextAlign.center,
+            ),
+          ),
+        ),
+        if (role != null)
+          ExcludeSemantics(
+            child: SizedBox(
+              width: size + 20,
+              child: Text(
+                role!,
+                style: const TextStyle(fontSize: 16, color: VColors.textTertiary),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                textAlign: TextAlign.center,
+              ),
             ),
           ),
       ],
@@ -362,6 +381,7 @@ class BrandCard extends StatelessWidget {
   Widget build(BuildContext context) {
     return VFocusable(
       focusNode: node,
+      semanticLabel: name,
       radius: VRadius.card,
       onActivate: onActivate,
       builder: (context, focused) => ClipRRect(

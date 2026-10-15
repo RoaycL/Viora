@@ -170,49 +170,42 @@ class _RailItem extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Semantics(
-      button: true,
+    return VFocusable(
+      semanticLabel: item.label,
       selected: active,
-      label: item.label,
-      child: VFocusable(
-        focusNode: node,
-        radius: VRadius.sm,
-        scale: 1.04,
-        alignment: Alignment.centerLeft,
-        showRing: false,
-        onActivate: () => onSelect(item),
-        builder: (context, focused) {
-          final Color bg = focused ? Colors.white : (active ? const Color(0x29FFFFFF) : const Color(0x00FFFFFF));
-          final Color fg = focused ? const Color(0xFF0B0C10) : (active ? Colors.white : const Color(0x9EFFFFFF));
-          return AnimatedContainer(
-            duration: VMotion.focus,
-            height: 56,
-            decoration: BoxDecoration(color: bg, borderRadius: BorderRadius.circular(VRadius.sm)),
-            child: ClipRect(
-              child: OverflowBox(
-                alignment: Alignment.centerLeft,
-                maxWidth: VSpace.navRailExpandedWidth,
-                child: Row(
-                  children: [
-                    SizedBox(width: 56, child: Icon(item.icon, size: 28, color: fg)),
-                    if (expanded) ...[
-                      const SizedBox(width: 4),
-                      Text(
-                        item.label,
-                        style: TextStyle(
-                          fontSize: 22,
-                          color: fg,
-                          fontWeight: active ? FontWeight.w700 : FontWeight.w400,
-                        ),
-                      ),
-                    ],
+      focusNode: node,
+      radius: VRadius.sm,
+      scale: 1.04,
+      alignment: Alignment.centerLeft,
+      showRing: false,
+      onActivate: () => onSelect(item),
+      builder: (context, focused) {
+        final Color bg = focused ? Colors.white : (active ? const Color(0x29FFFFFF) : const Color(0x00FFFFFF));
+        final Color fg = focused ? const Color(0xFF0B0C10) : (active ? Colors.white : const Color(0x9EFFFFFF));
+        return AnimatedContainer(
+          duration: VMotion.duration(context, VMotion.focus),
+          height: 56,
+          decoration: BoxDecoration(color: bg, borderRadius: BorderRadius.circular(VRadius.sm)),
+          child: ClipRect(
+            child: OverflowBox(
+              alignment: Alignment.centerLeft,
+              maxWidth: VSpace.navRailExpandedWidth,
+              child: Row(
+                children: [
+                  SizedBox(width: 56, child: Icon(item.icon, size: 28, color: fg)),
+                  if (expanded) ...[
+                    const SizedBox(width: 4),
+                    Text(
+                      item.label,
+                      style: TextStyle(fontSize: 22, color: fg, fontWeight: active ? FontWeight.w700 : FontWeight.w400),
+                    ),
                   ],
-                ),
+                ],
               ),
             ),
-          );
-        },
-      ),
+          ),
+        );
+      },
     );
   }
 }

@@ -41,11 +41,13 @@ class PillButton extends StatelessWidget {
       focusNode: focusNode,
       autofocus: autofocus,
       onActivate: onPressed,
+      semanticLabel: label,
+      semanticValue: subtitle,
       radius: VRadius.pill,
       alignment: Alignment.centerLeft,
       showRing: false,
       builder: (context, focused) {
-        final fg = focused ? _darkInk : Colors.white;
+        final fg = onPressed == null ? VColors.textTertiary : (focused ? _darkInk : Colors.white);
         final content = Padding(
           padding: EdgeInsets.only(left: icon == null && !busy ? 32 : 28, right: large ? 40 : 32),
           child: Row(
@@ -54,7 +56,11 @@ class PillButton extends StatelessWidget {
               if (busy) ...[
                 SizedBox.square(
                   dimension: large ? 26 : 22,
-                  child: CircularProgressIndicator(strokeWidth: 3, color: fg),
+                  child: CircularProgressIndicator(
+                    value: VMotion.reduced(context) ? 0.75 : null,
+                    strokeWidth: 3,
+                    color: fg,
+                  ),
                 ),
                 const SizedBox(width: 16),
               ] else if (icon != null) ...[
@@ -102,20 +108,21 @@ class CircleIconButton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Semantics(
-      button: true,
-      label: tooltip,
-      child: VFocusable(
-        focusNode: focusNode,
-        onActivate: onPressed,
-        radius: 34,
-        showRing: false,
-        builder: (context, focused) => _ButtonSurface(
-          focused: focused,
-          height: 68,
-          width: 68,
-          shape: const CircleBorder(),
-          child: Icon(icon, size: 28, color: focused ? _darkInk : Colors.white),
+    return VFocusable(
+      semanticLabel: tooltip,
+      focusNode: focusNode,
+      onActivate: onPressed,
+      radius: 34,
+      showRing: false,
+      builder: (context, focused) => _ButtonSurface(
+        focused: focused,
+        height: 68,
+        width: 68,
+        shape: const CircleBorder(),
+        child: Icon(
+          icon,
+          size: 28,
+          color: onPressed == null ? VColors.textTertiary : (focused ? _darkInk : Colors.white),
         ),
       ),
     );
