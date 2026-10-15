@@ -4,6 +4,7 @@ import '../../app/theme.dart';
 import '../../ui/focus/row_focus.dart';
 import '../../ui/widgets/backdrop.dart';
 import '../../ui/widgets/server_image.dart' show placeholderArt;
+import '../../ui/widgets/buttons.dart';
 import '../home/home_hero.dart';
 
 /// 详情页布局（媒体库详情、TMDB 详情共用），和首页 Hero 一致：
@@ -73,26 +74,17 @@ class _DetailLayoutState extends State<DetailLayout> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  SizedBox(
-                    height: HomeHero.heightOf(context),
-                    child: Stack(
-                      clipBehavior: Clip.none,
+                  Container(
+                    constraints: BoxConstraints(minHeight: HomeHero.heightOf(context)),
+                    padding: const EdgeInsets.fromLTRB(VSpace.safeH, 72, VSpace.safeH, 56),
+                    alignment: Alignment.bottomLeft,
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        // 内容贴底：标题、简介长短只向上延伸，按钮位置固定
-                        Positioned(
-                          left: VSpace.safeH,
-                          right: VSpace.safeH,
-                          bottom: 56,
-                          child: Column(
-                            mainAxisSize: MainAxisSize.min,
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              SizedBox(width: 1000, child: widget.info),
-                              const SizedBox(height: 36),
-                              widget.buttons,
-                            ],
-                          ),
-                        ),
+                        SizedBox(width: 1000, child: widget.info),
+                        const SizedBox(height: 36),
+                        widget.buttons,
                       ],
                     ),
                   ),
@@ -105,4 +97,63 @@ class _DetailLayoutState extends State<DetailLayout> {
       ],
     );
   }
+}
+
+/// 静态骨架保留详情页构图，不添加循环 ticker、模糊或图片请求。
+class DetailLoading extends StatelessWidget {
+  const DetailLoading({super.key, required this.seed, required this.onBack});
+  final String seed;
+  final VoidCallback onBack;
+
+  @override
+  Widget build(BuildContext context) => DetailLayout(
+    seed: seed,
+    backdrop: null,
+    info: Semantics(
+      liveRegion: true,
+      label: '正在加载详情',
+      child: ExcludeSemantics(
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const _Skeleton(width: 520, height: 80),
+            const SizedBox(height: 28),
+            const _Skeleton(width: 380, height: 22),
+            const SizedBox(height: 24),
+            for (var i = 0; i < 3; i++) ...[
+              _Skeleton(width: i == 2 ? 600 : 850, height: 20),
+              const SizedBox(height: 14),
+            ],
+          ],
+        ),
+      ),
+    ),
+    buttons: Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const RowAutoFocus(),
+        FocusButtonRow(
+          rowIndex: 0,
+          scrollable: true,
+          children: [
+            (node) => PillButton(focusNode: node, label: '返回', icon: Icons.arrow_back_rounded, onPressed: onBack),
+          ],
+        ),
+      ],
+    ),
+    below: const [],
+  );
+}
+
+class _Skeleton extends StatelessWidget {
+  const _Skeleton({required this.width, required this.height});
+  final double width;
+  final double height;
+
+  @override
+  Widget build(BuildContext context) => Container(
+    width: width,
+    height: height,
+    decoration: BoxDecoration(color: const Color(0x14FFFFFF), borderRadius: BorderRadius.circular(8)),
+  );
 }

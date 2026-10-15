@@ -8,6 +8,7 @@ import '../../app/theme.dart';
 import '../../data/aggregate/sources.dart';
 import '../../data/aggregate/tmdb_link.dart';
 import '../../data/config/config_store.dart';
+import '../../data/cache/account_scope.dart';
 import '../../data/media/media_models.dart';
 import '../../data/tmdb/tmdb_client.dart';
 import '../../domain/models/external_rating.dart';
@@ -18,6 +19,7 @@ import '../../ui/widgets/buttons.dart';
 import '../../ui/widgets/tmdb_image.dart';
 import '../browse/media_cards.dart';
 import '../detail/detail_layout.dart';
+import '../detail/detail_panels.dart';
 import '../detail/episode_catalog.dart';
 import '../detail/source_widgets.dart';
 import '../metadata/external_ratings.dart';
@@ -43,7 +45,7 @@ class TmdbDetailPage extends ConsumerWidget {
           '加载失败：$error',
           onRetry: () => ref.invalidate(tmdbTitleProvider((isTv: isTv, id: id))),
         ),
-        _ => const Center(child: Text('加载中…', style: VText.label)),
+        _ => DetailLoading(seed: '${isTv ? 'tv' : 'movie'}/$id', onBack: () => context.pop()),
       },
     );
   }
@@ -83,6 +85,8 @@ class _TmdbDetail extends ConsumerStatefulWidget {
 }
 
 class _TmdbDetailState extends ConsumerState<_TmdbDetail> {
+  final _sources = GlobalKey<SourcesSectionState>();
+
   /// 选中的版本（[sourceKeyOf]）；没选时用排在第一的
   String? _sourceKey;
 
@@ -142,7 +146,12 @@ class _TmdbDetailState extends ConsumerState<_TmdbDetail> {
       if (!t.isTv && t.runtimeMinutes != null) formatDuration(Duration(minutes: t.runtimeMinutes!)),
       if (t.isTv && t.seasons != null) '${t.seasons} 季',
     ].join('  •  ');
-    final title = Text(t.title, maxLines: 2, overflow: TextOverflow.ellipsis, style: VText.titleFor(t.title));
+    final title = Text(
+      t.title,
+      maxLines: 2,
+      overflow: TextOverflow.ellipsis,
+      style: DefaultTextStyle.of(context).style.merge(VText.titleFor(t.title)),
+    );
 
     return DetailLayout(
       seed: t.key,
@@ -168,13 +177,20 @@ class _TmdbDetailState extends ConsumerState<_TmdbDetail> {
                 fit: BoxFit.contain,
                 alignment: Alignment.centerLeft,
                 transparentFallback: true,
+                fallback: Align(alignment: Alignment.centerLeft, child: title),
+                errorFallback: Align(alignment: Alignment.centerLeft, child: title),
               ),
             )
           else
             title,
           if (t.originalTitle != null && t.originalTitle != t.title) ...[
             const SizedBox(height: 10),
-            Text(t.originalTitle!, style: VText.label.copyWith(color: VColors.textSecondary)),
+            Text(
+              t.originalTitle!,
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+              style: VText.label.copyWith(color: VColors.textSecondary),
+            ),
           ],
           const SizedBox(height: 22),
           Text(meta, style: const TextStyle(fontSize: 22, color: Color(0xD1FFFFFF))),
@@ -188,7 +204,12 @@ class _TmdbDetailState extends ConsumerState<_TmdbDetail> {
           ),
           if (t.tagline != null) ...[
             const SizedBox(height: 18),
-            Text(t.tagline!, style: VText.label.copyWith(fontStyle: FontStyle.italic)),
+            Text(
+              t.tagline!,
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+              style: VText.label.copyWith(fontStyle: FontStyle.italic),
+            ),
           ],
           if (t.overview.isNotEmpty) ...[
             const SizedBox(height: 18),
@@ -208,6 +229,14 @@ class _TmdbDetailState extends ConsumerState<_TmdbDetail> {
           FocusButtonRow(
             rowIndex: 0,
             scrollToTop: true,
+            scrollable: true,
+            itemKeys: [
+              'play',
+              if (selected != null && resumeAt > Duration.zero) 'restart',
+              'resources',
+              if (t.overview.isNotEmpty) 'overview',
+              if (copies.isNotEmpty) 'library',
+            ],
             children: [
               // 查找中、没找到时按钮也在：遥控器焦点停在这里，页面不会滚到演职员行把标题顶出屏幕
               (node) => PillButton(
@@ -224,6 +253,19 @@ class _TmdbDetailState extends ConsumerState<_TmdbDetail> {
                   icon: Icons.replay_rounded,
                   label: '从头播放',
                   onPressed: () => _play(selected, fromStart: true),
+                ),
+              (node) => PillButton(
+                focusNode: node,
+                icon: Icons.video_library_outlined,
+                label: '选择资源',
+                onPressed: () => _sources.currentState?.reveal(),
+              ),
+              if (t.overview.isNotEmpty)
+                (node) => PillButton(
+                  focusNode: node,
+                  icon: Icons.subject_rounded,
+                  label: '完整简介',
+                  onPressed: () => showDetailOverview(context, title: t.title, overview: t.overview),
                 ),
               if (copies.isNotEmpty)
                 (node) => CircleIconButton(
@@ -243,25 +285,17 @@ class _TmdbDetailState extends ConsumerState<_TmdbDetail> {
         const SizedBox(height: 48),
         if (t.isTv && seasons.isNotEmpty) ...[
           if (seasons.length > 1)
-            Padding(
-              padding: const EdgeInsets.only(left: VSpace.safeH, bottom: 8),
-              child: FocusButtonRow(
-                rowIndex: 1,
-                spacing: 12,
-                children: [
-                  for (final x in seasons)
-                    (node) => SelectChip(
-                      node: node,
-                      label: x.name,
-                      selected: x.number == season,
-                      onTap: () => setState(() {
-                        _season = x.number;
-                        _episode = null;
-                        _sourceKey = null;
-                      }),
-                    ),
-                ],
+            SeasonSelector(
+              key: ValueKey(
+                ref.watch(configProvider.select((c) => c.servers.map((s) => '${s.id}/${accountScope(s)}').join('|'))),
               ),
+              seasons: [for (final s in seasons) (id: s.number, label: s.name)],
+              selected: season,
+              onSelect: (id) => setState(() {
+                _season = id as int;
+                _episode = null;
+                _sourceKey = null;
+              }),
             ),
           _EpisodeRow(
             tvId: t.id,
@@ -287,6 +321,7 @@ class _TmdbDetailState extends ConsumerState<_TmdbDetail> {
           const SizedBox(height: 24),
         ],
         SourcesSection(
+          key: _sources,
           options: options,
           loading: loading,
           selected: selected,
