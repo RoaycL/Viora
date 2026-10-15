@@ -198,6 +198,37 @@ void main() {
     semantics.dispose();
   });
 
+  testWidgets('辅助技术可以直接把输入焦点移回控件，不触发播放', (tester) async {
+    final first = FocusNode(), second = FocusNode();
+    addTearDown(first.dispose);
+    addTearDown(second.dispose);
+    var actions = 0;
+    final semantics = tester.ensureSemantics();
+    await tester.pumpWidget(
+      host(
+        Column(
+          children: [
+            control(node: first, activate: () => actions++),
+            VFocusable(focusNode: second, onActivate: () {}, builder: (_, _) => const Text('另一个控件')),
+          ],
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    second.requestFocus();
+    await tester.pumpAndSettle();
+    expect(first.hasFocus, isFalse);
+    final node = tester.getSemantics(find.bySemanticsLabel('测试控件'));
+    expect(node.getSemanticsData().hasAction(SemanticsAction.focus), isTrue);
+    tester.binding.performSemanticsAction(
+      SemanticsActionEvent(type: SemanticsAction.focus, nodeId: node.id, viewId: tester.view.viewId),
+    );
+    await tester.pumpAndSettle();
+    expect(first.hasFocus, isTrue);
+    expect(actions, 0);
+    semantics.dispose();
+  });
+
   testWidgets('减少动效时无焦点缩放或持续忙碌动画，焦点仍可见', (tester) async {
     PlatformProfile.debugOverride = PlatformProfile.tv;
     final node = FocusNode();
