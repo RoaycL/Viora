@@ -208,14 +208,11 @@ class PlayerOsd extends StatelessWidget {
                         onPressed: onPlayPause,
                       ),
                       if (isEpisode)
-                        Opacity(
-                          opacity: hasNext ? 1 : 0.35,
-                          child: OsdIconButton(
-                            icon: Icons.skip_next_rounded,
-                            label: '下一集',
-                            iconSize: 40,
-                            onPressed: hasNext ? onNext : null,
-                          ),
+                        OsdIconButton(
+                          icon: Icons.skip_next_rounded,
+                          label: '下一集',
+                          iconSize: 40,
+                          onPressed: hasNext ? onNext : null,
                         ),
                       const Spacer(),
                       if (source != null) OsdTextButton(label: _qualityLabel(source!), onPressed: onSources),
@@ -317,39 +314,36 @@ class OsdIconButton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Semantics(
-      button: true,
-      label: label,
-      child: Tooltip(
-        message: PlatformProfile.isDesktop ? label : '',
-        waitDuration: const Duration(milliseconds: 600),
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 4),
-          child: VFocusable(
-            focusNode: focusNode,
-            radius: size / 2,
-            scale: 1.06,
-            showRing: false,
-            onActivate: onPressed,
-            onMenu: onMenu,
-            builder: (context, focused) => AnimatedContainer(
-              duration: VMotion.focus,
-              width: size,
-              height: size,
-              alignment: Alignment.center,
-              decoration: BoxDecoration(
-                shape: BoxShape.circle,
-                color: focused ? Colors.white : const Color(0x00FFFFFF),
-              ),
-              child:
-                  child?.call(focused) ??
-                  Icon(
-                    icon,
-                    size: iconSize,
-                    color: focused ? const Color(0xFF0B0C10) : Colors.white,
-                    shadows: focused ? null : const [Shadow(color: Color(0x99000000), blurRadius: 10)],
-                  ),
-            ),
+    return Tooltip(
+      excludeFromSemantics: true,
+      message: PlatformProfile.isDesktop ? label : '',
+      waitDuration: const Duration(milliseconds: 600),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 4),
+        child: VFocusable(
+          focusNode: focusNode,
+          semanticLabel: label,
+          radius: size / 2,
+          scale: 1.06,
+          showRing: false,
+          onActivate: onPressed,
+          onMenu: onMenu,
+          builder: (context, focused) => AnimatedContainer(
+            duration: VMotion.duration(context, VMotion.focus),
+            width: size,
+            height: size,
+            alignment: Alignment.center,
+            decoration: BoxDecoration(shape: BoxShape.circle, color: focused ? Colors.white : const Color(0x00FFFFFF)),
+            child:
+                child?.call(focused) ??
+                Icon(
+                  icon,
+                  size: iconSize,
+                  color: onPressed == null && onMenu == null
+                      ? VColors.textTertiary
+                      : (focused ? const Color(0xFF0B0C10) : Colors.white),
+                  shadows: focused ? null : const [Shadow(color: Color(0x99000000), blurRadius: 10)],
+                ),
           ),
         ),
       ),
@@ -405,28 +399,30 @@ class _DanmakuGlyph extends StatelessWidget {
 
 /// 文字按钮（4K / 选集 / 倍速）
 class OsdTextButton extends StatelessWidget {
-  const OsdTextButton({super.key, required this.label, required this.onPressed, this.selected = false});
+  const OsdTextButton({super.key, required this.label, required this.onPressed, this.selected});
 
   final String label;
   final VoidCallback? onPressed;
 
   /// 选中态（面板里的分组标签）
-  final bool selected;
+  final bool? selected;
 
   @override
   Widget build(BuildContext context) {
     return Padding(
       padding: const EdgeInsets.only(left: 8),
       child: VFocusable(
+        semanticLabel: label,
+        selected: selected,
         radius: VRadius.sm,
         scale: 1.04,
         showRing: false,
         onActivate: onPressed,
         builder: (context, focused) => AnimatedContainer(
-          duration: VMotion.focus,
+          duration: VMotion.duration(context, VMotion.focus),
           padding: const EdgeInsets.symmetric(horizontal: 22, vertical: 12),
           decoration: BoxDecoration(
-            color: focused ? Colors.white : (selected ? const Color(0x33FFFFFF) : const Color(0x00FFFFFF)),
+            color: focused ? Colors.white : (selected == true ? const Color(0x33FFFFFF) : const Color(0x00FFFFFF)),
             borderRadius: BorderRadius.circular(VRadius.sm),
           ),
           child: Text(

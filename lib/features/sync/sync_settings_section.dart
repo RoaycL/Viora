@@ -137,6 +137,7 @@ class WebDavEntry extends ConsumerWidget {
             ),
             SmallIconButton(
               icon: Icons.more_horiz_rounded,
+              semanticLabel: 'WebDAV 同步选项',
               onPressed: s.running
                   ? null
                   : () => showContextMenu(
@@ -151,6 +152,7 @@ class WebDavEntry extends ConsumerWidget {
           ],
           if (c.configured)
             SmallSwitch(
+              label: 'WebDAV 同步',
               value: c.enabled,
               onChanged: (v) async {
                 await ref

@@ -151,7 +151,7 @@ class SettingsEntry extends StatelessWidget {
             const SizedBox(width: 16),
           ],
           for (final w in trailing) ...[w, const SizedBox(width: 12)],
-          SmallIconButton(icon: Icons.tune_rounded, label: '设置', onPressed: onConfigure),
+          SmallIconButton(icon: Icons.tune_rounded, label: '设置', semanticLabel: '设置$title', onPressed: onConfigure),
         ],
       ),
     );
@@ -160,39 +160,46 @@ class SettingsEntry extends StatelessWidget {
 
 /// 小号图标按钮（设置、上移、下移）：比胶囊按钮紧凑，适合放在设置行里
 class SmallIconButton extends StatelessWidget {
-  const SmallIconButton({super.key, required this.icon, required this.onPressed, this.label});
+  const SmallIconButton({super.key, required this.icon, required this.onPressed, this.label, this.semanticLabel})
+    : assert(label != null || semanticLabel != null);
 
   final IconData icon;
   final String? label;
+  final String? semanticLabel;
   final VoidCallback? onPressed;
 
   @override
   Widget build(BuildContext context) {
     final enabled = onPressed != null;
-    return Opacity(
-      opacity: enabled ? 1 : 0.35,
+    return Tooltip(
+      message: semanticLabel ?? label!,
+      excludeFromSemantics: true,
       child: VFocusable(
+        semanticLabel: semanticLabel ?? label,
         radius: VRadius.sm,
         scale: 1.04,
         showRing: false,
         onActivate: onPressed,
-        builder: (context, focused) => AnimatedContainer(
-          duration: VMotion.focus,
-          height: 48,
-          padding: EdgeInsets.symmetric(horizontal: label == null ? 12 : 16),
-          decoration: BoxDecoration(
-            color: focused ? Colors.white : const Color(0x14FFFFFF),
-            borderRadius: BorderRadius.circular(VRadius.sm),
-          ),
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Icon(icon, size: 22, color: focused ? const Color(0xFF0B0C10) : Colors.white),
-              if (label != null) ...[
-                const SizedBox(width: 8),
-                Text(label!, style: TextStyle(fontSize: 20, color: focused ? const Color(0xFF0B0C10) : Colors.white)),
+        builder: (context, focused) => Opacity(
+          opacity: enabled ? 1 : 0.55,
+          child: AnimatedContainer(
+            duration: VMotion.duration(context, VMotion.focus),
+            height: 48,
+            padding: EdgeInsets.symmetric(horizontal: label == null ? 12 : 16),
+            decoration: BoxDecoration(
+              color: focused ? Colors.white : const Color(0x14FFFFFF),
+              borderRadius: BorderRadius.circular(VRadius.sm),
+            ),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(icon, size: 22, color: focused ? const Color(0xFF0B0C10) : Colors.white),
+                if (label != null) ...[
+                  const SizedBox(width: 8),
+                  Text(label!, style: TextStyle(fontSize: 20, color: focused ? const Color(0xFF0B0C10) : Colors.white)),
+                ],
               ],
-            ],
+            ),
           ),
         ),
       ),
@@ -202,20 +209,23 @@ class SmallIconButton extends StatelessWidget {
 
 /// 紧凑开关（设置行里与「设置」按钮并排）
 class SmallSwitch extends StatelessWidget {
-  const SmallSwitch({super.key, required this.value, required this.onChanged});
+  const SmallSwitch({super.key, required this.label, required this.value, required this.onChanged});
 
+  final String label;
   final bool value;
   final ValueChanged<bool> onChanged;
 
   @override
   Widget build(BuildContext context) {
     return VFocusable(
+      semanticLabel: label,
+      toggled: value,
       radius: VRadius.md,
       scale: 1.04,
       showRing: false,
       onActivate: () => onChanged(!value),
       builder: (context, focused) => AnimatedContainer(
-        duration: VMotion.focus,
+        duration: VMotion.duration(context, VMotion.focus),
         width: 64,
         height: 36,
         padding: const EdgeInsets.all(4),

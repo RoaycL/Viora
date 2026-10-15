@@ -650,6 +650,8 @@ class _CategoryItem extends StatelessWidget {
   Widget build(BuildContext context) {
     return VFocusable(
       autofocus: autofocus,
+      semanticLabel: category.label,
+      selected: selected,
       radius: VRadius.sm,
       scale: PlatformProfile.isTv ? 1.03 : 1,
       alignment: Alignment.centerLeft,
@@ -668,7 +670,7 @@ class _CategoryItem extends StatelessWidget {
             ? (focused ? Colors.white : (selected ? const Color(0x29FFFFFF) : const Color(0x00FFFFFF)))
             : (selected ? const Color(0x1FFFFFFF) : (focused ? const Color(0x0FFFFFFF) : const Color(0x00FFFFFF)));
         return AnimatedContainer(
-          duration: VMotion.focus,
+          duration: VMotion.duration(context, VMotion.focus),
           height: tv ? 68 : 56,
           padding: const EdgeInsets.symmetric(horizontal: 22),
           decoration: BoxDecoration(color: bg, borderRadius: BorderRadius.circular(VRadius.sm)),

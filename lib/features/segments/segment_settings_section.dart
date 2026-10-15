@@ -112,12 +112,18 @@ class _SegmentSettingsSectionState extends ConsumerState<SegmentSettingsSection>
       subtitle: desc,
       status: p.apiKey.isNotEmpty ? '已填写 Key' : (p.id == 'publicmetadb' ? '未填写 Key' : null),
       trailing: [
-        SmallIconButton(icon: Icons.arrow_upward_rounded, onPressed: i > 0 ? () => _move(s, i, -1) : null),
+        SmallIconButton(
+          icon: Icons.arrow_upward_rounded,
+          semanticLabel: '上移 $name',
+          onPressed: i > 0 ? () => _move(s, i, -1) : null,
+        ),
         SmallIconButton(
           icon: Icons.arrow_downward_rounded,
+          semanticLabel: '下移 $name',
           onPressed: i < s.providers.length - 1 ? () => _move(s, i, 1) : null,
         ),
         SmallSwitch(
+          label: name,
           value: p.enabled,
           onChanged: (v) {
             if (v && p.id == 'publicmetadb' && p.apiKey.isEmpty) {

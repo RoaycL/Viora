@@ -108,7 +108,7 @@ class _VTextFieldState extends State<VTextField> {
                   skipTraversal: true,
                   onKeyEvent: _onKey,
                   child: AnimatedContainer(
-                    duration: VMotion.focus,
+                    duration: VMotion.duration(context, VMotion.focus),
                     padding: const EdgeInsets.symmetric(horizontal: 22),
                     height: 68,
                     decoration: BoxDecoration(
@@ -154,14 +154,16 @@ class _VTextFieldState extends State<VTextField> {
                 const SizedBox(width: 12),
                 VFocusable(
                   focusNode: _eyeNode,
+                  semanticLabel: _reveal ? '隐藏密码' : '显示密码',
                   radius: VRadius.md,
                   scale: 1.04,
                   showRing: false,
                   onActivate: () => setState(() => _reveal = !_reveal),
                   builder: (context, focused) => Tooltip(
+                    excludeFromSemantics: true,
                     message: _reveal ? '隐藏密码' : '显示密码',
                     child: AnimatedContainer(
-                      duration: VMotion.focus,
+                      duration: VMotion.duration(context, VMotion.focus),
                       width: 68,
                       height: 68,
                       decoration: BoxDecoration(
@@ -211,12 +213,15 @@ class VToggle extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return VFocusable(
+      semanticLabel: label,
+      semanticValue: subtitle,
+      toggled: value,
       radius: VRadius.md,
       scale: 1.02,
       alignment: Alignment.centerLeft,
       onActivate: () => onChanged(!value),
       builder: (context, focused) => AnimatedContainer(
-        duration: VMotion.focus,
+        duration: VMotion.duration(context, VMotion.focus),
         width: width,
         constraints: const BoxConstraints(minHeight: 72),
         padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
@@ -238,7 +243,7 @@ class VToggle extends StatelessWidget {
             ),
             const SizedBox(width: 16),
             AnimatedContainer(
-              duration: VMotion.focus,
+              duration: VMotion.duration(context, VMotion.focus),
               width: 64,
               height: 36,
               padding: const EdgeInsets.all(4),
@@ -280,6 +285,8 @@ class VChoice<T> extends StatelessWidget {
           children: [
             for (final (v, text) in options) ...[
               VFocusable(
+                semanticLabel: text,
+                selected: v == value,
                 radius: 999,
                 scale: 1.05,
                 showRing: false,
@@ -287,7 +294,7 @@ class VChoice<T> extends StatelessWidget {
                 builder: (context, focused) {
                   final selected = v == value;
                   return AnimatedContainer(
-                    duration: VMotion.focus,
+                    duration: VMotion.duration(context, VMotion.focus),
                     height: 60,
                     padding: const EdgeInsets.symmetric(horizontal: 30),
                     alignment: Alignment.center,

@@ -66,6 +66,11 @@ abstract final class VMotion {
   static const scroll = Duration(milliseconds: 250);
   static const backdrop = Duration(milliseconds: 400);
   static const focusScale = 1.08;
+
+  /// 系统要求减少动效时，控件直接呈现目标状态；焦点描边和按下反馈仍保留。
+  static bool reduced(BuildContext context) => MediaQuery.maybeDisableAnimationsOf(context) ?? false;
+
+  static Duration duration(BuildContext context, Duration normal) => reduced(context) ? Duration.zero : normal;
 }
 
 /// 系统字体回退：Windows 用微软雅黑，Android 用 Noto Sans CJK。

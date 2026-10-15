@@ -202,12 +202,14 @@ class SelectChip extends StatelessWidget {
   Widget build(BuildContext context) {
     return VFocusable(
       focusNode: node,
+      semanticLabel: label,
+      selected: selected,
       radius: 999,
       scale: 1.05,
       showRing: false,
       onActivate: onTap,
       builder: (context, focused) => AnimatedContainer(
-        duration: VMotion.focus,
+        duration: VMotion.duration(context, VMotion.focus),
         height: 56,
         padding: const EdgeInsets.symmetric(horizontal: 26),
         alignment: Alignment.center,
@@ -263,11 +265,12 @@ class SourceCard extends ConsumerWidget {
     final latency = option.latencyMs;
     return VFocusable(
       focusNode: node,
+      selected: selected,
       radius: VRadius.card,
       scale: 1.05,
       onActivate: onTap,
       builder: (context, focused) => AnimatedContainer(
-        duration: VMotion.focus,
+        duration: VMotion.duration(context, VMotion.focus),
         width: width,
         height: height,
         padding: const EdgeInsets.fromLTRB(24, 20, 20, 18),

@@ -140,13 +140,16 @@ class _RatingsSettingsSectionState extends ConsumerState<RatingsSettingsSection>
             trailing: [
               SmallIconButton(
                 icon: Icons.arrow_upward_rounded,
+                semanticLabel: '上移 ${p.id.name}',
                 onPressed: i == 0 ? null : () => _move(settings, i, -1),
               ),
               SmallIconButton(
                 icon: Icons.arrow_downward_rounded,
+                semanticLabel: '下移 ${p.id.name}',
                 onPressed: i == settings.providers.length - 1 ? null : () => _move(settings, i, 1),
               ),
               SmallSwitch(
+                label: '${p.id == RatingProviderId.omdb ? 'OMDb' : 'Trakt'} 评分',
                 value: p.enabled && p.configured,
                 onChanged: (enabled) {
                   if (_saving) return;
