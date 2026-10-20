@@ -24,7 +24,10 @@ final mediaIndexProvider = FutureProvider<MediaIndex?>((ref) async {
     index?.close();
     return null;
   }
-  index?.bindAccounts(indexAccountScopes(ref.read(configProvider)));
+  index?.bindAccounts(
+    indexAccountScopes(ref.read(configProvider)),
+    legacy: legacyIndexAccountScopes(ref.read(configProvider)),
+  );
   if (index != null) {
     ref.listen(configProvider.select(indexAccountsKey), (prev, next) {
       if (prev == next || index.isClosed) return;

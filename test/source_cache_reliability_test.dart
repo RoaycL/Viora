@@ -285,12 +285,13 @@ void main() {
     expect(AppLog.dump(appVersion: 'test'), contains(marker));
   });
 
-  test('account identity ignores tokens and line order but isolates user, origin and parental view', () {
+  test('account identity ignores tokens and lines but isolates user and parental view', () {
     expect(accountScope(server.copyWith(token: 'new', password: 'new', name: 'renamed')), accountScope(server));
     expect(accountScope(server.copyWith(userId: 'u2')), isNot(accountScope(server)));
+    // 改线路地址 / 加线路不算换账号（换到另一台服务器时，重新登录拿到的用户 ID 不同，仍会隔离）
     expect(
       accountScope(server.copyWith(lines: [server.lines.single.copyWith(url: 'https://other.example')])),
-      isNot(accountScope(server)),
+      accountScope(server),
     );
     expect(
       mediaFeedScope(AppConfig(servers: [server])),
@@ -487,6 +488,26 @@ void main() {
     expect(container.read(indexSyncProvider)['s']!.error, isNotNull);
     expect(index.syncState('s').fullAt, isNull);
     expect(index.search('keep').single.id, 'keep');
+  });
+
+  test('upgrading from the line-based identity keeps the index and local watch history', () async {
+    final index = (await MediaIndex.open(path: ':memory:'))!;
+    addTearDown(index.close);
+    index.bindAccounts({'s': legacyAccountScope(server)});
+    index.upsert('s', [movie('keep')]);
+    index.bindAccounts({'s': accountScope(server)}, legacy: {'s': legacyAccountScope(server)});
+    expect(index.search('keep').single.id, 'keep');
+    expect(index.hasAccount('s', accountScope(server)), isTrue);
+    // 之后真正换账号仍然清空
+    index.bindAccounts({'s': 'someone-else'});
+    expect(index.count('s'), 0);
+
+    SharedPreferences.setMockInitialValues({
+      'viora.playHistory.v1': '{"v2/${legacyAccountScope(server)}/ep1": 1700000000000}',
+    });
+    await PlayHistory.load();
+    PlayHistory.bindAccount('s', accountScope(server), legacy: legacyAccountScope(server));
+    expect(PlayHistory.lastPlayed(movie('ep1')), DateTime.fromMillisecondsSinceEpoch(1700000000000));
   });
 
   test('index migrates unscoped rows and clears only changed or removed accounts', () async {

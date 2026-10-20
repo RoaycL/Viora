@@ -13,7 +13,31 @@ abstract final class PlayHistory {
   static Map<String, int> _times = {};
   static final _accounts = <String, String>{};
 
-  static void bindAccount(String serverId, String scope) => _accounts[serverId] = scope;
+  /// [legacy]：旧格式的账号身份；本机记录还在旧身份下时迁移过来（升级后观看时间不丢）
+  static void bindAccount(String serverId, String scope, {String? legacy}) {
+    _accounts[serverId] = scope;
+    if (legacy == null || legacy == scope) return;
+    final from = 'v2/$legacy/', to = 'v2/$scope/';
+    final moved = [
+      for (final k in _times.keys)
+        if (k.startsWith(from)) k,
+    ];
+    if (moved.isEmpty) return;
+    for (final k in moved) {
+      final v = _times.remove(k)!;
+      _times.putIfAbsent('$to${k.substring(from.length)}', () => v);
+    }
+    _save();
+  }
+
+  static Future<void> _save() async {
+    try {
+      await (await SharedPreferences.getInstance()).setString(_key, jsonEncode(_times));
+    } catch (e) {
+      debugPrint('play history: $e');
+    }
+  }
+
   static void unbindAccount(String serverId) => _accounts.remove(serverId);
 
   static String? _id(String serverId, String itemId, {String? scope}) {

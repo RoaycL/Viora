@@ -30,7 +30,7 @@ final serverClientProvider = Provider.family<EmbyClient?, String>((ref, serverId
   }
   if (server == null) return null;
   if (server.loggedIn) {
-    PlayHistory.bindAccount(serverId, accountScope(server));
+    PlayHistory.bindAccount(serverId, accountScope(server), legacy: legacyAccountScope(server));
     PlaybackPreloader.bindAccount(serverId, accountScope(server));
   }
   final store = ref.read(configProvider.notifier);
