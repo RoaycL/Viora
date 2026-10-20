@@ -444,6 +444,51 @@ void main() {
     expect(container.read(indexSyncProvider)['s']!.error, isNotNull);
   });
 
+  test('full index sync continues when new items are added on the server mid-sync', () async {
+    final index = (await MediaIndex.open(path: ':memory:'))!;
+    addTearDown(index.close);
+    index.bindAccounts({'s': accountScope(server)});
+    // 第一页时服务器共 201 部；同步过程中又入库一部，第二页时总数变成 202（新条目按入库时间排在最后）
+    final client = FeedClient(server)
+      ..page = (start) async => start == 0
+          ? PagedItems([for (var i = 0; i < 200; i++) movie('m$i')], 201)
+          : PagedItems([movie('m200'), movie('m201')], 202);
+    final container = ProviderContainer(
+      overrides: [
+        mediaIndexProvider.overrideWith((ref) async => index),
+        serverClientProvider.overrideWith((ref, id) => client),
+      ],
+    );
+    addTearDown(container.dispose);
+    await container.read(configProvider.notifier).update((c) => AppConfig(servers: [server]));
+    await container.read(indexSyncProvider.notifier).syncServer('s', forceFull: true);
+    expect(container.read(indexSyncProvider)['s']!.error, isNull);
+    expect(index.count('s'), 202);
+    expect(index.syncState('s').fullAt, isNotNull);
+  });
+
+  test('full index sync still aborts when the server total shrinks mid-sync', () async {
+    final index = (await MediaIndex.open(path: ':memory:'))!;
+    addTearDown(index.close);
+    index.bindAccounts({'s': accountScope(server)});
+    index.upsert('s', [movie('keep')]);
+    final client = FeedClient(server)
+      ..page = (start) async =>
+          start == 0 ? PagedItems([for (var i = 0; i < 200; i++) movie('m$i')], 202) : PagedItems([movie('m200')], 201);
+    final container = ProviderContainer(
+      overrides: [
+        mediaIndexProvider.overrideWith((ref) async => index),
+        serverClientProvider.overrideWith((ref, id) => client),
+      ],
+    );
+    addTearDown(container.dispose);
+    await container.read(configProvider.notifier).update((c) => AppConfig(servers: [server]));
+    await container.read(indexSyncProvider.notifier).syncServer('s', forceFull: true);
+    expect(container.read(indexSyncProvider)['s']!.error, isNotNull);
+    expect(index.syncState('s').fullAt, isNull);
+    expect(index.search('keep').single.id, 'keep');
+  });
+
   test('index migrates unscoped rows and clears only changed or removed accounts', () async {
     final index = (await MediaIndex.open(path: ':memory:'))!;
     addTearDown(index.close);

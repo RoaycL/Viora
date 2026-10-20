@@ -275,6 +275,17 @@ final librarySeriesEpisodesProvider = FutureProvider.autoDispose.family<List<Med
   return unique.values.toList();
 });
 
+/// 只查当前服务器上这一集的版本：详情页先用它显示「播放」，不用等所有服务器搜完（其他服务器慢时要等十几秒）
+final homeEpisodeSourcesProvider = FutureProvider.autoDispose.family<List<SourceOption>, LibraryEpisodeKey>((
+  ref,
+  key,
+) async {
+  final episodes = await ref.watch(seriesEpisodesProvider(key.series.home).future);
+  final matches = episodes.where((e) => e.seasonNumber == key.season && e.episodeNumber == key.episode).toList();
+  if (matches.isEmpty) return const [];
+  return rankSources(await _optionsOf(ref, matches), preferredServerId: key.series.home.serverId);
+});
+
 /// 用季号和集号查实际资源，不根据播出日期过滤，也不拿下一集替代用户选择的缺集。
 final libraryEpisodeSourcesProvider = FutureProvider.autoDispose.family<List<SourceOption>, LibraryEpisodeKey>((
   ref,
