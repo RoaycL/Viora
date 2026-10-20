@@ -162,7 +162,9 @@ void main() {
       requests: requests,
       fetch: (r) => r == TmdbRow.nowPlaying || r == TmdbRow.onTheAir ? slow.future : titles(r),
     );
-    expect(requests.keys, unorderedEquals([TmdbRow.trendingDay, TmdbRow.nowPlaying, TmdbRow.onTheAir]));
+    // 两个慢预取占满后台队列；只有挂载范围内（视口外约两行）的行自己发起请求，远端行还没请求
+    expect(requests.keys, containsAll([TmdbRow.trendingDay, TmdbRow.nowPlaying, TmdbRow.onTheAir]));
+    expect(requests.containsKey(TmdbRow.topRatedTv), isFalse);
     await press(tester, LogicalKeyboardKey.arrowDown, repeats: 6);
     expect(focused, 'row9#0');
     expect(requests[TmdbRow.topRatedTv], 1);
@@ -203,7 +205,8 @@ void main() {
     );
     expect(find.text('待看-0'), findsNothing);
     final images = client.requested.where((r) => r.path.startsWith('/ahead-')).toSet();
-    expect(images.length, inInclusiveRange(1, 8));
+    // 预取接下来两行未挂载行的首屏海报（每行最多 8 张），不预取整行
+    expect(images.length, inInclusiveRange(1, 16));
     expect(images.any((r) => r.path == '/ahead-0.jpg'), isTrue);
     expect(images.any((r) => r.path == '/ahead-29.jpg'), isFalse);
     expect(images.every((r) => r.size == 'w342'), isTrue);

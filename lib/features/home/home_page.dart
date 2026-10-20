@@ -75,6 +75,10 @@ class _HomeBodyState extends ConsumerState<_HomeBody> {
   final _scroll = ScrollController();
   final _anchor = FocusScopeNode(debugLabel: 'home-navigation');
   late final _focus = HomeFocusController(anchor: _anchor, revealRow: _revealRow);
+
+  /// 视口外提前挂载的范围：约两行。原来只有 160（不到半行），按方向键下移时整行才开始构建、下载海报
+  static const _mountExtent = 900.0;
+
   final _offsets = <int, double>{};
   final _extents = <int, double>{};
   String? _mediaScope;
@@ -141,7 +145,7 @@ class _HomeBodyState extends ConsumerState<_HomeBody> {
     _imagePrefetch = client == null
         ? null
         : HomePrefetchQueue<ImageProvider>(
-            concurrency: 1,
+            concurrency: PlatformProfile.isTv ? 2 : 4,
             load: (image) => precacheImage(image, context, onError: (_, _) {}),
           );
   }
@@ -166,9 +170,9 @@ class _HomeBodyState extends ConsumerState<_HomeBody> {
           return priority(a).compareTo(priority(b));
         });
       _dataPrefetch?.schedule(rows);
-      // 卡片仍只挂载到视口外 160；只预取下一未挂载行的首屏小图，不提前取大背景/详情。
-      final next = _focus.order.where((row) => _offsets[row]! >= bottom + 160).firstOrNull;
-      _imagePrefetch?.schedule(next == null ? const [] : _rowImages(next));
+      // 预取接下来两个还没挂载的行的首屏小图，不提前取大背景 / 详情。
+      final next = _focus.order.where((row) => _offsets[row]! >= bottom + _mountExtent).take(2);
+      _imagePrefetch?.schedule([for (final row in next) ..._rowImages(row)]);
     });
     WidgetsBinding.instance.ensureVisualUpdate();
   }
@@ -762,7 +766,7 @@ class _HomeBodyState extends ConsumerState<_HomeBody> {
                   child: ListView.builder(
                     controller: _scroll,
                     padding: const EdgeInsets.only(bottom: 40),
-                    scrollCacheExtent: const ScrollCacheExtent.pixels(160),
+                    scrollCacheExtent: ScrollCacheExtent.pixels(_mountExtent),
                     itemCount: sections.length + 1,
                     itemExtentBuilder: (i, _) =>
                         i == sections.length ? math.max(112.0, 72 + textScale.scale(20) * 1.5) : sections[i].height,
