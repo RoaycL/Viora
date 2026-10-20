@@ -285,12 +285,13 @@ void main() {
     expect(AppLog.dump(appVersion: 'test'), contains(marker));
   });
 
-  test('account identity ignores tokens and line order but isolates user, origin and parental view', () {
+  test('account identity ignores tokens and lines but isolates user and parental view', () {
     expect(accountScope(server.copyWith(token: 'new', password: 'new', name: 'renamed')), accountScope(server));
     expect(accountScope(server.copyWith(userId: 'u2')), isNot(accountScope(server)));
+    // 改线路地址 / 加线路不算换账号（换到另一台服务器时，重新登录拿到的用户 ID 不同，仍会隔离）
     expect(
       accountScope(server.copyWith(lines: [server.lines.single.copyWith(url: 'https://other.example')])),
-      isNot(accountScope(server)),
+      accountScope(server),
     );
     expect(
       mediaFeedScope(AppConfig(servers: [server])),
@@ -442,6 +443,71 @@ void main() {
     expect(index.search('keep').single.id, 'keep');
     expect(index.syncState('s').fullAt, isNull);
     expect(container.read(indexSyncProvider)['s']!.error, isNotNull);
+  });
+
+  test('full index sync continues when new items are added on the server mid-sync', () async {
+    final index = (await MediaIndex.open(path: ':memory:'))!;
+    addTearDown(index.close);
+    index.bindAccounts({'s': accountScope(server)});
+    // 第一页时服务器共 201 部；同步过程中又入库一部，第二页时总数变成 202（新条目按入库时间排在最后）
+    final client = FeedClient(server)
+      ..page = (start) async => start == 0
+          ? PagedItems([for (var i = 0; i < 200; i++) movie('m$i')], 201)
+          : PagedItems([movie('m200'), movie('m201')], 202);
+    final container = ProviderContainer(
+      overrides: [
+        mediaIndexProvider.overrideWith((ref) async => index),
+        serverClientProvider.overrideWith((ref, id) => client),
+      ],
+    );
+    addTearDown(container.dispose);
+    await container.read(configProvider.notifier).update((c) => AppConfig(servers: [server]));
+    await container.read(indexSyncProvider.notifier).syncServer('s', forceFull: true);
+    expect(container.read(indexSyncProvider)['s']!.error, isNull);
+    expect(index.count('s'), 202);
+    expect(index.syncState('s').fullAt, isNotNull);
+  });
+
+  test('full index sync still aborts when the server total shrinks mid-sync', () async {
+    final index = (await MediaIndex.open(path: ':memory:'))!;
+    addTearDown(index.close);
+    index.bindAccounts({'s': accountScope(server)});
+    index.upsert('s', [movie('keep')]);
+    final client = FeedClient(server)
+      ..page = (start) async =>
+          start == 0 ? PagedItems([for (var i = 0; i < 200; i++) movie('m$i')], 202) : PagedItems([movie('m200')], 201);
+    final container = ProviderContainer(
+      overrides: [
+        mediaIndexProvider.overrideWith((ref) async => index),
+        serverClientProvider.overrideWith((ref, id) => client),
+      ],
+    );
+    addTearDown(container.dispose);
+    await container.read(configProvider.notifier).update((c) => AppConfig(servers: [server]));
+    await container.read(indexSyncProvider.notifier).syncServer('s', forceFull: true);
+    expect(container.read(indexSyncProvider)['s']!.error, isNotNull);
+    expect(index.syncState('s').fullAt, isNull);
+    expect(index.search('keep').single.id, 'keep');
+  });
+
+  test('upgrading from the line-based identity keeps the index and local watch history', () async {
+    final index = (await MediaIndex.open(path: ':memory:'))!;
+    addTearDown(index.close);
+    index.bindAccounts({'s': legacyAccountScope(server)});
+    index.upsert('s', [movie('keep')]);
+    index.bindAccounts({'s': accountScope(server)}, legacy: {'s': legacyAccountScope(server)});
+    expect(index.search('keep').single.id, 'keep');
+    expect(index.hasAccount('s', accountScope(server)), isTrue);
+    // 之后真正换账号仍然清空
+    index.bindAccounts({'s': 'someone-else'});
+    expect(index.count('s'), 0);
+
+    SharedPreferences.setMockInitialValues({
+      'viora.playHistory.v1': '{"v2/${legacyAccountScope(server)}/ep1": 1700000000000}',
+    });
+    await PlayHistory.load();
+    PlayHistory.bindAccount('s', accountScope(server), legacy: legacyAccountScope(server));
+    expect(PlayHistory.lastPlayed(movie('ep1')), DateTime.fromMillisecondsSinceEpoch(1700000000000));
   });
 
   test('index migrates unscoped rows and clears only changed or removed accounts', () async {

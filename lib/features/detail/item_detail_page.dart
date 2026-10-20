@@ -156,7 +156,8 @@ class _ItemDetailPageState extends ConsumerState<ItemDetailPage> {
     final isSeries = item.kind == MediaKind.series;
     final seasons = isSeries ? ref.watch(_seasonsProvider(_key)).value ?? const <MediaItem>[] : const <MediaItem>[];
     final seasonId = _seasonId ?? seasons.firstOrNull?.id;
-    final nextUp = isSeries ? ref.watch(_nextUpProvider(_key)).value : null;
+    final nextUpAsync = isSeries ? ref.watch(_nextUpProvider(_key)) : null;
+    final nextUp = nextUpAsync?.value;
     final zh = localizedMeta(ref, item);
     final tmdbId = int.tryParse(item.tmdbId ?? '');
     final tmdb = tmdbId != null && (isSeries || item.kind == MediaKind.movie)
@@ -166,7 +167,11 @@ class _ItemDetailPageState extends ConsumerState<ItemDetailPage> {
     final catalogSeasons = useCatalog ? mergeSeasonCatalog(tmdb.seasonList, seasons) : const <TmdbSeason>[];
     final libraryKey = useCatalog ? (home: _key, title: searchKeyOf(tmdb)) : null;
     final libraryAsync = libraryKey == null ? null : ref.watch(librarySeriesEpisodesProvider(libraryKey));
-    final library = libraryAsync?.isLoading == true ? const <MediaItem>[] : libraryAsync?.value ?? const <MediaItem>[];
+    // 所有服务器的集列表还没回来时，先用当前服务器自己的集
+    final ownEpisodes = libraryKey == null ? null : ref.watch(seriesEpisodesProvider(libraryKey.home)).value;
+    final library = libraryAsync?.isLoading == true || libraryAsync?.hasValue != true
+        ? ownEpisodes ?? const <MediaItem>[]
+        : libraryAsync!.value!;
     final start = nextUp?.seasonNumber != null && nextUp?.episodeNumber != null
         ? (nextUp!.seasonNumber!, nextUp.episodeNumber!)
         : pickStartEpisode(library);
@@ -204,12 +209,27 @@ class _ItemDetailPageState extends ConsumerState<ItemDetailPage> {
     final favorite = _favorite ?? item.favorite;
     final played = _played ?? item.played;
     final serverTarget = isSeries ? (nextUp ?? episodes.firstOrNull) : item;
+    // 「下一集」还没确定时先不查资源：否则会先按默认的第 1 集向各服务器发一轮请求，随后又换成真正要看的那集
+    final episodeSettled = _catalogEpisode != null || nextUpAsync == null || !nextUpAsync.isLoading;
     final optionsAsync = libraryKey != null
-        ? ref.watch(libraryEpisodeSourcesProvider((series: libraryKey, season: catalogSeason, episode: catalogEpisode)))
+        ? (episodeSettled
+              ? ref.watch(
+                  libraryEpisodeSourcesProvider((series: libraryKey, season: catalogSeason, episode: catalogEpisode)),
+                )
+              : const AsyncValue<List<SourceOption>>.loading())
         : serverTarget == null
         ? null
         : ref.watch(sourceOptionsProvider((serverId: serverTarget.serverId, itemId: serverTarget.id)));
-    final options = visibleSourceOptions(ref.read(configProvider), optionsAsync?.value ?? const <SourceOption>[]);
+    // 所有服务器的版本还在查：先用当前服务器的版本（能立刻播放），查完再换成完整列表
+    final homeOptions = libraryKey != null && episodeSettled && optionsAsync?.hasValue != true
+        ? ref
+              .watch(homeEpisodeSourcesProvider((series: libraryKey, season: catalogSeason, episode: catalogEpisode)))
+              .value
+        : null;
+    final options = visibleSourceOptions(
+      ref.read(configProvider),
+      optionsAsync?.value ?? homeOptions ?? const <SourceOption>[],
+    );
     final selected = options.where((o) => sourceKeyOf(o) == _sourceKey).firstOrNull ?? options.firstOrNull;
     final playTarget = useCatalog ? selected?.item : serverTarget;
     final resumeAt = playTarget?.position ?? Duration.zero;

@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -259,6 +261,7 @@ void main() {
     bool seasonFails = false,
     bool tmdbEntry = false,
     bool withSecondSeason = false,
+    Future<List<MediaItem>>? otherServers,
   }) async {
     tester.view.physicalSize = const Size(1920, 1600);
     tester.view.devicePixelRatio = 1;
@@ -291,7 +294,7 @@ void main() {
             if (seasonFails) throw StateError('offline');
             return key.season == 1 ? futureEpisodes : [const TmdbEpisode(season: 2, number: 1, name: '第二季')];
           }),
-          tmdbLibrarySearchProvider.overrideWith((ref, key) async => [show('other')]),
+          tmdbLibrarySearchProvider.overrideWith((ref, key) => otherServers ?? Future.value([show('other')])),
           mediaIndexProvider.overrideWith((ref) async => null),
         ],
         child: MaterialApp.router(routerConfig: router),
@@ -311,6 +314,18 @@ void main() {
     expect(find.text('暂无 S1E3 资源'), findsOneWidget);
     expect(find.text('暂未找到第 1 季第 3 集的播放资源'), findsOneWidget);
     expect(find.textContaining('playing'), findsNothing);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('library detail can play the home copy before slow servers finish searching', (tester) async {
+    final slow = Completer<List<MediaItem>>();
+    await pumpDetail(tester, otherServers: slow.future);
+    // 其他服务器还在搜索：当前服务器的第 1 集已经可以播放，不显示「正在查找」
+    expect(find.text('播放 S1E1'), findsOneWidget);
+    expect(find.textContaining('正在查找'), findsNothing);
+    slow.complete([show('other')]);
+    await tester.pumpAndSettle();
+    expect(find.text('播放 S1E1'), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
 

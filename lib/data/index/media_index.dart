@@ -104,7 +104,8 @@ class MediaIndex {
   }
 
   /// 旧索引没有账号信息：首次绑定时清理该来源，再全量重建；换账号 / 后端同样处理。
-  void bindAccounts(Map<String, String> accounts) {
+  /// [legacy]：旧格式的账号身份，库里记录的是它时视为同一账号，只更新记录、不清数据（升级迁移用）。
+  void bindAccounts(Map<String, String> accounts, {Map<String, String> legacy = const {}}) {
     final previous = {
       for (final row in _db.select('SELECT server_id, scope FROM index_accounts'))
         row['server_id'] as String: row['scope'] as String,
@@ -118,7 +119,8 @@ class MediaIndex {
         for (final r in _db.select('SELECT server_id FROM sync_state')) r['server_id'] as String,
       };
       for (final id in known) {
-        if (accounts[id] != previous[id] || !accounts.containsKey(id)) removeServer(id);
+        final same = accounts[id] == previous[id] || (previous[id] != null && legacy[id] == previous[id]);
+        if (!same || !accounts.containsKey(id)) removeServer(id);
       }
       for (final entry in accounts.entries) {
         _db.execute('INSERT OR REPLACE INTO index_accounts(server_id, scope) VALUES (?, ?)', [entry.key, entry.value]);

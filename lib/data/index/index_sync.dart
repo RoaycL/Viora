@@ -8,9 +8,10 @@ import '../config/config_store.dart';
 import '../media/server_registry.dart';
 import 'media_index.dart';
 
-/// 索引数据库（Web 上为 null，聚合功能退化为实时搜索）
+/// 索引数据库（Web 上为 null，聚合功能退化为实时搜索）。
+/// 整个应用只打开一次：服务器登录 / 退出、换账号时在同一个库上重新绑定账号（清掉变化的服务器），
+/// 不关闭重开——重开期间页面还会拿到已关闭的旧库去查询（首页「最近入库」闪空、删除服务器报错）。
 final mediaIndexProvider = FutureProvider<MediaIndex?>((ref) async {
-  ref.watch(configProvider.select(indexAccountsKey));
   var active = true;
   MediaIndex? opened;
   ref.onDispose(() {
@@ -23,7 +24,17 @@ final mediaIndexProvider = FutureProvider<MediaIndex?>((ref) async {
     index?.close();
     return null;
   }
-  index?.bindAccounts(indexAccountScopes(ref.read(configProvider)));
+  index?.bindAccounts(
+    indexAccountScopes(ref.read(configProvider)),
+    legacy: legacyIndexAccountScopes(ref.read(configProvider)),
+  );
+  if (index != null) {
+    ref.listen(configProvider.select(indexAccountsKey), (prev, next) {
+      if (prev == next || index.isClosed) return;
+      index.bindAccounts(indexAccountScopes(ref.read(configProvider)));
+      ref.invalidate(indexRevisionProvider);
+    });
+  }
   return index;
 });
 
@@ -115,23 +126,29 @@ class IndexSyncController extends Notifier<Map<String, SyncStatus>> {
           userData: false,
         );
         if (page.totalKnown) {
-          if (total != null && total != page.total) throw const MediaServerException('索引分页总数变化，请重试');
+          // 同步期间服务器新入库：按入库时间升序分页，新条目排在最后，前面的分页位置不变，接着同步到新的总数即可。
+          // 全量同步时总数变少（有条目被删）会让后面的分页整体前移、漏掉条目，而全量结束会删除没出现的条目，所以只能放弃重来；
+          // 增量同步漏掉的条目下次增量还会拿到，照常继续。
+          if (total != null && page.total < total && full) throw const MediaServerException('索引分页总数变少，请重试');
           total = page.total;
         }
-        if (page.items.any((item) => !seen.add(item.id))) {
-          throw const MediaServerException('索引分页重复，请重试');
-        }
+        final fresh = [
+          for (final item in page.items)
+            if (seen.add(item.id)) item,
+        ];
+        // 全量同步出现重复说明分页错位（可能漏条目），放弃重来；增量同步跳过重复即可
+        if (full && fresh.length != page.items.length) throw const MediaServerException('索引分页重复，请重试');
         if (page.receivedCount == 0 && total != null && start != total) {
           throw const MediaServerException('索引分页响应不完整，请重试');
         }
         // 拼音、标题归一化、JSON 在后台算（16 台服务器同步时不卡界面），主线程只写库
-        final rows = await compute(prepareIndexRows, page.items);
+        final rows = await compute(prepareIndexRows, fresh);
         if (!current()) return;
         index.upsertPrepared(serverId, rows, gen: gen);
         start += page.receivedCount;
         _set(serverId, SyncStatus(running: true, done: start, total: total, count: index.count(serverId)));
-        if (total != null && start > total) throw const MediaServerException('索引分页数量不一致，请重试');
-        if (page.receivedCount == 0 || (total != null && start == total)) break;
+        if (total != null && start > total && full) throw const MediaServerException('索引分页数量不一致，请重试');
+        if (page.receivedCount == 0 || (total != null && start >= total)) break;
         if (!page.totalKnown && page.items.isEmpty) {
           throw const MediaServerException('索引分页缺少总数且无可用条目，请重试');
         }
