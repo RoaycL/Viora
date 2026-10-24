@@ -33,10 +33,12 @@ Future<void> pumpHome(
   VoidCallback? people,
   List<Override> overrides = const [],
   TmdbClient? client,
+  PlatformProfile profile = PlatformProfile.tv,
+  Size viewport = const Size(1920, 1080),
 }) async {
-  PlatformProfile.debugOverride = PlatformProfile.tv;
+  PlatformProfile.debugOverride = profile;
   autoCheckUpdatesOnLaunch = false;
-  tester.view.physicalSize = const Size(1920, 1080);
+  tester.view.physicalSize = viewport;
   tester.view.devicePixelRatio = 1;
   addTearDown(tester.view.reset);
   await tester.pumpWidget(

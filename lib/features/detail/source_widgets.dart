@@ -51,13 +51,46 @@ class SourcesSection extends StatefulWidget {
   static const rows = 3;
 
   @override
-  State<SourcesSection> createState() => _SourcesSectionState();
+  State<SourcesSection> createState() => SourcesSectionState();
 }
 
-class _SourcesSectionState extends State<SourcesSection> {
+class SourcesSectionState extends State<SourcesSection> {
   String? _group;
   bool _expanded = false;
   final _infoKey = GlobalKey();
+  int _revealGeneration = 0;
+
+  /// 首屏快捷入口使用同一资源区，不重复查询或复制播放逻辑。
+  Future<void> reveal() async {
+    final generation = ++_revealGeneration;
+    // 确认/鼠标激活刚请求的触发按钮焦点会在本轮微任务中提交。
+    await Future<void>.value();
+    if (!mounted || generation != _revealGeneration) return;
+    final previousFocus = FocusManager.instance.primaryFocus;
+    Scrollable.ensureVisible(context, alignment: .12, duration: VMotion.duration(context, VMotion.scroll));
+    final controller = RowFocusScope.of(context);
+    final options = widget.options;
+    final rowIndex = options.isEmpty ? widget.firstRow : widget.firstRow + 1;
+    final row = controller.rowAt(rowIndex);
+    if (row == null || row.length == 0) return;
+    // 切到当前选择所在的清晰度，再露出该版本。
+    final selected = widget.selected ?? options.firstOrNull;
+    if (selected != null && _group != selected.group) {
+      setState(() => _group = selected.group);
+      await WidgetsBinding.instance.endOfFrame;
+    }
+    if (!mounted || generation != _revealGeneration) return;
+    final shown = options.where((o) => o.group == selected?.group).toList();
+    final index = selected == null ? 0 : shown.indexWhere((o) => sourceKeyOf(o) == sourceKeyOf(selected));
+    final target = controller.rowAt(rowIndex);
+    if (target == null || target.length == 0) return;
+    final node = target is RevealableFocusRow
+        ? await target.revealNode(index.clamp(0, target.length - 1))
+        : target.nodeAt(0);
+    if (!mounted || generation != _revealGeneration || ModalRoute.of(context)?.isCurrent != true) return;
+    if (FocusManager.instance.primaryFocus != previousFocus) return;
+    node?.requestFocus();
+  }
 
   void _toggle() {
     setState(() => _expanded = !_expanded);
@@ -68,7 +101,7 @@ class _SourcesSectionState extends State<SourcesSection> {
       if (ctx == null || !ctx.mounted) return;
       Scrollable.ensureVisible(
         ctx,
-        duration: const Duration(milliseconds: 300),
+        duration: VMotion.duration(context, VMotion.scroll),
         curve: Curves.easeOutCubic,
         alignmentPolicy: ScrollPositionAlignmentPolicy.keepVisibleAtEnd,
       );
@@ -99,18 +132,16 @@ class _SourcesSectionState extends State<SourcesSection> {
 
     if (options.isEmpty) {
       if (widget.loading) {
-        return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [header, const SourceSkeletonRow()]);
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [header, _status('正在查找播放资源'), const SourceSkeletonRow()],
+        );
       }
       if (widget.emptyText == null) return const SizedBox.shrink();
       return Column(
         crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          header,
-          Padding(
-            padding: const EdgeInsets.fromLTRB(VSpace.safeH, 0, VSpace.safeH, 32),
-            child: Text(widget.emptyText!, style: VText.label.copyWith(color: VColors.textTertiary)),
-          ),
-        ],
+        // 与「正在查找」/ 资源列表的清晰度行同一位置、同一结构：查找结束变成「没有资源」时，焦点留在这一行
+        children: [header, _status(widget.emptyText!), const SizedBox(height: 32)],
       );
     }
 
@@ -127,28 +158,28 @@ class _SourcesSectionState extends State<SourcesSection> {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         header,
-        if (groups.length > 1) ...[
-          Padding(
-            padding: const EdgeInsets.only(left: VSpace.safeH),
-            child: FocusButtonRow(
-              rowIndex: widget.firstRow,
-              spacing: 12,
-              children: [
-                for (final g in groups)
-                  (node) => SelectChip(
-                    node: node,
-                    label: '$g · ${options.where((o) => o.group == g).length}',
-                    selected: g == group,
-                    onTap: () => setState(() => _group = g),
-                  ),
-              ],
-            ),
+        Padding(
+          padding: const EdgeInsets.only(left: VSpace.safeH),
+          child: FocusButtonRow(
+            rowIndex: widget.firstRow,
+            spacing: 12,
+            children: [
+              for (final g in groups)
+                (node) => SelectChip(
+                  node: node,
+                  label: '$g · ${options.where((o) => o.group == g).length}',
+                  selected: g == group,
+                  onTap: () => setState(() => _group = g),
+                ),
+            ],
           ),
-          const SizedBox(height: 8),
-        ],
+        ),
+        const SizedBox(height: 8),
         FocusRow(
           rowIndex: widget.firstRow + 1,
           leading: VSpace.safeH,
+          // 按版本身份绑定焦点：完整列表到达、重新排序后，焦点仍留在原来那个版本上
+          itemKeys: [for (final o in shown) sourceKeyOf(o)],
           itemCount: shown.length,
           itemExtent: SourceCard.width,
           height: SourceCard.height,
@@ -187,6 +218,15 @@ class _SourcesSectionState extends State<SourcesSection> {
       ],
     );
   }
+
+  Widget _status(String text) => Padding(
+    padding: const EdgeInsets.symmetric(horizontal: VSpace.safeH),
+    child: FocusButtonRow(
+      rowIndex: widget.firstRow,
+      scrollable: true,
+      children: [(node) => PillButton(focusNode: node, label: text)],
+    ),
+  );
 }
 
 /// 胶囊选择标签（季、清晰度分组）
@@ -219,6 +259,8 @@ class SelectChip extends StatelessWidget {
         ),
         child: Text(
           label,
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
           style: VText.label.copyWith(
             color: focused ? const Color(0xFF0B0C10) : Colors.white,
             fontWeight: selected ? FontWeight.w700 : FontWeight.w400,
@@ -344,22 +386,9 @@ class SourceCard extends ConsumerWidget {
   }
 }
 
-/// 查找资源时的占位卡片（缓慢呼吸，电视上开销很小）
-class SourceSkeletonRow extends StatefulWidget {
+/// 静态资源占位；屏外等待慢服务器时不持续产生动画帧。
+class SourceSkeletonRow extends StatelessWidget {
   const SourceSkeletonRow({super.key});
-
-  @override
-  State<SourceSkeletonRow> createState() => _SourceSkeletonRowState();
-}
-
-class _SourceSkeletonRowState extends State<SourceSkeletonRow> with SingleTickerProviderStateMixin {
-  late final _c = AnimationController(vsync: this, duration: const Duration(milliseconds: 1100))..repeat(reverse: true);
-
-  @override
-  void dispose() {
-    _c.dispose();
-    super.dispose();
-  }
 
   @override
   Widget build(BuildContext context) {
@@ -390,12 +419,10 @@ class _SourceSkeletonRowState extends State<SourceSkeletonRow> with SingleTicker
         ],
       ),
     );
-    return Padding(
+    return SingleChildScrollView(
+      scrollDirection: Axis.horizontal,
       padding: const EdgeInsets.fromLTRB(VSpace.safeH, 0, 0, 24),
-      child: FadeTransition(
-        opacity: Tween(begin: 0.45, end: 1.0).animate(_c),
-        child: Row(children: [card, const SizedBox(width: 32), card, const SizedBox(width: 32), card]),
-      ),
+      child: Row(children: [card, const SizedBox(width: 32), card, const SizedBox(width: 32), card]),
     );
   }
 }

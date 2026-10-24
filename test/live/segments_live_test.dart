@@ -31,7 +31,7 @@ void main() {
       Uri base(String url) => viaProxy ? proxify(Uri.parse(url), proxy) : Uri.parse(url);
       final resolver = SegmentResolver(
         providers: [
-          TheIntroDbProvider(baseUrl: base('https://api.theintrodb.org/v3')),
+          TheIntroDbProvider(baseUrl: base('https://api.theintrodb.org/v4')),
           IntroDbProvider(baseUrl: base('https://api.introdb.app')),
         ],
         timeout: const Duration(seconds: 10),

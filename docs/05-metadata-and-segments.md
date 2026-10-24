@@ -68,7 +68,7 @@
 
 | 来源 | 请求 | 鉴权 | 返回时间单位与映射 |
 | --- | --- | --- | --- |
-| TheIntroDB | `GET https://api.theintrodb.org/v3/media?tmdb_id=…&season=…&episode=…&duration_ms=…`；无 TMDB 时改用 `imdb_id`；电影不带季集 | 公开读取无需 Key；可选 `Authorization: Bearer <用户 Key>` | `intro / recap / credits / preview` 数组，`start_ms / end_ms` 为毫秒。空 start 为 0，credits / preview 的空 end 为实际文件结尾 |
+| TheIntroDB | `GET https://api.theintrodb.org/v4/media?tmdb_id=…&season=…&episode=…&duration_ms=…&details=true`（v2 / v3 已冻结待下线；v4 响应以 `tvdb_id` 为身份、不带 `tmdb_id`，`group_duration_ms` 为参考时长；旧版保存的默认 v3 地址自动迁移到 v4）；无 TMDB 时改用 `imdb_id`；电影不带季集 | 公开读取无需 Key；可选 `Authorization: Bearer <用户 Key>` | `intro / recap / credits / preview` 数组，`start_ms / end_ms` 为毫秒。空 start 为 0，credits / preview 的空 end 为实际文件结尾 |
 | IntroDB | `GET https://api.introdb.app/segments?imdb_id=…&season=…&episode=…`；电影改为 `imdb_id=…&is_movie=true` | 公开读取无需 Key；可选 `X-API-Key` | `intro / recap / outro` 对象，优先读取 `start_ms / end_ms`，否则转换 `start_sec / end_sec`（秒或时钟字符串）；`outro` 映射为 `credits` |
 | PublicMetaDB | `GET https://publicmetadb.com/api/external/skips?tmdb_id=…&media_type=tv&season=…&episode=…`；电影 `media_type=movie` 且不带季集 | `Authorization: Bearer <用户 Key>`；在 PublicMetaDB 设置 → API 中生成 | `items` 中的贡献记录，或官网展示的扁平对象；`intro_start_ms / intro_end_ms / credits_start_ms / credits_end_ms`，毫秒；片尾空 end 为结尾 |
 

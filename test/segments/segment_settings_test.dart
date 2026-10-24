@@ -109,6 +109,23 @@ void main() {
     expect(loaded.intro, SegmentSkipMode.auto);
     expect(loaded.providers.firstWhere((p) => p.id == 'theintrodb').apiKey, 'k-1');
   });
+
+  test('saved TheIntroDB v3 default address is upgraded to v4; custom proxies are kept', () {
+    final old = SegmentSettings.fromJson({
+      'providers': [
+        {'id': 'theintrodb', 'base_url': 'https://api.theintrodb.org/v3/', 'enabled': true},
+        {'id': 'introdb', 'base_url': 'https://my-proxy.example/introdb', 'enabled': true},
+      ],
+    });
+    expect(old.providers.firstWhere((p) => p.id == 'theintrodb').baseUrl, 'https://api.theintrodb.org/v4');
+    expect(old.providers.firstWhere((p) => p.id == 'introdb').baseUrl, 'https://my-proxy.example/introdb');
+    final proxied = SegmentSettings.fromJson({
+      'providers': [
+        {'id': 'theintrodb', 'base_url': 'https://my-proxy.example/theintrodb/v3', 'enabled': true},
+      ],
+    });
+    expect(proxied.providers.firstWhere((p) => p.id == 'theintrodb').baseUrl, 'https://my-proxy.example/theintrodb/v3');
+  });
 }
 
 class _BrokenSecrets extends FlutterSecureStorage {
