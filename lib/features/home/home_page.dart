@@ -2,7 +2,7 @@ import 'dart:async';
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
-import 'package:flutter/foundation.dart' show ValueListenable;
+import 'package:flutter/foundation.dart' show ValueListenable, listEquals;
 import 'package:flutter/rendering.dart' show ScrollCacheExtent;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
@@ -49,12 +49,13 @@ class HomePage extends StatelessWidget {
 /// 背景：占位渐变 + 真实图片；[hero] 为焦点在推荐行上时 Hero 区显示的预览信息
 @immutable
 class _Backdrop {
-  const _Backdrop(this.key, this.art, [this.image, this.hero]);
+  const _Backdrop(this.key, this.art, [this.image, this.hero, this.provider]);
 
   final Object key;
   final ArtSpec art;
   final Widget? image;
   final HeroEntry? hero;
+  final ImageProvider? provider;
 }
 
 class _HomeBody extends ConsumerStatefulWidget {
@@ -91,6 +92,15 @@ class _HomeBodyState extends ConsumerState<_HomeBody> {
   ValueListenable<TickerModeData>? _tickerMode;
   final _heroKey = GlobalKey<HomeHeroState>();
   int _heroIndex = 0;
+  int? _pendingHeroIndex;
+  bool _heroRotationPaused = false;
+  _Backdrop? _baseBackdrop;
+  int _backdropGeneration = 0;
+  List<String> _heroKeys = const [];
+  Timer? _backdropDeadline;
+  ImageStream? _backdropStream;
+  ImageStreamListener? _backdropListener;
+  Completer<bool>? _backdropResult;
   _Backdrop? _backdrop;
   Timer? _backdropDebounce;
 
@@ -111,15 +121,29 @@ class _HomeBodyState extends ConsumerState<_HomeBody> {
 
   void _prefetchVisibilityChanged() {
     if (_tickerMode?.value.enabled == false) {
+      _backdropGeneration++;
+      _backdropDebounce?.cancel();
+      _cancelBackdropImage();
       _dataPrefetch?.schedule(const []);
       _imagePrefetch?.schedule(const []);
     } else {
+      if (_pendingHeroIndex != null) {
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (mounted && _tickerMode?.value.enabled != false) setState(() => _pendingHeroIndex = null);
+        });
+      }
       _schedulePrefetch();
     }
   }
 
   void _configurePrefetch(TmdbClient? client) {
     if (identical(client, _prefetchClient)) return;
+    _backdropGeneration++;
+    _backdropDebounce?.cancel();
+    _cancelBackdropImage();
+    _pendingHeroIndex = null;
+    _backdrop = null;
+    _preview = null;
     _dataPrefetch?.dispose();
     _imagePrefetch?.dispose();
     _prefetchTitles.clear();
@@ -271,10 +295,8 @@ class _HomeBodyState extends ConsumerState<_HomeBody> {
         if (!mounted || _hovered > 0 || !InputMode.pointer) return;
         _backdropDebounce?.cancel();
         if (_preview != null || _backdrop != null) {
-          setState(() {
-            _preview = null;
-            _backdrop = null;
-          });
+          final target = _baseBackdrop;
+          if (target != null) _setBackdrop(target);
         }
       });
     },
@@ -294,6 +316,8 @@ class _HomeBodyState extends ConsumerState<_HomeBody> {
 
   @override
   void dispose() {
+    _backdropGeneration++;
+    _cancelBackdropImage();
     _tickerMode?.removeListener(_prefetchVisibilityChanged);
     _dataPrefetch?.dispose();
     _imagePrefetch?.dispose();
@@ -307,17 +331,55 @@ class _HomeBodyState extends ConsumerState<_HomeBody> {
   }
 
   /// 背景（和 Hero 预览）切换加防抖，避免快速移动 / 鼠标划过时频繁闪烁。
-  void _setBackdrop(_Backdrop b) {
+  void _cancelBackdropImage() {
+    _backdropDeadline?.cancel();
+    if (_backdropStream != null && _backdropListener != null) _backdropStream!.removeListener(_backdropListener!);
+    if (_backdropResult?.isCompleted == false) _backdropResult!.complete(false);
+    _backdropStream = null;
+    _backdropListener = null;
+    _backdropResult = null;
+  }
+
+  Future<bool> _prepareBackdrop(ImageProvider provider) {
+    final result = Completer<bool>();
+    final stream = provider.resolve(createLocalImageConfiguration(context));
+    void finish(bool ready) {
+      if (!result.isCompleted) result.complete(ready);
+      if (identical(_backdropResult, result)) _cancelBackdropImage();
+    }
+
+    final listener = ImageStreamListener((image, _) {
+      image.dispose();
+      finish(true);
+    }, onError: (_, _) => finish(false));
+    _backdropResult = result;
+    _backdropStream = stream;
+    _backdropListener = listener;
+    _backdropDeadline = Timer(const Duration(seconds: 4), () => finish(false));
+    stream.addListener(listener);
+    return result.future;
+  }
+
+  void _setBackdrop(_Backdrop b, {VoidCallback? onCommit}) {
+    if (onCommit == null && _pendingHeroIndex != null) setState(() => _pendingHeroIndex = null);
     _backdropDebounce?.cancel();
+    final generation = ++_backdropGeneration;
+    _cancelBackdropImage();
+    if (b.key == _backdrop?.key && b.hero?.key == _preview?.key) {
+      if (onCommit != null) setState(onCommit);
+      return;
+    }
     // 电视等焦点停稳一点再换：每次换背景都要下载、解码一张全屏图（遥控器按住方向键时焦点约 150ms 移动一次）
-    _backdropDebounce = Timer(Duration(milliseconds: PlatformProfile.isTv ? 350 : 220), () {
-      if (!mounted) return;
-      if (b.key != _backdrop?.key || b.hero?.key != _preview?.key) {
-        setState(() {
-          _backdrop = b;
-          _preview = b.hero;
-        });
-      }
+    _backdropDebounce = Timer(Duration(milliseconds: PlatformProfile.isTv ? 350 : 220), () async {
+      if (!mounted || _tickerMode?.value.enabled == false) return;
+      final imageReady = b.provider == null || await _prepareBackdrop(b.provider!);
+      if (!mounted || generation != _backdropGeneration || _tickerMode?.value.enabled == false) return;
+      setState(() {
+        // 新图就绪前保留旧图与旧信息；失败时显示新作品占位，不能把旧图配给新标题。
+        _backdrop = imageReady ? b : _Backdrop(b.key, b.art, null, b.hero);
+        _preview = b.hero;
+        onCommit?.call();
+      });
     });
   }
 
@@ -378,28 +440,39 @@ class _HomeBodyState extends ConsumerState<_HomeBody> {
     );
   }
 
-  _Backdrop _tmdbBackdrop(TmdbTitle t, {String? badge}) => _Backdrop(
-    t.key,
-    placeholderArt(t.key),
-    t.backdropPath == null
-        ? null
-        : TmdbImage(
-            path: t.backdropPath,
-            kind: TmdbImageKind.backdrop,
-            width: 1920,
-            fallbackSeed: t.key,
-            transparentFallback: true,
-          ),
-    badge == null ? null : _tmdbHero(t, badge),
-  );
+  _Backdrop _tmdbBackdrop(TmdbTitle t, {String? badge}) {
+    final client = ref.read(tmdbClientProvider);
+    final px = ImageSizing.physicalWidth(context, 1920);
+    return _Backdrop(
+      t.key,
+      placeholderArt(t.key),
+      t.backdropPath == null
+          ? null
+          : TmdbImage(
+              path: t.backdropPath,
+              kind: TmdbImageKind.backdrop,
+              width: 1920,
+              fallbackSeed: t.key,
+              transparentFallback: true,
+            ),
+      badge == null ? null : _tmdbHero(t, badge),
+      client == null || t.backdropPath == null
+          ? null
+          : netImage(client.image(t.backdropPath!, size: TmdbImageKind.backdrop.sizeFor(px)), cacheWidth: px),
+    );
+  }
 
   _Backdrop _itemBackdrop(MediaItem it, {String? badge, String? server}) {
     final img = it.backdrop ?? it.thumb;
+    final client = ref.read(serverClientProvider(it.serverId));
+    final px = ImageSizing.physicalWidth(context, 1920);
+    final request = img == null ? null : client?.image(img, maxWidth: px);
     return _Backdrop(
       '${it.serverId}/${it.id}',
       placeholderArt(it.id),
       img == null ? null : ServerImage(serverId: it.serverId, image: img, width: 1920, transparentFallback: true),
       badge == null ? null : _itemHero(it, badge, server: server),
+      request == null ? null : netImage(request.url.toString(), headers: request.headers, cacheWidth: px),
     );
   }
 
@@ -444,6 +517,9 @@ class _HomeBodyState extends ConsumerState<_HomeBody> {
   Widget build(BuildContext context) {
     final scope = ref.watch(mediaFeedScopeProvider);
     if (_mediaScope != null && _mediaScope != scope) {
+      _backdropGeneration++;
+      _cancelBackdropImage();
+      _pendingHeroIndex = null;
       _focus.resetMemory();
       _backdropDebounce?.cancel();
       _preloadDebounce?.cancel();
@@ -464,6 +540,18 @@ class _HomeBodyState extends ConsumerState<_HomeBody> {
     final heroAsync = ref.watch(tmdbRowProvider(TmdbRow.trendingDay));
     final trending = heroAsync.value ?? const <TmdbTitle>[];
     final heroes = _heroes(trending, recent);
+    final heroKeys = [for (final h in heroes) h.$1.key];
+    if (!listEquals(_heroKeys, heroKeys)) {
+      final oldKey = _heroKeys.isEmpty ? null : _heroKeys[_heroIndex % _heroKeys.length];
+      final sameTitle = oldKey == null ? -1 : heroKeys.indexOf(oldKey);
+      _heroIndex = sameTitle >= 0 ? sameTitle : (heroKeys.isEmpty ? 0 : _heroIndex.clamp(0, heroKeys.length - 1));
+      _heroKeys = heroKeys;
+      _pendingHeroIndex = null;
+      _backdropGeneration++;
+      _backdropDebounce?.cancel();
+      _cancelBackdropImage();
+      if (_preview == null) _backdrop = null;
+    }
     final heroTitles = trending.where((t) => t.backdropPath != null).take(8).toList();
     if (heroTitles.isNotEmpty) {
       final next = heroTitles[(_heroIndex + 1) % heroTitles.length].key;
@@ -474,6 +562,7 @@ class _HomeBodyState extends ConsumerState<_HomeBody> {
       }
     }
     final heroIndex = heroes.isEmpty ? 0 : _heroIndex % heroes.length;
+    _baseBackdrop = heroes.isEmpty ? null : heroes[heroIndex].$2;
     final preview = _preview;
     final backdrop = _backdrop ?? (heroes.isEmpty ? null : heroes[heroIndex].$2);
     final textScale = MediaQuery.textScalerOf(context);
@@ -491,44 +580,60 @@ class _HomeBodyState extends ConsumerState<_HomeBody> {
     );
     final header = math.max(48.0, textScale.scale(28) * 1.5);
     double extent(double cards) => header + cards + FocusRow.focusBleed * 2 + 24;
+    final showResume =
+        servers.isNotEmpty && (resume.isNotEmpty || resumeAsync.isLoading || (resumeState?.failures ?? 0) > 0);
+    final heroHeight = HomeHero.heightOf(context, reserveBelow: showResume ? extent(landscapeHeight) : 0);
     final sections = <({int row, double height, WidgetBuilder build})>[
       (
         row: 0,
-        height: HomeHero.heightOf(context),
+        height: heroHeight,
         build: (context) {
           if (heroes.isNotEmpty || preview != null) {
             return HomeHero(
               key: _heroKey,
               rowIndex: 0,
+              height: heroHeight,
+              rotationPaused: _heroRotationPaused,
+              onToggleRotation: () => setState(() => _heroRotationPaused = !_heroRotationPaused),
+              pendingIndex: _pendingHeroIndex,
               autofocus: _focus.atHero,
               items: preview != null ? [preview] : [for (final h in heroes) h.$1],
               index: preview != null ? 0 : heroIndex,
-              showDots: preview == null,
+              showCarousel: preview == null,
               autoRotate: preview == null,
               isReady: heroTitles.isEmpty || heroTitles.length != heroes.length
                   ? null
                   : (i) => _heroReady(heroTitles[i % heroTitles.length].key),
               onIndexChanged: (i) {
-                setState(() {
-                  _heroIndex = i;
-                  _preview = null;
-                });
-                _setBackdrop(heroes[i % heroes.length].$2);
+                setState(() => _pendingHeroIndex = i);
+                _setBackdrop(
+                  heroes[i % heroes.length].$2,
+                  onCommit: () {
+                    _heroIndex = i;
+                    _pendingHeroIndex = null;
+                  },
+                );
               },
               onFocused: () {
                 if (!_focus.remember(0, _heroKey.currentState?.rememberedIndex ?? 0)) return;
                 if (InputMode.shouldAutoScroll) {
-                  if (heroes.isNotEmpty && _preview != null) setState(() => _preview = null);
-                  if (heroes.isNotEmpty) _setBackdrop(heroes[heroIndex].$2);
+                  if (heroes.isNotEmpty &&
+                      _pendingHeroIndex == null &&
+                      (_preview != null || _backdrop?.key != heroes[heroIndex].$2.key)) {
+                    _setBackdrop(heroes[heroIndex].$2);
+                  }
                   _revealRow(0);
                 }
               },
             );
           }
-          if (!tmdbOn && servers.isEmpty) return _Welcome(hasServers: false, tmdbOn: false, autofocus: _focus.atHero);
+          if (!tmdbOn && servers.isEmpty) {
+            return _Welcome(hasServers: false, tmdbOn: false, autofocus: _focus.atHero, height: heroHeight);
+          }
           if (tmdbOn && heroAsync.hasError) {
             return _HomeRowStatus(
               row: 0,
+              height: heroHeight,
               autofocus: _focus.atHero,
               title: '今日推荐',
               note: '推荐加载失败',
@@ -536,21 +641,29 @@ class _HomeBodyState extends ConsumerState<_HomeBody> {
             );
           }
           if (tmdbOn && heroAsync.isLoading) {
-            return _HomeRowStatus(row: 0, autofocus: _focus.atHero, title: '今日推荐', note: '正在加载推荐…', loading: true);
+            return _HomeRowStatus(
+              row: 0,
+              height: heroHeight,
+              autofocus: _focus.atHero,
+              title: '今日推荐',
+              note: '正在加载推荐…',
+              loading: true,
+            );
           }
           if (tmdbOn) {
             return _HomeRowStatus(
               row: 0,
+              height: heroHeight,
               autofocus: _focus.atHero,
               title: '今日推荐',
               note: '暂无今日推荐',
               onRetry: () => ref.invalidate(tmdbRowProvider(TmdbRow.trendingDay)),
             );
           }
-          return _Welcome(hasServers: servers.isNotEmpty, tmdbOn: tmdbOn, autofocus: _focus.atHero);
+          return _Welcome(hasServers: servers.isNotEmpty, tmdbOn: tmdbOn, autofocus: _focus.atHero, height: heroHeight);
         },
       ),
-      if (servers.isNotEmpty && (resume.isNotEmpty || resumeAsync.isLoading || (resumeState?.failures ?? 0) > 0))
+      if (showResume)
         (
           row: 1,
           height: extent(landscapeHeight),
@@ -576,6 +689,7 @@ class _HomeBodyState extends ConsumerState<_HomeBody> {
               itemKeys: keys,
               initialIndex: initial,
               autoScrollVertical: false,
+              forwardShiftWheelAtEdge: true,
               itemCount: resume.length,
               itemExtent: LandscapeCard.width,
               height: landscapeHeight,
@@ -609,6 +723,7 @@ class _HomeBodyState extends ConsumerState<_HomeBody> {
               itemKeys: keys,
               initialIndex: _focus.updateItems(2, keys),
               autoScrollVertical: false,
+              forwardShiftWheelAtEdge: true,
               itemExtent: PosterCard.width,
               height: posterHeight,
               onItemFocused: (i) {
@@ -666,6 +781,7 @@ class _HomeBodyState extends ConsumerState<_HomeBody> {
               itemKeys: keys,
               initialIndex: _focus.updateItems(7, keys),
               autoScrollVertical: false,
+              forwardShiftWheelAtEdge: true,
               itemExtent: PersonCard.size,
               gap: 40,
               height: peopleHeight,
@@ -688,6 +804,7 @@ class _HomeBodyState extends ConsumerState<_HomeBody> {
               itemKeys: keys,
               initialIndex: _focus.updateItems(8, keys),
               autoScrollVertical: false,
+              forwardShiftWheelAtEdge: true,
               itemExtent: BrandCard.width,
               height: BrandCard.height,
               onItemFocused: (i) => _focus.remember(8, i),
@@ -852,6 +969,7 @@ class _HomeBodyState extends ConsumerState<_HomeBody> {
       itemKeys: keys,
       initialIndex: _focus.updateItems(index, keys),
       autoScrollVertical: false,
+      forwardShiftWheelAtEdge: true,
       itemExtent: PosterCard.width,
       height: height,
       onItemFocused: (i) {
@@ -878,9 +996,7 @@ class _TmdbLogo extends ConsumerWidget {
       title.title,
       maxLines: 2,
       overflow: TextOverflow.ellipsis,
-      style: VText.titleFor(title.title).copyWith(
-        shadows: const [Shadow(color: Color(0x73000000), blurRadius: 40, offset: Offset(0, 6))],
-      ),
+      style: DefaultTextStyle.of(context).style,
     );
     // 还不知道有没有 Logo 时留空（不先显示文字再换成 Logo，电视上看起来像闪了一下）
     if (detail.isLoading && !detail.hasValue) return const SizedBox(height: 150);
@@ -902,16 +1018,17 @@ class _TmdbLogo extends ConsumerWidget {
 
 /// 首次使用 / 未配置：占据 Hero 区，结构和正常首页一致（右上角状态栏、左侧说明与按钮）
 class _Welcome extends StatelessWidget {
-  const _Welcome({required this.hasServers, required this.tmdbOn, this.autofocus = true});
+  const _Welcome({required this.hasServers, required this.tmdbOn, this.autofocus = true, this.height});
 
   final bool hasServers;
   final bool tmdbOn;
   final bool autofocus;
+  final double? height;
 
   @override
   Widget build(BuildContext context) {
     return SizedBox(
-      height: HomeHero.heightOf(context),
+      height: height ?? HomeHero.heightOf(context),
       child: Stack(
         children: [
           const Positioned(right: VSpace.safeH, top: VSpace.safeV, child: StatusBar()),
@@ -987,6 +1104,7 @@ class _HomeRowStatus extends StatelessWidget {
     this.onRetry,
     this.actionLabel = '重试',
     this.autofocus = false,
+    this.height,
   });
   final int row;
   final String title;
@@ -997,6 +1115,7 @@ class _HomeRowStatus extends StatelessWidget {
   final VoidCallback? onRetry;
   final String actionLabel;
   final bool autofocus;
+  final double? height;
 
   @override
   Widget build(BuildContext context) => Stack(
@@ -1004,7 +1123,7 @@ class _HomeRowStatus extends StatelessWidget {
       if (loading)
         Positioned.fill(
           child: row == 0
-              ? const _HeroSkeleton()
+              ? _HeroSkeleton(height: height)
               : _SkeletonRow(
                   title: title,
                   landscape: landscape,
@@ -1054,12 +1173,13 @@ class _HomeRowStatus extends StatelessWidget {
 
 /// 加载中的 Hero 占位：和真实 Hero 同样的位置与尺寸
 class _HeroSkeleton extends StatelessWidget {
-  const _HeroSkeleton();
+  const _HeroSkeleton({this.height});
+  final double? height;
 
   @override
   Widget build(BuildContext context) {
     return SizedBox(
-      height: HomeHero.heightOf(context),
+      height: height ?? HomeHero.heightOf(context),
       child: Stack(
         children: [
           const Positioned(right: VSpace.safeH, top: VSpace.safeV, child: StatusBar()),
@@ -1072,15 +1192,15 @@ class _HeroSkeleton extends StatelessWidget {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   _block(160, 32),
-                  const SizedBox(height: 40),
-                  _block(560, 110),
-                  const SizedBox(height: 40),
+                  const SizedBox(height: 24),
+                  _block(560, 84),
+                  const SizedBox(height: 24),
                   _block(360, 26),
-                  const SizedBox(height: 30),
+                  const SizedBox(height: 20),
                   _block(780, 24),
                   const SizedBox(height: 14),
                   _block(620, 24),
-                  const SizedBox(height: 50),
+                  const SizedBox(height: 32),
                   Row(children: [_block(220, 68, radius: 34), const SizedBox(width: 40), _block(170, 60, radius: 30)]),
                 ],
               ),
