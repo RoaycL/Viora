@@ -1,7 +1,7 @@
 enum SegmentSkipMode { auto, button, off }
 
 const segmentProviderDefaults = {
-  'theintrodb': 'https://api.theintrodb.org/v3',
+  'theintrodb': 'https://api.theintrodb.org/v4',
   'introdb': 'https://api.introdb.app',
   'publicmetadb': 'https://publicmetadb.com',
 };
@@ -100,7 +100,7 @@ class SegmentSettings {
       providers.add(
         SegmentProviderSettings(
           id: id,
-          baseUrl: row['base_url'] as String? ?? segmentProviderDefaults[id]!,
+          baseUrl: _migrateBaseUrl(id, row['base_url'] as String?) ?? segmentProviderDefaults[id]!,
           enabled: row['enabled'] as bool? ?? true,
         ),
       );
@@ -121,4 +121,11 @@ class SegmentSettings {
       useProxy: json['use_proxy'] as bool? ?? false,
     );
   }
+}
+
+/// 旧版默认地址升级：TheIntroDB v2 / v3 已冻结并将下线，保存过旧默认地址的改成 v4（自建反代地址不动）
+String? _migrateBaseUrl(String id, String? url) {
+  if (url == null || id != 'theintrodb') return url;
+  final trimmed = url.trim().replaceFirst(RegExp(r'/+$'), '');
+  return RegExp(r'^https://api\.theintrodb\.org/v[123]$').hasMatch(trimmed) ? segmentProviderDefaults[id] : url;
 }

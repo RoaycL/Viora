@@ -15,6 +15,24 @@ const episode = SegmentQuery(
 );
 
 void main() {
+  test('TheIntroDB v4 responses keyed by tvdb_id (no tmdb_id) are accepted', () async {
+    final provider = TheIntroDbProvider(
+      fetcher: (_, headers) async => {
+        'tvdb_id': 81189,
+        'type': 'tv',
+        'season': 1,
+        'episode': 2,
+        'group_duration_ms': 2900000,
+        'intro': [
+          {'start_ms': null, 'end_ms': 60000, 'confidence': 0.8, 'submission_count': 5},
+        ],
+      },
+    );
+    final result = await provider.fetch(episode);
+    expect(result.single.end, const Duration(seconds: 60));
+    expect(result.single.referenceDuration, const Duration(milliseconds: 2900000));
+  });
+
   test('an explicitly different episode response is rejected', () async {
     final provider = TheIntroDbProvider(
       fetcher: (_, headers) async => {
@@ -29,12 +47,18 @@ void main() {
     );
     await expectLater(provider.fetch(episode), throwsFormatException);
   });
-  test('TheIntroDB v3 uses series IDs, exact milliseconds and optional Bearer key', () async {
+  test('TheIntroDB v4 uses series IDs, exact milliseconds and optional Bearer key', () async {
     final provider = TheIntroDbProvider(
       apiKey: 'user-key',
       fetcher: (uri, headers) async {
-        expect(uri.path, '/v3/media');
-        expect(uri.queryParameters, {'tmdb_id': '1396', 'season': '1', 'episode': '2', 'duration_ms': '3000000'});
+        expect(uri.toString(), startsWith('https://api.theintrodb.org/v4/media?'));
+        expect(uri.queryParameters, {
+          'tmdb_id': '1396',
+          'season': '1',
+          'episode': '2',
+          'duration_ms': '3000000',
+          'details': 'true',
+        });
         expect(headers, {'Authorization': 'Bearer user-key'});
         return {
           'tmdb_id': 1396,
@@ -68,7 +92,7 @@ void main() {
   test('TheIntroDB supports IMDb fallback and movies without season/episode', () async {
     final provider = TheIntroDbProvider(
       fetcher: (uri, headers) async {
-        expect(uri.queryParameters, {'imdb_id': 'tt0111161', 'duration_ms': '7200000'});
+        expect(uri.queryParameters, {'imdb_id': 'tt0111161', 'duration_ms': '7200000', 'details': 'true'});
         expect(headers, isEmpty);
         return {'tmdb_id': 278, 'type': 'movie'};
       },
