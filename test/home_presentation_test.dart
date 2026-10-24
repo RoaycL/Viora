@@ -92,7 +92,7 @@ void main() {
     await fixtures.unmount(tester);
   });
 
-  testWidgets('图片超时后展示新作品占位，迟到图片不会重新覆盖页面', (tester) async {
+  testWidgets('图片 4 秒未就绪先切到新作品，图片下载完成后在同一作品上显示', (tester) async {
     (await gateImage(0)).complete(frame());
     final next = await gateImage(1);
     await fixtures.pumpHome(tester);
@@ -100,10 +100,12 @@ void main() {
     await tester.pump(const Duration(seconds: 4));
     await tester.pumpAndSettle();
     expect(hero(tester).index, 1);
-    expect(backdrop(tester).image, isNull);
+    // 慢网络：先切过去，背景仍挂着新作品的图片（下载完淡入），不会永远停在占位上
+    expect(backdrop(tester).image, isNotNull);
     next.complete(frame());
     await tester.pumpAndSettle();
-    expect(backdrop(tester).image, isNull);
+    expect(hero(tester).index, 1);
+    expect(backdrop(tester).image, isNotNull);
     await fixtures.unmount(tester);
   });
 

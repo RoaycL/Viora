@@ -140,10 +140,8 @@ class SourcesSectionState extends State<SourcesSection> {
       if (widget.emptyText == null) return const SizedBox.shrink();
       return Column(
         crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          header,
-          Padding(padding: const EdgeInsets.only(bottom: 32), child: _status(widget.emptyText!)),
-        ],
+        // 与「正在查找」/ 资源列表的清晰度行同一位置、同一结构：查找结束变成「没有资源」时，焦点留在这一行
+        children: [header, _status(widget.emptyText!), const SizedBox(height: 32)],
       );
     }
 
@@ -180,6 +178,8 @@ class SourcesSectionState extends State<SourcesSection> {
         FocusRow(
           rowIndex: widget.firstRow + 1,
           leading: VSpace.safeH,
+          // 按版本身份绑定焦点：完整列表到达、重新排序后，焦点仍留在原来那个版本上
+          itemKeys: [for (final o in shown) sourceKeyOf(o)],
           itemCount: shown.length,
           itemExtent: SourceCard.width,
           height: SourceCard.height,

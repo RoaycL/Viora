@@ -100,7 +100,7 @@ class _HomeBodyState extends ConsumerState<_HomeBody> {
   Timer? _backdropDeadline;
   ImageStream? _backdropStream;
   ImageStreamListener? _backdropListener;
-  Completer<bool>? _backdropResult;
+  Completer<bool?>? _backdropResult;
   _Backdrop? _backdrop;
   Timer? _backdropDebounce;
 
@@ -340,10 +340,11 @@ class _HomeBodyState extends ConsumerState<_HomeBody> {
     _backdropResult = null;
   }
 
-  Future<bool> _prepareBackdrop(ImageProvider provider) {
-    final result = Completer<bool>();
+  /// true：图片已就绪；false：加载失败；null：4 秒还没下载完（慢网络），先切过去，图片下载完再淡入
+  Future<bool?> _prepareBackdrop(ImageProvider provider) {
+    final result = Completer<bool?>();
     final stream = provider.resolve(createLocalImageConfiguration(context));
-    void finish(bool ready) {
+    void finish(bool? ready) {
       if (!result.isCompleted) result.complete(ready);
       if (identical(_backdropResult, result)) _cancelBackdropImage();
     }
@@ -355,7 +356,7 @@ class _HomeBodyState extends ConsumerState<_HomeBody> {
     _backdropResult = result;
     _backdropStream = stream;
     _backdropListener = listener;
-    _backdropDeadline = Timer(const Duration(seconds: 4), () => finish(false));
+    _backdropDeadline = Timer(const Duration(seconds: 4), () => finish(null));
     stream.addListener(listener);
     return result.future;
   }
@@ -372,11 +373,12 @@ class _HomeBodyState extends ConsumerState<_HomeBody> {
     // 电视等焦点停稳一点再换：每次换背景都要下载、解码一张全屏图（遥控器按住方向键时焦点约 150ms 移动一次）
     _backdropDebounce = Timer(Duration(milliseconds: PlatformProfile.isTv ? 350 : 220), () async {
       if (!mounted || _tickerMode?.value.enabled == false) return;
-      final imageReady = b.provider == null || await _prepareBackdrop(b.provider!);
+      final imageReady = b.provider == null ? true : await _prepareBackdrop(b.provider!);
       if (!mounted || generation != _backdropGeneration || _tickerMode?.value.enabled == false) return;
       setState(() {
         // 新图就绪前保留旧图与旧信息；失败时显示新作品占位，不能把旧图配给新标题。
-        _backdrop = imageReady ? b : _Backdrop(b.key, b.art, null, b.hero);
+        // 超时（null）仍保留图片：下载完成后自动淡入，否则这部作品会一直停在占位上
+        _backdrop = imageReady != false ? b : _Backdrop(b.key, b.art, null, b.hero);
         _preview = b.hero;
         onCommit?.call();
       });
@@ -582,7 +584,11 @@ class _HomeBodyState extends ConsumerState<_HomeBody> {
     double extent(double cards) => header + cards + FocusRow.focusBleed * 2 + 24;
     final showResume =
         servers.isNotEmpty && (resume.isNotEmpty || resumeAsync.isLoading || (resumeState?.failures ?? 0) > 0);
-    final heroHeight = HomeHero.heightOf(context, reserveBelow: showResume ? extent(landscapeHeight) : 0);
+    // 首屏给继续观看留的高度：刷新期间（已有结果、正在重新加载）沿用已有结果，不让 Hero 一缩一放、焦点按钮跳动
+    final reserveResume =
+        servers.isNotEmpty &&
+        (resume.isNotEmpty || (resumeAsync.isLoading && !resumeAsync.hasValue) || (resumeState?.failures ?? 0) > 0);
+    final heroHeight = HomeHero.heightOf(context, reserveBelow: reserveResume ? extent(landscapeHeight) : 0);
     final sections = <({int row, double height, WidgetBuilder build})>[
       (
         row: 0,
