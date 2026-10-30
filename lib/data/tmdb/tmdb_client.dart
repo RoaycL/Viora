@@ -3,13 +3,13 @@ import 'dart:convert';
 import 'package:dio/dio.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:shared_preferences/shared_preferences.dart';
 
 import '../config/app_config.dart';
 import '../config/config_store.dart';
 import '../media/media_models.dart';
 import '../media/zh.dart';
 import '../net/request_composer.dart';
+import 'tmdb_disk_cache.dart';
 import 'tmdb_models.dart';
 
 export 'tmdb_models.dart';
@@ -25,7 +25,7 @@ class ZhMeta {
 }
 
 /// TMDB 客户端（docs/05-metadata-and-segments.md §2）：中文元数据补全 + 首页推荐。
-/// 列表接口缓存 6 小时、详情 3 天（内存 + 本地存储），断网时用过期缓存兜底。
+/// 列表接口缓存 6 小时、详情 3 天（内存 + 磁盘文件，见 TmdbDiskCache），断网时用过期缓存兜底。
 class TmdbClient {
   TmdbClient(this.config, this.proxy, {this.kidsMaxAge});
 
@@ -75,15 +75,27 @@ class TmdbClient {
     }
   }
 
+  /// 内存里最多留这么多条（详情页、中文元数据一条条累积，电视内存有限）
+  static const _memoryMax = 300;
+
+  static void _remember(String key, (DateTime, Map<String, dynamic>) entry) {
+    _memory.remove(key);
+    _memory[key] = entry;
+    while (_memory.length > _memoryMax) {
+      _memory.remove(_memory.keys.first);
+    }
+  }
+
   static Future<(DateTime, Map<String, dynamic>)?> _cached(String key) async {
     final mem = _memory[key];
     if (mem != null) return mem;
     try {
-      final raw = (await SharedPreferences.getInstance()).getString(key);
+      final raw = await TmdbDiskCache.read(key);
       if (raw == null) return null;
       final j = jsonDecode(raw) as Map<String, dynamic>;
       final entry = (DateTime.fromMillisecondsSinceEpoch(j['t'] as int), (j['d'] as Map).cast<String, dynamic>());
-      return _memory[key] = entry;
+      _remember(key, entry);
+      return entry;
     } catch (_) {
       return null;
     }
@@ -91,13 +103,8 @@ class TmdbClient {
 
   static Future<void> _store(String key, Map<String, dynamic> data) async {
     final now = DateTime.now();
-    _memory[key] = (now, data);
-    try {
-      await (await SharedPreferences.getInstance()).setString(
-        key,
-        jsonEncode({'t': now.millisecondsSinceEpoch, 'd': data}),
-      );
-    } catch (_) {}
+    _remember(key, (now, data));
+    await TmdbDiskCache.write(key, jsonEncode({'t': now.millisecondsSinceEpoch, 'd': data}));
   }
 
   /// 图片地址（走代理时一并改写）。[size]：w185 / w342 / w500 / w780 / w1280 / original

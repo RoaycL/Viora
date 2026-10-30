@@ -59,6 +59,7 @@ class MediaIndex {
       CREATE INDEX IF NOT EXISTS items_imdb ON items(imdb);
       CREATE INDEX IF NOT EXISTS items_tvdb ON items(tvdb);
       CREATE INDEX IF NOT EXISTS items_norm ON items(norm);
+      CREATE INDEX IF NOT EXISTS items_server_created ON items(server_id, created DESC);
       CREATE TABLE IF NOT EXISTS sync_state(
         server_id TEXT PRIMARY KEY,
         full_at INTEGER,
@@ -269,15 +270,20 @@ class MediaIndex {
 
   /// 每台服务器各自最新的 [perServer] 条（按入库时间倒序）。
   /// 合并时不能只取全局最新：新内容多的服务器会把其他服务器挤出「最近入库」
-  List<MediaItem> latestPerServer({int perServer = 30}) => _db
-      .select(
-        '''SELECT * FROM (
-             SELECT *, ROW_NUMBER() OVER (PARTITION BY server_id ORDER BY created DESC) AS rn FROM items
-           ) WHERE rn <= ? ORDER BY created DESC''',
-        [perServer],
-      )
-      .map(_row)
-      .toList();
+  /// 每台服务器单独按 (server_id, created) 索引取前 N 条：首页首帧同步执行，不能对整张表排序
+  ///（原来的窗口函数要给所有条目排名，16 台服务器几万条时电视上会卡住接近一秒）。
+  List<MediaItem> latestPerServer({int perServer = 30}) {
+    final servers = [for (final r in _db.select('SELECT DISTINCT server_id FROM items')) r['server_id'] as String];
+    final stmt = _db.prepare('SELECT * FROM items WHERE server_id = ? ORDER BY created DESC LIMIT ?');
+    try {
+      final rows = [
+        for (final id in servers) ...stmt.select([id, perServer]),
+      ]..sort((a, b) => ((b['created'] as int?) ?? 0).compareTo((a['created'] as int?) ?? 0));
+      return rows.map(_row).toList();
+    } finally {
+      stmt.close();
+    }
+  }
 }
 
 /// 两个条目是否为同一部作品（docs/04-aggregation.md §3）：
