@@ -16,6 +16,7 @@ import '../../data/index/media_index.dart';
 import '../../data/media/media_models.dart';
 import '../../data/media/server_registry.dart';
 import '../../data/tmdb/tmdb_client.dart';
+import '../../ui/focus/focusable.dart';
 import '../../ui/focus/input_mode.dart';
 import '../../ui/focus/row_focus.dart';
 import '../../ui/rows/cards.dart';
@@ -79,6 +80,20 @@ class _HomeBodyState extends ConsumerState<_HomeBody> {
 
   /// 视口外提前挂载的范围：约两行。原来只有 160（不到半行），按方向键下移时整行才开始构建、下载海报
   static const _mountExtent = 900.0;
+
+  /// 各行（Hero 以外）已构建的控件：只有这一行自己的数据变化时才重建。
+  /// 焦点移动后切换背景 / Hero 预览会 setState 整个首页；不缓存的话所有已挂载的行和卡片都要跟着重建，
+  /// 电视上正好赶在下翻滚动动画中间，表现为「往下滑卡一下」。
+  final _rowCache = <int, (Object, Widget)>{};
+
+  WidgetBuilder _cachedRow(int row, Object key, WidgetBuilder build) {
+    final hit = _rowCache[row];
+    if (hit != null && hit.$1 == key) return (_) => hit.$2;
+    // Builder：重新挂载时用新的 context 构建（卡片里的跳转 / 菜单回调不会拿到已销毁的 context）
+    final widget = Builder(builder: build);
+    _rowCache[row] = (key, widget);
+    return (_) => widget;
+  }
 
   final _offsets = <int, double>{};
   final _extents = <int, double>{};
@@ -527,6 +542,7 @@ class _HomeBodyState extends ConsumerState<_HomeBody> {
       _preloadDebounce?.cancel();
       _preview = null;
       _backdrop = null;
+      _rowCache.clear();
     }
     _mediaScope = scope;
     final servers = ref.watch(configProvider.select((c) => c.servers));
@@ -673,7 +689,7 @@ class _HomeBodyState extends ConsumerState<_HomeBody> {
         (
           row: 1,
           height: extent(landscapeHeight),
-          build: (context) {
+          build: _cachedRow(1, (resumeAsync, resumeState, servers, landscapeHeight), (context) {
             if (resume.isEmpty) {
               if (_focus.rowAt(1) is RevealableFocusRow) _focus.preserveRow(1);
               return _HomeRowStatus(
@@ -714,13 +730,13 @@ class _HomeBodyState extends ConsumerState<_HomeBody> {
                 ),
               ),
             );
-          },
+          }),
         ),
       if (recent.isNotEmpty)
         (
           row: 2,
           height: extent(posterHeight),
-          build: (context) {
+          build: _cachedRow(2, (recent, servers, posterHeight), (context) {
             final keys = [for (final g in recent) '${g.primary.serverId}/${g.primary.id}'];
             return FocusRow(
               rowIndex: 2,
@@ -740,7 +756,7 @@ class _HomeBodyState extends ConsumerState<_HomeBody> {
               },
               itemBuilder: (context, i, node) => _hoverTrack(mediaPosterCard(context, recent[i].primary, node)),
             );
-          },
+          }),
         ),
       for (final (index, title, row) in [
         (3, '正在热映', TmdbRow.nowPlaying),
@@ -752,56 +768,65 @@ class _HomeBodyState extends ConsumerState<_HomeBody> {
         (
           row: index,
           height: extent(posterHeight),
-          build: (context) => Consumer(
-            builder: (context, rowRef, _) => _recommendation(context, rowRef, index, title, row, tmdbOn, posterHeight),
+          build: _cachedRow(
+            index,
+            (tmdbOn, posterHeight),
+            (context) => Consumer(
+              builder: (context, rowRef, _) =>
+                  _recommendation(context, rowRef, index, title, row, tmdbOn, posterHeight),
+            ),
           ),
         ),
       (
         row: 7,
         height: extent(peopleHeight),
-        build: (context) => Consumer(
-          builder: (context, rowRef, _) {
-            if (!tmdbOn) return _unconfigured(7, '热门人物');
-            final async = rowRef.watch(tmdbPeopleProvider);
-            final people = async.value ?? const <TmdbPerson>[];
-            if (people.isEmpty) {
-              if (_focus.rowAt(7) is RevealableFocusRow) _focus.preserveRow(7);
-              return _HomeRowStatus(
-                row: 7,
+        build: _cachedRow(
+          7,
+          (tmdbOn, peopleHeight),
+          (context) => Consumer(
+            builder: (context, rowRef, _) {
+              if (!tmdbOn) return _unconfigured(7, '热门人物');
+              final async = rowRef.watch(tmdbPeopleProvider);
+              final people = async.value ?? const <TmdbPerson>[];
+              if (people.isEmpty) {
+                if (_focus.rowAt(7) is RevealableFocusRow) _focus.preserveRow(7);
+                return _HomeRowStatus(
+                  row: 7,
+                  title: '热门人物',
+                  note: async.hasError
+                      ? '人物加载失败'
+                      : async.isLoading
+                      ? '正在加载…'
+                      : '暂无人物推荐',
+                  loading: async.isLoading,
+                  circle: true,
+                  onRetry: () => rowRef.invalidate(tmdbPeopleProvider),
+                );
+              }
+              final keys = [for (final p in people) p.id];
+              return FocusRow(
+                rowIndex: 7,
                 title: '热门人物',
-                note: async.hasError
-                    ? '人物加载失败'
-                    : async.isLoading
-                    ? '正在加载…'
-                    : '暂无人物推荐',
-                loading: async.isLoading,
-                circle: true,
-                onRetry: () => rowRef.invalidate(tmdbPeopleProvider),
+                itemCount: people.length,
+                itemKeys: keys,
+                initialIndex: _focus.updateItems(7, keys),
+                autoScrollVertical: false,
+                forwardShiftWheelAtEdge: true,
+                itemExtent: PersonCard.size,
+                gap: 40,
+                height: peopleHeight,
+                onItemFocused: (i) => _focus.remember(7, i),
+                itemBuilder: (context, i, node) => TmdbPersonCard(person: people[i], node: node),
               );
-            }
-            final keys = [for (final p in people) p.id];
-            return FocusRow(
-              rowIndex: 7,
-              title: '热门人物',
-              itemCount: people.length,
-              itemKeys: keys,
-              initialIndex: _focus.updateItems(7, keys),
-              autoScrollVertical: false,
-              forwardShiftWheelAtEdge: true,
-              itemExtent: PersonCard.size,
-              gap: 40,
-              height: peopleHeight,
-              onItemFocused: (i) => _focus.remember(7, i),
-              itemBuilder: (context, i, node) => TmdbPersonCard(person: people[i], node: node),
-            );
-          },
+            },
+          ),
         ),
       ),
       if (tmdbOn)
         (
           row: 8,
           height: extent(BrandCard.height),
-          build: (context) {
+          build: _cachedRow(8, BrandCard.height, (context) {
             final keys = [for (final n in tmdbNetworks) n.id];
             return FocusRow(
               rowIndex: 8,
@@ -838,7 +863,7 @@ class _HomeBodyState extends ConsumerState<_HomeBody> {
                 );
               },
             );
-          },
+          }),
         ),
     ]..sort((a, b) => a.row.compareTo(b.row));
     _focus.order = [for (final section in sections) section.row];
@@ -1123,18 +1148,34 @@ class _HomeRowStatus extends StatelessWidget {
   final bool autofocus;
   final double? height;
 
+  /// 加载中：焦点锚点就是第一张骨架卡片（Hero 是播放按钮的骨架），不再在骨架上叠一个「正在加载…」按钮
+  Widget _anchor(Widget block, double radius) => FocusButtonRow(
+    rowIndex: row,
+    autoScroll: false,
+    children: [
+      (node) => VFocusable(
+        focusNode: node,
+        autofocus: autofocus,
+        radius: radius,
+        semanticLabel: note,
+        builder: (context, _) => block,
+      ),
+    ],
+  );
+
   @override
   Widget build(BuildContext context) => Stack(
     children: [
       if (loading)
         Positioned.fill(
           child: row == 0
-              ? _HeroSkeleton(height: height)
+              ? _HeroSkeleton(height: height, wrapButton: (b) => _anchor(b, 34))
               : _SkeletonRow(
                   title: title,
                   landscape: landscape,
                   circle: circle,
                   animate: !PlatformProfile.isTv && !VMotion.reduced(context),
+                  wrapFirst: (b) => _anchor(b, circle ? 999 : VRadius.card),
                 ),
         )
       else
@@ -1151,36 +1192,40 @@ class _HomeRowStatus extends StatelessWidget {
             ],
           ),
         ),
-      Positioned(
-        left: VSpace.contentLeft,
-        top: row == 0 ? null : 120,
-        bottom: row == 0 ? HomeHero.buttonsBottom : null,
-        child: FocusButtonRow(
-          rowIndex: row,
-          autoScroll: false,
-          children: [
-            (node) => PillButton(
-              focusNode: node,
-              autofocus: autofocus,
-              label: loading
-                  ? note
-                  : onRetry == null
-                  ? '暂无内容'
-                  : actionLabel,
-              icon: loading ? null : Icons.refresh_rounded,
-              onPressed: loading ? null : onRetry,
-            ),
-          ],
+      if (!loading)
+        Positioned(
+          left: VSpace.contentLeft,
+          top: row == 0 ? null : 120,
+          bottom: row == 0 ? HomeHero.buttonsBottom : null,
+          child: FocusButtonRow(
+            rowIndex: row,
+            autoScroll: false,
+            children: [
+              (node) => PillButton(
+                focusNode: node,
+                autofocus: autofocus,
+                label: loading
+                    ? note
+                    : onRetry == null
+                    ? '暂无内容'
+                    : actionLabel,
+                icon: loading ? null : Icons.refresh_rounded,
+                onPressed: loading ? null : onRetry,
+              ),
+            ],
+          ),
         ),
-      ),
     ],
   );
 }
 
 /// 加载中的 Hero 占位：和真实 Hero 同样的位置与尺寸
 class _HeroSkeleton extends StatelessWidget {
-  const _HeroSkeleton({this.height});
+  const _HeroSkeleton({this.height, this.wrapButton});
   final double? height;
+
+  /// 把播放按钮的骨架包成焦点锚点（加载中遥控器也有落点）
+  final Widget Function(Widget block)? wrapButton;
 
   @override
   Widget build(BuildContext context) {
@@ -1207,15 +1252,16 @@ class _HeroSkeleton extends StatelessWidget {
                   const SizedBox(height: 14),
                   _block(620, 24),
                   const SizedBox(height: 32),
-                  Row(children: [_block(220, 68, radius: 34), const SizedBox(width: 40), _block(170, 60, radius: 30)]),
+                  Row(
+                    children: [
+                      wrapButton?.call(_block(220, 68, radius: 34)) ?? _block(220, 68, radius: 34),
+                      const SizedBox(width: 40),
+                      _block(170, 60, radius: 30),
+                    ],
+                  ),
                 ],
               ),
             ),
-          ),
-          Positioned(
-            left: VSpace.contentLeft,
-            bottom: 24,
-            child: Text('正在加载推荐…', style: VText.caption.copyWith(color: VColors.textTertiary)),
           ),
         ],
       ),
@@ -1231,9 +1277,18 @@ Widget _block(double w, double h, {double radius = 10}) => Container(
 
 /// 推荐行占位：加载中时呼吸闪烁；未配置时静态并显示说明
 class _SkeletonRow extends StatelessWidget {
-  const _SkeletonRow({required this.title, this.landscape = false, this.circle = false, this.animate = true});
+  const _SkeletonRow({
+    required this.title,
+    this.landscape = false,
+    this.circle = false,
+    this.animate = true,
+    this.wrapFirst,
+  });
 
   final String title;
+
+  /// 第一张卡片包成焦点锚点
+  final Widget Function(Widget block)? wrapFirst;
   final bool landscape;
   final bool circle;
   final bool animate;
@@ -1250,7 +1305,10 @@ class _SkeletonRow extends StatelessWidget {
           Column(
             crossAxisAlignment: circle ? CrossAxisAlignment.center : CrossAxisAlignment.start,
             children: [
-              _block(w, h, radius: circle ? w / 2 : VRadius.card),
+              if (i == 0 && wrapFirst != null)
+                wrapFirst!(_block(w, h, radius: circle ? w / 2 : VRadius.card))
+              else
+                _block(w, h, radius: circle ? w / 2 : VRadius.card),
               const SizedBox(height: 14),
               _block(circle ? w * 0.7 : w * 0.75, 20, radius: 6),
             ],

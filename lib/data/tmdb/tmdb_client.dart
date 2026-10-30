@@ -55,13 +55,7 @@ class TmdbClient {
     }
     if (config.useProxy && proxy.enabled) url = proxify(url, proxy.baseUrl);
     try {
-      final r =
-          await Dio(
-            BaseOptions(connectTimeout: const Duration(seconds: 10), receiveTimeout: const Duration(seconds: 15)),
-          ).getUri<Map<String, dynamic>>(
-            url,
-            options: Options(headers: {if (_isBearer) 'Authorization': 'Bearer $_key', 'Accept': 'application/json'}),
-          );
+      final r = await _getWithRetry(url);
       final data = r.data ?? const <String, dynamic>{};
       if (ttl != null) await _store(cacheKey, data);
       return data;
@@ -83,6 +77,25 @@ class TmdbClient {
     _memory[key] = entry;
     while (_memory.length > _memoryMax) {
       _memory.remove(_memory.keys.first);
+    }
+  }
+
+  /// 网络偶发失败（国内直连 TMDB 常见：连接超时、连接被重置、5xx、429）时再试两次（1 秒、3 秒后），
+  /// 首页推荐行不至于一次失败就显示「加载失败」；4xx（Key 错误、不存在）不重试
+  Future<Response<Map<String, dynamic>>> _getWithRetry(Uri url) async {
+    final dio = Dio(
+      BaseOptions(connectTimeout: const Duration(seconds: 10), receiveTimeout: const Duration(seconds: 15)),
+    );
+    final options = Options(headers: {if (_isBearer) 'Authorization': 'Bearer $_key', 'Accept': 'application/json'});
+    for (var attempt = 0; ; attempt++) {
+      try {
+        return await dio.getUri<Map<String, dynamic>>(url, options: options);
+      } on DioException catch (e) {
+        final status = e.response?.statusCode;
+        final transient = status == null || status >= 500 || status == 429;
+        if (!transient || attempt >= 2) rethrow;
+        await Future<void>.delayed(Duration(seconds: attempt == 0 ? 1 : 3));
+      }
     }
   }
 
@@ -149,22 +162,25 @@ class TmdbClient {
       case TmdbRow.topRatedTv:
         return _titles(await get('/tv/top_rated', ttl: listTtl), isTv: true);
       case TmdbRow.animeToday:
-        final now = DateTime.now();
-        final today = '${now.year}-${now.month.toString().padLeft(2, '0')}-${now.day.toString().padLeft(2, '0')}';
-        return _titles(
+        String day(DateTime d) => '${d.year}-${d.month.toString().padLeft(2, '0')}-${d.day.toString().padLeft(2, '0')}';
+        Future<List<TmdbTitle>> airing(DateTime from, DateTime to) async => _titles(
           await get(
             '/discover/tv',
             query: {
               'with_genres': '16',
               'with_original_language': 'ja',
-              'air_date.gte': today,
-              'air_date.lte': today,
+              'air_date.gte': day(from),
+              'air_date.lte': day(to),
               'sort_by': 'popularity.desc',
             },
             ttl: listTtl,
           ),
           isTv: true,
         );
+        final now = DateTime.now();
+        final today = await airing(now, now);
+        // 当天还没有收录（凌晨、或 TMDB 当天数据少）：退回最近三天在播的番剧，不显示空行
+        return today.isNotEmpty ? today : airing(now.subtract(const Duration(days: 2)), now);
     }
   }
 
