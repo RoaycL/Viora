@@ -83,6 +83,7 @@ class _Client extends EmbyClient {
         appVersion: 'test',
       );
   final List<MediaItem> list;
+  bool failEpisodes = false;
   int episodeRequests = 0;
   final playbackRequests = <String>[];
   @override
@@ -95,6 +96,7 @@ class _Client extends EmbyClient {
   @override
   Future<List<MediaItem>> episodes(String id, {String? seasonId}) async {
     episodeRequests++;
+    if (failEpisodes) throw TimeoutException('episodes');
     return seasonId == null ? list : list.where((e) => e.seasonNumber == (seasonId == 's1' ? 1 : 2)).toList();
   }
 
@@ -148,6 +150,32 @@ void main() {
     expect(entries.last.airDate, isNull);
   });
 
+  test('只按片名对上的同名剧不能添加 TMDB 没有的集，ID 确认的副本可以', () {
+    const copies = [
+      MediaItem(serverId: 'b', id: 'show', name: '同名剧', kind: MediaKind.series, tmdbId: '42'),
+      MediaItem(serverId: 'c', id: 'show', name: '同名剧', kind: MediaKind.series),
+    ];
+    final trusted = idConfirmedSeries(42, copies, homeServerId: 'home', homeSeriesId: 'show');
+    expect(trusted, {'home/show', 'b/show'});
+    final entries = mergeEpisodeCatalog(
+      futureEpisodes,
+      [
+        episode('own', number: 5),
+        episode('confirmed', server: 'b', number: 6),
+        episode('phantom', server: 'c', number: 30),
+        episode('phantom-listed', server: 'c', number: 1),
+      ],
+      1,
+      trustedSeries: trusted,
+    );
+    expect(entries.map((e) => e.number), [1, 2, 3, 5, 6]);
+    // TMDB 没有这一季、可信的剧也没有这一季：退回用全部服务器的集
+    expect(
+      mergeEpisodeCatalog([], [episode('only', server: 'c', number: 9)], 1, trustedSeries: trusted).single.number,
+      9,
+    );
+  });
+
   test('empty TMDB season falls back to server episodes with dates', () {
     final entry = MediaItem(
       serverId: 'home',
@@ -188,6 +216,28 @@ void main() {
     expect(a.episodeRequests, 1);
     expect(b.episodeRequests, 1);
     subscription.close();
+  });
+
+  test('一台服务器取集列表超时是错误而不是空列表，其他服务器的集照常可用', () async {
+    final a = _Client(home, [episode('e1')])..failEpisodes = true;
+    final b = _Client(other, [episode('e2', server: 'other', number: 2)]);
+    final container = ProviderContainer(
+      overrides: [
+        configProvider.overrideWith(_Config.new),
+        serverClientProvider.overrideWith((ref, id) => id == 'home' ? a : b),
+        tmdbLibrarySearchProvider.overrideWith((ref, key) async => [show('home'), show('other')]),
+      ],
+    );
+    addTearDown(container.dispose);
+    final subscription = container.listen(librarySeriesEpisodesProvider(seriesKey), (_, _) {});
+    addTearDown(subscription.close);
+    expect((await container.read(librarySeriesEpisodesProvider(seriesKey).future)).map((e) => e.id), ['e2']);
+    expect(container.read(seriesEpisodesProvider(seriesKey.home)).hasError, isTrue);
+    expect((await container.read(tmdbSeriesEpisodesProvider(seriesKey.title).future)).map((e) => e.id), ['e2']);
+
+    b.failEpisodes = true;
+    container.invalidate(seriesEpisodesProvider((serverId: 'other', itemId: 'show')));
+    await expectLater(container.read(tmdbSeriesEpisodesProvider(seriesKey.title).future), throwsStateError);
   });
 
   test('specific season/episode can play from another server before air date; missing never uses next-up', () async {
@@ -252,6 +302,50 @@ void main() {
     await tester.sendKeyEvent(LogicalKeyboardKey.enter);
     await tester.pumpAndSettle();
     expect(picked, 2);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('集列表换成 TMDB 全部集数时焦点和行记忆跟着集号走', (tester) async {
+    tester.view.physicalSize = const Size(1920, 1080);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+    TmdbEpisode ep(int n) => TmdbEpisode(season: 1, number: n, name: '第 $n 集', airDate: DateTime(2020, 1, n));
+    final episodes = ValueNotifier([ep(3), ep(4)]);
+    int? picked;
+    await tester.pumpWidget(
+      ProviderScope(
+        child: MaterialApp(
+          home: Material(
+            child: RowFocusScope(
+              child: SingleChildScrollView(
+                child: ValueListenableBuilder(
+                  valueListenable: episodes,
+                  builder: (context, list, _) => EpisodeCatalogRow(
+                    tvId: 42,
+                    season: 1,
+                    episodes: list,
+                    selected: 4,
+                    library: const [],
+                    libraryLoaded: false,
+                    onSelect: (number) => picked = number,
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    final controller = RowFocusScope.of(tester.element(find.byType(EpisodeCatalogRow)));
+    controller.focusRow(2, index: 1);
+    await tester.pumpAndSettle();
+    episodes.value = [for (var n = 1; n <= 8; n++) ep(n)];
+    await tester.pumpAndSettle();
+    await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+    await tester.pumpAndSettle();
+    expect(picked, 4);
+    expect(controller.rowAt(2)!.rememberedIndex, 3);
     expect(tester.takeException(), isNull);
   });
 

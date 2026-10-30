@@ -11,6 +11,7 @@ import '../../app/window_frame.dart' show isDesktopWindow;
 import '../../core/platform/open_url.dart';
 import '../../data/config/app_config.dart';
 import '../../data/config/config_store.dart';
+import '../../data/index/index_sync.dart';
 import '../../data/media/server_registry.dart';
 import '../../data/net/request_composer.dart';
 import '../../data/tmdb/tmdb_client.dart';
@@ -19,6 +20,7 @@ import '../../ui/focus/focus_auto_scroll.dart';
 import '../../ui/focus/focusable.dart';
 import '../../ui/focus/input_mode.dart';
 import '../../ui/glass/glass.dart';
+import '../../ui/panels/context_menu.dart';
 import '../../ui/panels/form_dialog.dart';
 import '../../ui/widgets/buttons.dart';
 import '../../ui/widgets/form.dart';
@@ -280,6 +282,36 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
             onChanged: (v) => _updatePlayback((p) => p.copyWith(bufferMb: v)),
           ),
           const SizedBox(height: 20),
+          VChoice<SourceOrder>(
+            label: '资源排序（一部片有多个版本时默认选哪个；播放失败自动换源也按这个顺序。这部剧上次用的服务器始终排最前）',
+            options: const [
+              (SourceOrder.quality, '画质优先'),
+              (SourceOrder.speed, '速度优先'),
+              (SourceOrder.server, '指定服务器优先'),
+            ],
+            value: config.playback.sourceOrder,
+            onChanged: (v) => _updatePlayback((p) => p.copyWith(sourceOrder: v)),
+          ),
+          if (config.playback.sourceOrder == SourceOrder.server) ...[
+            const SizedBox(height: 12),
+            PillButton(
+              icon: Icons.dns_rounded,
+              label: '优先的服务器：${config.server(config.playback.pinnedServerId ?? '')?.displayName ?? '未选择'}',
+              onPressed: () => showContextMenu(
+                context,
+                title: '优先使用哪台服务器',
+                actions: [
+                  for (final s in config.servers)
+                    MenuAction(
+                      '${s.displayName}${s.id == config.playback.pinnedServerId ? '  ✓' : ''}',
+                      Icons.dns_rounded,
+                      () => _updatePlayback((p) => p.copyWith(pinnedServerId: s.id)),
+                    ),
+                ],
+              ),
+            ),
+          ],
+          const SizedBox(height: 20),
           VToggle(
             label: '关闭播放器后清除播放缓存',
             subtitle: '退出播放时删除磁盘缓存文件和预加载的数据（连播下一集时保留）',
@@ -395,6 +427,30 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
                 value: s.aggregate,
                 onChanged: (v) =>
                     ref.read(configProvider.notifier).updateServer(s.id, (old) => old.copyWith(aggregate: v)),
+              ),
+              const SizedBox(height: 10),
+            ],
+          const SizedBox(height: 36),
+          const _Subtitle('本地索引'),
+          Text(
+            '在本机保存一份片库目录，用于首字母搜索、单字搜索和首页「最近入库」。启动时只同步新增内容，每 30 天完整同步一次。'
+            '偶尔用、片库特别大或同步总出错的服务器可以关掉：关掉后删除它的本地索引，搜索时实时向它查询（输入两个字以上才查），'
+            '它的新片也不出现在「最近入库」。',
+            style: VText.small.copyWith(color: VColors.textTertiary, height: 1.6),
+          ),
+          const SizedBox(height: 20),
+          if (config.servers.isEmpty)
+            Text('还没有添加服务器', style: VText.label.copyWith(color: VColors.textMuted))
+          else
+            for (final s in config.servers) ...[
+              VToggle(
+                label: s.displayName,
+                subtitle: s.indexEnabled ? '已开启' : '已关闭 · 只实时搜索',
+                value: s.indexEnabled,
+                onChanged: (v) async {
+                  await ref.read(configProvider.notifier).updateServer(s.id, (old) => old.copyWith(indexEnabled: v));
+                  if (v) unawaited(ref.read(indexSyncProvider.notifier).syncServer(s.id, forceFull: true));
+                },
               ),
               const SizedBox(height: 10),
             ],
@@ -582,7 +638,7 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
       children: [
         // 左：分类
         Padding(
-          padding: const EdgeInsets.fromLTRB(VSpace.contentLeft, VSpace.safeV, 0, VSpace.safeV),
+          padding: EdgeInsets.fromLTRB(VSpace.contentLeft, VSpace.pageTop, 0, VSpace.safeV),
           child: SizedBox(
             width: 340,
             child: Column(
@@ -607,7 +663,7 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
         // 右：外框与导航栏共用上下安全区，只有框内设置项滚动。
         Expanded(
           child: Padding(
-            padding: const EdgeInsets.fromLTRB(0, VSpace.safeV, VSpace.safeH, VSpace.safeV),
+            padding: EdgeInsets.fromLTRB(0, VSpace.pageTop, VSpace.safeH, VSpace.safeV),
             child: Glass(
               child: ClipRRect(
                 borderRadius: BorderRadius.circular(VRadius.panel),

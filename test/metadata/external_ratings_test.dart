@@ -69,4 +69,46 @@ void main() {
     expect(find.text('重试评分'), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
+
+  testWidgets('OMDb 和 MDBList 都给出 IMDb 时只显示排在前面的；剧集的烂番茄来自 MDBList', (tester) async {
+    final store = RatingsSettingsStore(vault: MemoryVault());
+    await store.save(
+      const RatingsSettings(
+        providers: [
+          RatingProviderSettings(id: RatingProviderId.omdb, apiKey: 'test', enabled: true),
+          RatingProviderSettings(id: RatingProviderId.mdblist, apiKey: 'test', enabled: true),
+        ],
+      ),
+    );
+    ExternalRating rating(RatingSource source, double value, double scale) =>
+        ExternalRating(source: source, value: value, scale: scale, kind: RatingMediaKind.series, entityId: 'tt0903747');
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          ratingsSettingsStoreProvider.overrideWithValue(store),
+          externalRatingsProvider.overrideWith(
+            (ref, key) async => key.provider == RatingProviderId.omdb
+                ? RatingsResult(RatingsData(ratings: [rating(RatingSource.imdb, 9.5, 10)]))
+                : RatingsResult(
+                    RatingsData(
+                      ratings: [rating(RatingSource.imdb, 9.4, 10), rating(RatingSource.rottenTomatoes, 96, 100)],
+                    ),
+                  ),
+          ),
+        ],
+        child: const MaterialApp(
+          home: Scaffold(
+            body: ExternalRatings(
+              query: RatingQuery(kind: RatingMediaKind.series, imdbId: 'tt0903747'),
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(find.text('9.5'), findsOneWidget);
+    expect(find.text('9.4'), findsNothing);
+    expect(find.text('96%'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
 }

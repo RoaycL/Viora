@@ -87,6 +87,10 @@ GoRouter buildRouter({List<NavigatorObserver>? observers}) {
             itemId: state.pathParameters['id']!,
             startMs: int.tryParse(state.uri.queryParameters['pos'] ?? '') ?? 0,
             sourceId: state.uri.queryParameters['source'],
+            triedSources: [
+              for (final t in (state.uri.queryParameters['tried'] ?? '').split(','))
+                if (t.isNotEmpty) t,
+            ],
           ),
           transitionsBuilder: (context, animation, _, child) => FadeTransition(opacity: animation, child: child),
         ),

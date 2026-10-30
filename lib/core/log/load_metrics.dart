@@ -19,6 +19,10 @@ class LoadTrace {
     );
   }
 
+  /// 超过这个耗时的请求才单独记一行（失败的总是记）。16 台服务器每次同步都逐条记录会把
+  /// 闪退前的关键日志挤出 3000 行的缓冲区
+  static const slowMs = 1500;
+
   static Future<T> request<T>(
     String operation,
     String source,
@@ -38,10 +42,12 @@ class LoadTrace {
       rethrow;
     } finally {
       _active[operation] = _active[operation]! - 1;
-      AppLog.add(
-        '[load] op=$operation phase=remote source=$source outcome=$outcome'
-        ' ms=${watch.elapsedMilliseconds} active=${_active[operation]} peak=${_peak[operation]}',
-      );
+      if (outcome != 'ok' || watch.elapsedMilliseconds >= slowMs) {
+        AppLog.add(
+          '[load] op=$operation phase=remote source=$source outcome=$outcome'
+          ' ms=${watch.elapsedMilliseconds} active=${_active[operation]} peak=${_peak[operation]}',
+        );
+      }
     }
   }
 }

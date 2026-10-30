@@ -170,7 +170,8 @@ class _ItemDetailPageState extends ConsumerState<ItemDetailPage> {
     final libraryKey = useCatalog ? (home: _key, title: searchKeyOf(tmdb)) : null;
     final libraryAsync = libraryKey == null ? null : ref.watch(librarySeriesEpisodesProvider(libraryKey));
     // 所有服务器的集列表还没回来时，先用当前服务器自己的集
-    final ownEpisodes = libraryKey == null ? null : ref.watch(seriesEpisodesProvider(libraryKey.home)).value;
+    final ownAsync = libraryKey == null ? null : ref.watch(seriesEpisodesProvider(libraryKey.home));
+    final ownEpisodes = ownAsync?.value;
     final library = libraryAsync?.isLoading == true || libraryAsync?.hasValue != true
         ? ownEpisodes ?? const <MediaItem>[]
         : libraryAsync!.value!;
@@ -182,7 +183,19 @@ class _ItemDetailPageState extends ConsumerState<ItemDetailPage> {
         ? desiredSeason
         : catalogSeasons.firstOrNull?.number ?? 1;
     final catalogAsync = useCatalog ? ref.watch(tmdbSeasonProvider((tvId: tmdb.id, season: catalogSeason))) : null;
-    final catalog = mergeEpisodeCatalog(catalogAsync?.value ?? const <TmdbEpisode>[], library, catalogSeason);
+    final catalog = mergeEpisodeCatalog(
+      catalogAsync?.value ?? const <TmdbEpisode>[],
+      library,
+      catalogSeason,
+      trustedSeries: libraryKey == null
+          ? null
+          : idConfirmedSeries(
+              tmdb!.id,
+              ref.watch(tmdbLibrarySearchProvider(libraryKey.title)).value ?? const <MediaItem>[],
+              homeServerId: widget.serverId,
+              homeSeriesId: item.id,
+            ),
+    );
     final catalogEpisode =
         _catalogEpisode ?? (start?.$1 == catalogSeason ? start?.$2 : null) ?? catalog.firstOrNull?.number ?? 1;
     final episodes = isSeries && !useCatalog && seasonId != null
@@ -392,7 +405,8 @@ class _ItemDetailPageState extends ConsumerState<ItemDetailPage> {
               episodes: catalog,
               selected: catalogEpisode,
               library: library,
-              libraryLoaded: libraryAsync?.hasValue == true && !libraryAsync!.isLoading,
+              // 当前服务器的集列表没拿到（超时等）时不逐集标「无资源」，那只是不知道
+              libraryLoaded: libraryAsync?.hasValue == true && !libraryAsync!.isLoading && ownAsync?.hasError != true,
               seasonLabel: catalogSeasons.length == 1 ? catalogSeasons.first.name : null,
               onSelect: (number) {
                 if (number == catalogEpisode && selected != null) {

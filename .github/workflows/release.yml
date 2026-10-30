@@ -2,7 +2,9 @@
 #
 # 版本号来自 pubspec.yaml 的 `version:`。当这个版本还没有对应的 Release（标签 v<版本>）时，
 # 自动创建预发布 Release，并上传：
-#   Viora-<版本>-android.apk            Android / Android TV
+#   Viora-<版本>-android-arm64-v8a.apk  Android / Android TV（64 位，应用内更新优先用按架构拆分的包）
+#   Viora-<版本>-android-armeabi-v7a.apk Android / Android TV（32 位，多数电视盒子）
+#   Viora-<版本>-android.apk            通用包（所有架构，体积大；旧版本应用内更新用它）
 #   Viora-<版本>-windows-setup.exe      Windows 安装包（应用内更新使用）
 #   Viora-<版本>-windows-portable.zip   Windows 免安装版
 #   latest.json                        自建更新源可直接使用的清单
@@ -79,6 +81,12 @@ jobs:
       - run: |
           mkdir -p dist
           cp build/app/outputs/flutter-apk/app-release.apk "dist/Viora-${{ needs.prepare.outputs.version }}-android.apk"
+      # 按架构拆分（versionCode 会加上架构偏移：v7a +1000、arm64 +2000，从通用包升级上来不受影响）
+      - run: flutter build apk --release --split-per-abi --target-platform android-arm,android-arm64 --dart-define=VIORA_TMDB_TOKEN=${{ secrets.TMDB_TOKEN }}
+      - run: |
+          for abi in arm64-v8a armeabi-v7a; do
+            cp "build/app/outputs/flutter-apk/app-$abi-release.apk" "dist/Viora-${{ needs.prepare.outputs.version }}-android-$abi.apk"
+          done
       - uses: actions/upload-artifact@v4
         with:
           name: android
@@ -151,8 +159,10 @@ jobs:
             --rawfile notes notes.md \
             --arg published "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
             --argjson android "$(asset "Viora-$VERSION-android.apk")" \
+            --argjson arm64 "$(asset "Viora-$VERSION-android-arm64-v8a.apk")" \
+            --argjson armv7 "$(asset "Viora-$VERSION-android-armeabi-v7a.apk")" \
             --argjson windows "$(asset "Viora-$VERSION-windows-setup.exe")" \
-            '{version: $version, notes: $notes, published_at: $published, assets: {android: $android, windows: $windows}}' \
+            '{version: $version, notes: $notes, published_at: $published, assets: {android: $android, "android-arm64-v8a": $arm64, "android-armeabi-v7a": $armv7, windows: $windows}}' \
             > dist/latest.json
           cat dist/latest.json
       - name: 发布 Release
@@ -160,10 +170,13 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ needs.prepare.outputs.tag }}
           VERSION: ${{ needs.prepare.outputs.version }}
+        # 拆分包最后上传：旧版本客户端取第一个 .apk，要让它先看到通用包
         run: |
-          gh release create "$TAG" dist/* \
+          first=$(ls dist/* | grep -v -- '-android-.*\.apk$')
+          gh release create "$TAG" $first \
             --repo "$GITHUB_REPOSITORY" \
             --target "$GITHUB_SHA" \
             --title "Viora v$VERSION（测试版）" \
             --notes-file notes.md \
             --prerelease
+          gh release upload "$TAG" dist/*-android-*.apk --repo "$GITHUB_REPOSITORY"

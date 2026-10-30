@@ -37,7 +37,11 @@ class RatingsResolver {
       return Future.value(
         RatingsResult(
           const RatingsData(),
-          error: id == RatingProviderId.omdb ? '缺少 IMDb ID，无法查询' : '缺少作品 ID 或剧集季集信息',
+          error: switch (id) {
+            RatingProviderId.omdb => '缺少 IMDb ID，无法查询',
+            RatingProviderId.mdblist => '缺少作品 ID，或是单集（MDBList 只有电影和整剧评分）',
+            RatingProviderId.trakt => '缺少作品 ID 或剧集季集信息',
+          },
           unsupported: true,
         ),
       );

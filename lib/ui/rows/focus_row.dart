@@ -27,14 +27,16 @@ class FocusRow extends StatefulWidget {
     this.title,
     this.trailing,
     this.gap = VSpace.rowGap,
-    this.leading = VSpace.contentLeft,
+    double? leading,
     this.verticalAlignment = 0.32,
     this.onItemFocused,
     this.initialIndex = 0,
     this.itemKeys,
     this.autoScrollVertical = true,
     this.forwardShiftWheelAtEdge = false,
-  });
+    // 命名参数不能是私有的，只能在初始化列表里赋值
+    // ignore: prefer_initializing_formals
+  }) : _leading = leading;
 
   /// 初始位置：行一出现就滚到这一项，↓ 进入本行时焦点也落在这里（如详情页当前看到的那一集）
   final int initialIndex;
@@ -54,7 +56,10 @@ class FocusRow extends StatefulWidget {
   final String? title;
   final Widget? trailing;
   final double gap;
-  final double leading;
+  final double? _leading;
+
+  /// 行的左边距（关键线），默认与内容左边距对齐（电视和 Windows 不同）
+  double get leading => _leading ?? VSpace.contentLeft;
   final double verticalAlignment;
   final ValueChanged<int>? onItemFocused;
 
@@ -140,11 +145,24 @@ class _FocusRowState extends State<FocusRow> implements RevealableFocusRow {
       _controller?.unregister(oldWidget.rowIndex, this);
       _controller?.register(widget.rowIndex, this);
     }
-    if (_remembered >= widget.itemCount) _remembered = 0;
     final keys = widget.itemKeys;
-    if (keys != null && !listEquals(oldWidget.itemKeys, keys)) {
+    final oldKeys = oldWidget.itemKeys;
+    var focusedMoved = false;
+    if (keys != null && oldKeys != null && _remembered < oldKeys.length && !listEquals(oldKeys, keys)) {
+      // 列表前面插入 / 删除了元素：行记忆跟着作品走；持有焦点的卡片换了位置时把行滚到它新的位置
+      final oldKey = oldKeys[_remembered];
+      final moved = keys.indexOf(oldKey);
+      focusedMoved = moved >= 0 && moved != _remembered && _nodes[oldKey]?.hasFocus == true;
+      if (moved >= 0) _remembered = moved;
+    }
+    if (_remembered >= widget.itemCount) _remembered = 0;
+    if (keys != null && !listEquals(oldKeys, keys)) {
+      final moved = _remembered;
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (!mounted) return;
+        if (focusedMoved && _scroll.hasClients) {
+          _scroll.jumpTo((moved * (widget.itemExtent + widget.gap)).clamp(0.0, _scroll.position.maxScrollExtent));
+        }
         final retired = _nodes.keys.where((k) => !widget.itemKeys!.contains(k) && _nodes[k]!.context == null).toList();
         for (final key in retired) {
           _nodes.remove(key)?.dispose();

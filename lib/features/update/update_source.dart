@@ -45,13 +45,28 @@ class UpdateInfo {
 
 abstract class UpdateSource {
   /// 返回该来源上最新版本（不判断是否比当前版本新）；没有可用包时返回 null。
-  Future<UpdateInfo?> latest(UpdatePlatform platform);
+  /// [abi] 为 null 时取当前设备的架构（只对 Android 有意义）。
+  Future<UpdateInfo?> latest(UpdatePlatform platform, {String? abi});
 
   String get description;
 }
 
+/// 当前进程的 Android CPU 架构（取自 Dart 运行时，如 `on "android_arm64"`）。
+/// 64 位设备跑 32 位系统（不少电视盒子如此）时这里是 arm，正好对应能装的那个包；其他平台为 null。
+String? currentAndroidAbi() {
+  if (kIsWeb || !Platform.isAndroid) return null;
+  return androidAbiOf(Platform.version);
+}
+
+String? androidAbiOf(String dartVersion) {
+  if (dartVersion.contains('android_arm64')) return 'arm64-v8a';
+  if (dartVersion.contains('android_arm')) return 'armeabi-v7a';
+  if (dartVersion.contains('android_x64')) return 'x86_64';
+  return null;
+}
+
 /// 安装包命名约定（与 .github/workflows/release.yml 保持一致）：
-/// - Android：`Viora-<版本>-android.apk`
+/// - Android：`Viora-<版本>-android-<ABI>.apk`（按架构拆分，体积小）和 `Viora-<版本>-android.apk`（通用包）
 /// - Windows：`Viora-<版本>-windows-setup.exe`
 bool matchesPlatformAsset(String name, UpdatePlatform platform) {
   final n = name.toLowerCase();
@@ -60,6 +75,26 @@ bool matchesPlatformAsset(String name, UpdatePlatform platform) {
     UpdatePlatform.windows => n.endsWith('.exe') && n.contains('setup'),
   };
 }
+
+/// 从一组安装包名里挑当前设备该装的：Android 优先本机架构的拆分包，没有就用通用包，
+/// 绝不挑别的架构的拆分包（装不上）。
+int? pickPlatformAsset(List<String> names, UpdatePlatform platform, {String? abi}) {
+  int? fallback;
+  for (var i = 0; i < names.length; i++) {
+    final n = names[i].toLowerCase();
+    if (!matchesPlatformAsset(n, platform)) continue;
+    if (platform != UpdatePlatform.android) return i;
+    if (abi != null && n.endsWith('-$abi.apk')) return i;
+    if (!_androidAbis.any((a) => n.endsWith('-$a.apk'))) fallback ??= i;
+  }
+  return fallback;
+}
+
+const _androidAbis = ['arm64-v8a', 'armeabi-v7a', 'x86_64'];
+
+/// latest.json 里拆分包的键名（`android-arm64-v8a`），通用包仍是 `android`
+String manifestAssetKey(UpdatePlatform platform, String? abi) =>
+    platform == UpdatePlatform.android && abi != null ? 'android-$abi' : platform.name;
 
 /// GitHub Releases（包含预发布版本）。仓库需要是公开的，客户端才能匿名访问。
 class GitHubReleasesSource implements UpdateSource {
@@ -79,7 +114,8 @@ class GitHubReleasesSource implements UpdateSource {
   String get description => 'GitHub Releases · $owner/$repo';
 
   @override
-  Future<UpdateInfo?> latest(UpdatePlatform platform) async {
+  Future<UpdateInfo?> latest(UpdatePlatform platform, {String? abi}) async {
+    abi ??= currentAndroidAbi();
     final json = await getJson(
       Uri.https('api.github.com', '/repos/$owner/$repo/releases', {'per_page': '20'}),
       userAgent: userAgent,
@@ -94,8 +130,9 @@ class GitHubReleasesSource implements UpdateSource {
       if (version == null) continue;
       if (best != null && !(version > best.version)) continue;
       final assets = (release['assets'] as List? ?? const []).cast<Map<String, dynamic>>();
-      final asset = assets.where((a) => matchesPlatformAsset(a['name'] as String? ?? '', platform)).firstOrNull;
-      if (asset == null) continue;
+      final index = pickPlatformAsset([for (final a in assets) a['name'] as String? ?? ''], platform, abi: abi);
+      if (index == null) continue;
+      final asset = assets[index];
       final digest = asset['digest'] as String?;
       best = UpdateInfo(
         version: version,
@@ -120,10 +157,13 @@ class GitHubReleasesSource implements UpdateSource {
 ///   "published_at": "2026-10-10T08:00:00Z",
 ///   "assets": {
 ///     "android": {"url": "https://.../Viora-0.1.1-android.apk", "sha256": "...", "size": 123},
+///     "android-arm64-v8a": {"url": "https://.../Viora-0.1.1-android-arm64-v8a.apk", "sha256": "...", "size": 45},
+///     "android-armeabi-v7a": {"url": "https://.../Viora-0.1.1-android-armeabi-v7a.apk", "sha256": "...", "size": 40},
 ///     "windows": {"url": "https://.../Viora-0.1.1-windows-setup.exe", "sha256": "...", "size": 456}
 ///   }
 /// }
 /// ```
+/// Android 优先取本机架构的拆分包（可省略），没有就用通用的 `android`。
 class ManifestSource implements UpdateSource {
   ManifestSource(this.url, {required this.userAgent, this.rewrite});
 
@@ -135,10 +175,12 @@ class ManifestSource implements UpdateSource {
   String get description => '自定义地址 · ${url.host}';
 
   @override
-  Future<UpdateInfo?> latest(UpdatePlatform platform) async {
+  Future<UpdateInfo?> latest(UpdatePlatform platform, {String? abi}) async {
+    abi ??= currentAndroidAbi();
     final json = await getJson(url, userAgent: userAgent, rewrite: rewrite) as Map<String, dynamic>;
     final version = AppVersion.tryParse(json['version'] as String? ?? '');
-    final asset = (json['assets'] as Map<String, dynamic>?)?[platform.name] as Map<String, dynamic>?;
+    final assets = json['assets'] as Map<String, dynamic>?;
+    final asset = (assets?[manifestAssetKey(platform, abi)] ?? assets?[platform.name]) as Map<String, dynamic>?;
     if (version == null || asset == null) return null;
     return UpdateInfo(
       version: version,

@@ -1318,7 +1318,7 @@ class _SkeletonRow extends StatelessWidget {
       ],
     );
     return Padding(
-      padding: const EdgeInsets.only(left: VSpace.contentLeft, top: 28, bottom: 28),
+      padding: EdgeInsets.only(left: VSpace.contentLeft, top: 28, bottom: 28),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [

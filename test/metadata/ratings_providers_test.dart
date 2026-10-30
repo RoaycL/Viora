@@ -1,4 +1,5 @@
 import 'package:flutter_test/flutter_test.dart';
+import 'package:viora/data/metadata/mdblist_provider.dart';
 import 'package:viora/data/metadata/omdb_provider.dart';
 import 'package:viora/data/metadata/ratings_http.dart';
 import 'package:viora/data/metadata/trakt_provider.dart';
@@ -193,4 +194,72 @@ void main() {
       await expectLater(p.fetch(movieQuery), throwsA(isA<RatingsException>()));
     }
   });
+
+  test('MDBList 剧集按 IMDb ID 查到烂番茄分；没有的分数、观众分、Letterboxd 不显示；Trakt 换成 10 分制', () async {
+    final p = MdbListProvider(
+      apiKey: 'test-key',
+      fetcher: (uri, headers) async {
+        expect(uri.toString(), 'https://api.mdblist.com/imdb/show/tt0903747?apikey=test-key');
+        return mdbShowFixture;
+      },
+    );
+    final data = await p.fetch(const RatingQuery(kind: RatingMediaKind.series, imdbId: 'tt0903747'));
+    expect(data.ratings.map((r) => r.source), [RatingSource.imdb, RatingSource.rottenTomatoes, RatingSource.trakt]);
+    expect(data.ratings.map((r) => r.short), ['9.5', '96%', '9.3']);
+    expect(data.ratings.first.votes, 2100000);
+    expect(data.ratings[1].votes, isNull);
+    expect(data.certification, 'TV-MA');
+  });
+
+  test('MDBList 没有 IMDb ID 时按 TMDB 查；单集不查；类型或 ID 不符、额度用完都是错误', () async {
+    Uri? asked;
+    final p = MdbListProvider(
+      apiKey: 'k',
+      fetcher: (uri, _) async {
+        asked = uri;
+        return {...mdbShowFixture, 'type': 'movie'};
+      },
+    );
+    await p.fetch(const RatingQuery(kind: RatingMediaKind.movie, tmdbId: 1396));
+    expect(asked!.path, '/tmdb/movie/1396');
+    expect(
+      p.supports(const RatingQuery(kind: RatingMediaKind.episode, seriesImdbId: 'tt0903747', season: 1, episode: 1)),
+      isFalse,
+    );
+    expect(
+      () => p.fetch(const RatingQuery(kind: RatingMediaKind.series, imdbId: 'tt0903747')),
+      throwsA(isA<RatingsException>()),
+    );
+    final wrongId = MdbListProvider(apiKey: 'k', fetcher: (_, _) async => mdbShowFixture);
+    expect(
+      () => wrongId.fetch(const RatingQuery(kind: RatingMediaKind.series, imdbId: 'tt0000001')),
+      throwsA(isA<RatingsException>()),
+    );
+    final limited = MdbListProvider(
+      apiKey: 'k',
+      fetcher: (_, _) async => {'response': false, 'error': 'API Limit Reached!'},
+    );
+    await expectLater(
+      limited.fetch(movieQuery),
+      throwsA(isA<RatingsException>().having((e) => e.retryAfter, 'retryAfter', isNotNull)),
+    );
+    final missing = MdbListProvider(apiKey: 'k', fetcher: (_, _) async => {'response': false, 'error': 'Not found'});
+    expect((await missing.fetch(movieQuery)).ratings, isEmpty);
+  });
 }
+
+// 字段与 MDBList 文档 / 常见客户端（Kometa）一致：ratings[].source / value / votes
+const mdbShowFixture = {
+  'title': 'Breaking Bad',
+  'type': 'show',
+  'ids': {'imdb': 'tt0903747', 'tmdb': 1396},
+  'certification': 'TV-MA',
+  'ratings': [
+    {'source': 'imdb', 'value': 9.5, 'votes': 2100000},
+    {'source': 'tomatoes', 'value': 96, 'votes': 300},
+    {'source': 'tomatoesaudience', 'value': 97},
+    {'source': 'metacritic', 'value': null},
+    {'source': 'trakt', 'value': 93, 'votes': 40000},
+    {'source': 'letterboxd', 'value': 4.5},
+  ],
+};

@@ -68,6 +68,13 @@ class RowFocusController {
     return false;
   }
 
+  /// 焦点在最上面一个有内容的行（电视上再按 ↑ 进入顶部标签栏）
+  bool atTopEdge(FocusNode? current) {
+    final pos = locate(current);
+    if (pos == null) return false;
+    return !_rows.entries.any((e) => e.key < pos.row && e.value.length > 0);
+  }
+
   /// 返回 true 表示已处理。
   bool move(FocusNode? current, TraversalDirection direction) {
     final pos = locate(current);
@@ -122,9 +129,19 @@ class _RowFocusScopeState extends State<RowFocusScope> {
           DirectionalFocusIntent: CallbackAction<DirectionalFocusIntent>(
             onInvoke: (intent) {
               final focus = FocusManager.instance.primaryFocus;
+              final shell = ShellFocus.maybeOf(context);
+              // 电视：第一行按 ↑ 进入顶部标签栏
+              if (intent.direction == TraversalDirection.up &&
+                  shell != null &&
+                  shell.topBar &&
+                  _controller.atTopEdge(focus)) {
+                shell.focusRail();
+                return null;
+              }
               if (_controller.move(focus, intent.direction)) return null;
               if (intent.direction == TraversalDirection.left) {
-                ShellFocus.maybeOf(context)?.focusRail();
+                // Windows：最左侧按 ← 进入侧边栏；电视的导航在顶部，← 到头就停住
+                if (shell != null && !shell.topBar) shell.focusRail();
               } else {
                 focus?.focusInDirection(intent.direction);
               }

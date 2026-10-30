@@ -171,6 +171,15 @@ class HomeFocusController extends RowFocusController {
     }
   }
 
+  /// 首页第一行（Hero）：逻辑位置在第一行且没有正在进行的跨行导航
+  @override
+  bool atTopEdge(FocusNode? current) {
+    if (navigating || order.isEmpty) return false;
+    final located = super.locate(current);
+    if (located == null && current != anchor) return false;
+    return (located?.row ?? _activeRow) == order.first;
+  }
+
   @override
   bool move(FocusNode? current, TraversalDirection direction) {
     final located = super.locate(current);
@@ -183,12 +192,27 @@ class HomeFocusController extends RowFocusController {
         return false;
       }
       final length = rowAt(row)?.length ?? _items[row]?.length ?? 1;
-      focusRow(row, index: (index + (direction == TraversalDirection.right ? 1 : -1)).clamp(0, length - 1));
+      final target = (index + (direction == TraversalDirection.right ? 1 : -1)).clamp(0, length - 1);
+      // 行内移动且目标卡片已挂载：同步换焦点。走异步路径要等一帧，长按时每次按键都会取消上一次，
+      // 焦点停住直到松手才跳过去
+      if (!navigating && located?.row == row && _focusMounted(row, target)) return true;
+      focusRow(row, index: target);
       return true;
     }
     final at = order.indexOf(row);
     final next = at + (direction == TraversalDirection.down ? 1 : -1);
     if (at >= 0 && next >= 0 && next < order.length) focusRow(order[next]);
+    return true;
+  }
+
+  bool _focusMounted(int row, int index) {
+    final handle = rowAt(row);
+    if (handle == null || index >= handle.length) return false;
+    final node = handle.nodeAt(index);
+    if (node.context?.mounted != true || !node.canRequestFocus) return false;
+    _generation++;
+    _activeRow = row;
+    node.requestFocus();
     return true;
   }
 

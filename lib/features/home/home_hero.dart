@@ -110,9 +110,13 @@ class HomeHero extends StatefulWidget {
 }
 
 class HomeHeroState extends State<HomeHero> with WidgetsBindingObserver implements FocusRowHandle {
-  late final List<FocusNode> _nodes = List.generate(5, (i) {
-    final node = FocusNode(debugLabel: 'hero#$i');
-    node.addListener(() => _onFocusChanged(i, node));
+  /// 每个按钮固定一个节点（主按钮、详情、上一部、暂停、下一部）。按位置分配时，轮播切到有 / 没有「播放」的作品，
+  /// 上一部 / 暂停 / 下一部会整体错一个节点，焦点跳到旁边的按钮或丢失
+  static const _main = 0, _detail = 1, _prev = 2, _pause = 3, _next = 4;
+  static const _labels = ['hero#0', 'hero#detail', 'hero#prev', 'hero#pause', 'hero#next'];
+  late final List<FocusNode> _nodes = List.generate(5, (slot) {
+    final node = FocusNode(debugLabel: _labels[slot]);
+    node.addListener(() => _onFocusChanged(slot, node));
     return node;
   });
   RowFocusController? _controller;
@@ -134,7 +138,9 @@ class HomeHeroState extends State<HomeHero> with WidgetsBindingObserver implemen
   int get length => _actions + (_carousel ? 3 : 0);
 
   @override
-  FocusNode nodeAt(int index) => _nodes[index];
+  FocusNode nodeAt(int index) => _nodes[index < _actions ? index : index - _actions + _prev];
+
+  int _indexOf(int slot) => slot < _prev ? slot : slot - _prev + _actions;
 
   @override
   int get rememberedIndex => _remembered;
@@ -213,6 +219,10 @@ class HomeHeroState extends State<HomeHero> with WidgetsBindingObserver implemen
         oldWidget.items.length != widget.items.length) {
       _armRotation();
     }
+    // 切到没有「播放」的作品时「详情」按钮消失：焦点留在主按钮（这时就是「查看详情」）
+    if (_actions == 1 && _nodes[_detail].hasPrimaryFocus) _nodes[_main].requestFocus();
+    final focused = _nodes.indexWhere((n) => n.hasPrimaryFocus);
+    if (focused >= 0) _remembered = _indexOf(focused == _detail && _actions == 1 ? _main : focused);
   }
 
   void _switchTo(int i) {
@@ -221,9 +231,9 @@ class HomeHeroState extends State<HomeHero> with WidgetsBindingObserver implemen
     _armRotation();
   }
 
-  void _onFocusChanged(int i, FocusNode node) {
+  void _onFocusChanged(int slot, FocusNode node) {
     if (node.hasPrimaryFocus) {
-      _remembered = i;
+      _remembered = _indexOf(slot);
       widget.onFocused();
     }
     _armRotation();
@@ -262,7 +272,7 @@ class HomeHeroState extends State<HomeHero> with WidgetsBindingObserver implemen
             child: Row(
               children: [
                 PillButton(
-                  focusNode: _nodes[0],
+                  focusNode: _nodes[_main],
                   autofocus: widget.autofocus,
                   large: true,
                   icon: t.onPlay != null ? Icons.play_arrow_rounded : Icons.info_outline_rounded,
@@ -272,7 +282,7 @@ class HomeHeroState extends State<HomeHero> with WidgetsBindingObserver implemen
                 if (_actions == 2) ...[
                   const SizedBox(width: 32),
                   PillButton(
-                    focusNode: _nodes[1],
+                    focusNode: _nodes[_detail],
                     icon: Icons.info_outline_rounded,
                     label: '详情',
                     onPressed: t.onDetail,
@@ -292,7 +302,7 @@ class HomeHeroState extends State<HomeHero> with WidgetsBindingObserver implemen
                     message: '上一部推荐',
                     excludeFromSemantics: true,
                     child: CircleIconButton(
-                      focusNode: _nodes[_actions],
+                      focusNode: _nodes[_prev],
                       icon: Icons.chevron_left_rounded,
                       tooltip: '上一部推荐',
                       onPressed: () => _switchTo(_navigationIndex - 1),
@@ -314,7 +324,7 @@ class HomeHeroState extends State<HomeHero> with WidgetsBindingObserver implemen
                     message: reduced ? '系统已减少动画，自动轮播关闭' : (widget.rotationPaused ? '开启自动轮播' : '暂停自动轮播'),
                     excludeFromSemantics: true,
                     child: CircleIconButton(
-                      focusNode: _nodes[_actions + 1],
+                      focusNode: _nodes[_pause],
                       icon: widget.rotationPaused || reduced ? Icons.play_arrow_rounded : Icons.pause_rounded,
                       tooltip: reduced ? '系统已减少动画，自动轮播关闭' : (widget.rotationPaused ? '开启自动轮播' : '暂停自动轮播'),
                       onPressed: reduced ? null : widget.onToggleRotation,
@@ -325,7 +335,7 @@ class HomeHeroState extends State<HomeHero> with WidgetsBindingObserver implemen
                     message: '下一部推荐',
                     excludeFromSemantics: true,
                     child: CircleIconButton(
-                      focusNode: _nodes[_actions + 2],
+                      focusNode: _nodes[_next],
                       icon: Icons.chevron_right_rounded,
                       tooltip: '下一部推荐',
                       onPressed: () => _switchTo(_navigationIndex + 1),

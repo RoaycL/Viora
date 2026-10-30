@@ -310,7 +310,8 @@ void main() {
   });
 
   testWidgets('鼠标侧栏停留时滚走旧行，键盘返回内容能恢复被回收的作品', (tester) async {
-    await pumpHome(tester);
+    // 鼠标 + 左侧导航栏只在 Windows 上有（电视是顶部标签栏）
+    await pumpHome(tester, profile: PlatformProfile.desktop);
     await press(tester, LogicalKeyboardKey.arrowDown);
     await press(tester, LogicalKeyboardKey.arrowRight, repeats: 11);
     final mouse = await tester.createGesture(kind: PointerDeviceKind.mouse);
@@ -336,6 +337,28 @@ void main() {
     expect(find.text('暂无可播放资源'), findsOneWidget);
     await press(tester, LogicalKeyboardKey.escape);
     expect(focused, 'row3#12');
+    await unmount(tester);
+  });
+
+  testWidgets('长按左右时已挂载的卡片按键即换焦点，不等下一帧', (tester) async {
+    await pumpHome(tester);
+    await press(tester, LogicalKeyboardKey.arrowDown);
+    expect(focused, 'row3#0');
+    await tester.sendKeyDownEvent(LogicalKeyboardKey.arrowRight);
+    expect(focused, 'row3#1');
+    for (var i = 0; i < 3; i++) {
+      await tester.sendKeyRepeatEvent(LogicalKeyboardKey.arrowRight);
+    }
+    expect(focused, 'row3#4');
+    await tester.sendKeyUpEvent(LogicalKeyboardKey.arrowRight);
+    await tester.sendKeyDownEvent(LogicalKeyboardKey.arrowLeft);
+    await tester.sendKeyUpEvent(LogicalKeyboardKey.arrowLeft);
+    expect(focused, 'row3#3');
+    await tester.pumpAndSettle();
+    await press(tester, LogicalKeyboardKey.select);
+    expect(find.text('暂无可播放资源'), findsOneWidget);
+    await press(tester, LogicalKeyboardKey.escape);
+    expect(focused, 'row3#3');
     await unmount(tester);
   });
 

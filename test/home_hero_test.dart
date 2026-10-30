@@ -10,8 +10,14 @@ import 'package:viora/ui/focus/row_focus.dart';
 import 'package:viora/ui/widgets/server_image.dart';
 
 class HeroHarness extends StatefulWidget {
-  const HeroHarness({super.key, this.autofocus = false, this.defer = false, this.longContent = false});
-  final bool autofocus, defer, longContent;
+  const HeroHarness({
+    super.key,
+    this.autofocus = false,
+    this.defer = false,
+    this.longContent = false,
+    this.firstPlayable = false,
+  });
+  final bool autofocus, defer, longContent, firstPlayable;
   @override
   State<HeroHarness> createState() => HeroHarnessState();
 }
@@ -65,6 +71,7 @@ class HeroHarnessState extends State<HeroHarness> {
                         genres: const ['动画', '动作冒险', '奇幻'],
                         overview: widget.longContent ? '在这里阅读作品简介，选择适合自己的故事。即使标题和简介很长，播放与切换操作也应该清楚、稳定、可访问。' : '',
                         onDetail: () => opened.add(i),
+                        onPlay: widget.firstPlayable && i == 0 ? () {} : null,
                       ),
                   ],
                   onIndexChanged: (next) => update(() {
@@ -92,6 +99,7 @@ Future<HeroHarnessState> mountHero(
   bool autofocus = false,
   bool defer = false,
   bool longContent = false,
+  bool firstPlayable = false,
 }) async {
   PlatformProfile.debugOverride = PlatformProfile.tv;
   tester.view.physicalSize = const Size(1920, 1080);
@@ -99,7 +107,7 @@ Future<HeroHarnessState> mountHero(
   addTearDown(tester.view.reset);
   await tester.pumpWidget(
     ProviderScope(
-      child: HeroHarness(autofocus: autofocus, defer: defer, longContent: longContent),
+      child: HeroHarness(autofocus: autofocus, defer: defer, longContent: longContent, firstPlayable: firstPlayable),
     ),
   );
   await tester.pumpAndSettle();
@@ -198,16 +206,50 @@ void main() {
     await removeHero(tester);
   });
 
-  testWidgets('遥控器可到达三个轮播控件，行尾不掉出 Hero', (tester) async {
-    final state = await mountHero(tester, autofocus: true);
-    for (var i = 1; i <= 3; i++) {
+  testWidgets('切换到有 / 没有播放按钮的作品时，轮播按钮的焦点不错位', (tester) async {
+    final state = await mountHero(tester, autofocus: true, firstPlayable: true);
+    String? focused() => FocusManager.instance.primaryFocus?.debugLabel;
+    final row = RowFocusScope.of(tester.element(find.byType(HomeHero))).rowAt(0)!;
+    expect(row.length, 5);
+    for (var i = 0; i < 4; i++) {
       await tester.sendKeyEvent(LogicalKeyboardKey.arrowRight);
       await tester.pumpAndSettle();
-      expect(FocusManager.instance.primaryFocus?.debugLabel, 'hero#$i');
+    }
+    expect(focused(), 'hero#next');
+    await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+    await tester.pumpAndSettle();
+    // 第 2 部没有播放按钮：少了一个按钮，焦点仍在「下一部」，行记忆跟着变
+    expect(state.index, 1);
+    expect(focused(), 'hero#next');
+    expect(row.length, 4);
+    expect(row.rememberedIndex, 3);
+    await tester.sendKeyEvent(LogicalKeyboardKey.arrowLeft);
+    await tester.pumpAndSettle();
+    expect(focused(), 'hero#pause');
+    await removeHero(tester);
+  });
+
+  testWidgets('焦点在「详情」时切到没有播放按钮的作品，焦点回到主按钮', (tester) async {
+    final state = await mountHero(tester, autofocus: true, firstPlayable: true);
+    await tester.sendKeyEvent(LogicalKeyboardKey.arrowRight);
+    await tester.pumpAndSettle();
+    expect(FocusManager.instance.primaryFocus?.debugLabel, 'hero#detail');
+    state.update(() => state.index = 1);
+    await tester.pumpAndSettle();
+    expect(FocusManager.instance.primaryFocus?.debugLabel, 'hero#0');
+    await removeHero(tester);
+  });
+
+  testWidgets('遥控器可到达三个轮播控件，行尾不掉出 Hero', (tester) async {
+    final state = await mountHero(tester, autofocus: true);
+    for (final label in ['hero#prev', 'hero#pause', 'hero#next']) {
+      await tester.sendKeyEvent(LogicalKeyboardKey.arrowRight);
+      await tester.pumpAndSettle();
+      expect(FocusManager.instance.primaryFocus?.debugLabel, label);
     }
     await tester.sendKeyEvent(LogicalKeyboardKey.arrowRight);
     await tester.pumpAndSettle();
-    expect(FocusManager.instance.primaryFocus?.debugLabel, 'hero#3');
+    expect(FocusManager.instance.primaryFocus?.debugLabel, 'hero#next');
     await tester.sendKeyEvent(LogicalKeyboardKey.enter);
     await tester.pumpAndSettle();
     expect(state.index, 1);

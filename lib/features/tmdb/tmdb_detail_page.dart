@@ -127,6 +127,8 @@ class _TmdbDetailState extends ConsumerState<_TmdbDetail> {
     final hasServers = ref.watch(configProvider.select((c) => c.servers.isNotEmpty));
     final emptyText = !hasServers
         ? '还没有添加服务器'
+        : t.isTv && copies.isNotEmpty && libraryEpisodes?.hasError == true
+        ? '服务器没有响应，没拿到剧集列表，稍后再试'
         : t.isTv && copies.isNotEmpty
         ? '各服务器上都没有第 $season 季第 $episode 集'
         : '暂未找到资源';
@@ -304,6 +306,7 @@ class _TmdbDetailState extends ConsumerState<_TmdbDetail> {
             // 有季切换按钮时按钮就是标题；只有一季时显示季名
             seasonLabel: seasons.length > 1 ? null : seasons.first.name,
             library: episodes,
+            trustedSeries: idConfirmedSeries(t.id, copies),
             // 媒体库里根本没有这部剧时不逐集标「无资源」（下面的播放资源区会说明）
             libraryLoaded: (libraryEpisodes?.hasValue ?? false) && copies.isNotEmpty,
             onSelect: (n) {
@@ -348,6 +351,7 @@ class _EpisodeRow extends ConsumerWidget {
     required this.library,
     required this.libraryLoaded,
     required this.onSelect,
+    required this.trustedSeries,
     this.seasonLabel,
   });
 
@@ -356,6 +360,7 @@ class _EpisodeRow extends ConsumerWidget {
   final int selected;
   final List<MediaItem> library;
   final bool libraryLoaded;
+  final Set<String> trustedSeries;
   final ValueChanged<int> onSelect;
 
   /// 只有一季时行标题显示季名
@@ -364,7 +369,12 @@ class _EpisodeRow extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final async = ref.watch(tmdbSeasonProvider((tvId: tvId, season: season)));
-    final eps = mergeEpisodeCatalog(async.value ?? const <TmdbEpisode>[], library, season);
+    final eps = mergeEpisodeCatalog(
+      async.value ?? const <TmdbEpisode>[],
+      library,
+      season,
+      trustedSeries: trustedSeries,
+    );
     if (eps.isEmpty) {
       return Padding(
         padding: const EdgeInsets.fromLTRB(VSpace.safeH, 8, VSpace.safeH, 8),

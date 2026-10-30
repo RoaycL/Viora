@@ -173,6 +173,30 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
+  testWidgets('Windows 滚轮把焦点季滚出列表后，方向键从原位置继续', (tester) async {
+    PlatformProfile.debugOverride = PlatformProfile.desktop;
+    await _pump(
+      tester,
+      RowFocusScope(
+        child: SeasonSelector(seasons: _seasons, selected: 1, onSelect: (_) {}),
+      ),
+      size: const Size(1280, 720),
+    );
+    await tester.tap(find.text('第 1 季'));
+    await tester.pumpAndSettle();
+    expect(FocusManager.instance.primaryFocus?.debugLabel, 'season-0');
+    await tester.sendEventToBinding(const PointerScrollEvent(position: Offset(640, 400), scrollDelta: Offset(0, 1500)));
+    await tester.pumpAndSettle();
+    expect(find.text('第 1 季'), findsOneWidget); // 只剩触发按钮，列表里的第 1 季已经回收
+    await tester.sendKeyEvent(LogicalKeyboardKey.arrowDown);
+    await tester.pumpAndSettle();
+    expect(FocusManager.instance.primaryFocus?.debugLabel, 'season-1');
+    expect(find.text('第 2 季'), findsOneWidget);
+    await tester.sendKeyEvent(LogicalKeyboardKey.escape);
+    await tester.pumpAndSettle();
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets('Windows wheel scrolls overview without moving background page', (tester) async {
     PlatformProfile.debugOverride = PlatformProfile.desktop;
     final overview = List.filled(100, '可以用鼠标滚轮阅读的简介。').join('\n');

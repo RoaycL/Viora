@@ -126,7 +126,7 @@ class _CollectionScaffold extends StatelessWidget {
         scrollCacheExtent: ScrollCacheExtent.pixels(PlatformProfile.isTv ? 800 : 400),
         slivers: [
           SliverPadding(
-            padding: const EdgeInsets.fromLTRB(VSpace.contentLeft, VSpace.safeV, VSpace.safeH, 0),
+            padding: EdgeInsets.fromLTRB(VSpace.contentLeft, VSpace.pageTop, VSpace.safeH, 0),
             sliver: SliverToBoxAdapter(
               child: Padding(
                 padding: const EdgeInsets.only(bottom: 40),
@@ -143,7 +143,7 @@ class _CollectionScaffold extends StatelessWidget {
             ),
           ),
           SliverPadding(
-            padding: const EdgeInsets.fromLTRB(VSpace.contentLeft, 0, VSpace.safeH, 200),
+            padding: EdgeInsets.fromLTRB(VSpace.contentLeft, 0, VSpace.safeH, 200),
             sliver: empty != null
                 ? SliverToBoxAdapter(
                     child: Text(empty!, style: VText.label.copyWith(color: VColors.textTertiary)),

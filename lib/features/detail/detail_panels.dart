@@ -228,6 +228,9 @@ class _SeasonList extends StatefulWidget {
 
 class _SeasonListState extends State<_SeasonList> {
   final _nodes = <int, FocusNode>{};
+
+  /// 滚轮把持焦点的季滚出列表时焦点退回这里（仍在下面的方向键处理之内），方向键从上次的位置继续
+  final _scope = FocusScopeNode(debugLabel: 'season-list');
   late ScrollController _scroll;
   late int _index;
   double _extent = 84;
@@ -269,6 +272,7 @@ class _SeasonListState extends State<_SeasonList> {
     for (final node in _nodes.values) {
       node.dispose();
     }
+    _scope.dispose();
     _scroll.dispose();
     super.dispose();
   }
@@ -297,58 +301,61 @@ class _SeasonListState extends State<_SeasonList> {
         },
       ),
     },
-    child: Scrollbar(
-      controller: _scroll,
-      child: ListView.builder(
+    child: FocusScope(
+      node: _scope,
+      child: Scrollbar(
         controller: _scroll,
-        itemExtent: _extent,
-        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
-        itemCount: widget.seasons.length,
-        itemBuilder: (context, i) {
-          final season = widget.seasons[i];
-          final selected = season.id == widget.selected;
-          return Padding(
-            padding: const EdgeInsets.only(bottom: 12),
-            child: VFocusable(
-              focusNode: _node(i),
-              semanticLabel: season.label,
-              selected: selected,
-              scale: 1,
-              onFocusChange: (focused) {
-                if (focused) {
-                  _generation++;
-                  _index = i;
-                }
-              },
-              onActivate: () => widget.onSelect(season.id),
-              builder: (context, focused) => Container(
-                padding: const EdgeInsets.symmetric(horizontal: 24),
-                alignment: Alignment.centerLeft,
-                decoration: BoxDecoration(
-                  color: focused
-                      ? Colors.white
-                      : selected
-                      ? const Color(0x33FFFFFF)
-                      : const Color(0x0DFFFFFF),
-                  borderRadius: BorderRadius.circular(VRadius.md),
-                ),
-                child: Row(
-                  children: [
-                    Expanded(
-                      child: Text(
-                        season.label,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: VText.label.copyWith(color: focused ? VColors.background : Colors.white),
+        child: ListView.builder(
+          controller: _scroll,
+          itemExtent: _extent,
+          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
+          itemCount: widget.seasons.length,
+          itemBuilder: (context, i) {
+            final season = widget.seasons[i];
+            final selected = season.id == widget.selected;
+            return Padding(
+              padding: const EdgeInsets.only(bottom: 12),
+              child: VFocusable(
+                focusNode: _node(i),
+                semanticLabel: season.label,
+                selected: selected,
+                scale: 1,
+                onFocusChange: (focused) {
+                  if (focused) {
+                    _generation++;
+                    _index = i;
+                  }
+                },
+                onActivate: () => widget.onSelect(season.id),
+                builder: (context, focused) => Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 24),
+                  alignment: Alignment.centerLeft,
+                  decoration: BoxDecoration(
+                    color: focused
+                        ? Colors.white
+                        : selected
+                        ? const Color(0x33FFFFFF)
+                        : const Color(0x0DFFFFFF),
+                    borderRadius: BorderRadius.circular(VRadius.md),
+                  ),
+                  child: Row(
+                    children: [
+                      Expanded(
+                        child: Text(
+                          season.label,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: VText.label.copyWith(color: focused ? VColors.background : Colors.white),
+                        ),
                       ),
-                    ),
-                    if (selected) Icon(Icons.check_rounded, color: focused ? VColors.background : Colors.white),
-                  ],
+                      if (selected) Icon(Icons.check_rounded, color: focused ? VColors.background : Colors.white),
+                    ],
+                  ),
                 ),
               ),
-            ),
-          );
-        },
+            );
+          },
+        ),
       ),
     ),
   );

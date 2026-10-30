@@ -105,6 +105,19 @@ void main() {
     ]);
     expect(ranked.map((o) => o.serverId), ['c', 'b', 'a']);
     expect(rankSources(ranked, preferredServerId: 'a').first.serverId, 'a');
+    // 速度优先：延迟低的 1080P 排在延迟高的 4K 前面
+    expect(rankSources(ranked, order: SourceOrder.speed).map((o) => o.serverId), ['c', 'a', 'b']);
+    // 指定服务器优先：b 排最前，但这部剧上次用的服务器仍排在它前面
+    expect(rankSources(ranked, order: SourceOrder.server, pinnedServerId: 'b').map((o) => o.serverId), ['b', 'c', 'a']);
+    expect(
+      rankSources(ranked, order: SourceOrder.server, pinnedServerId: 'b', preferredServerId: 'a').first.serverId,
+      'a',
+    );
+    expect(
+      PlaybackConfig.fromJson(const PlaybackConfig(sourceOrder: SourceOrder.speed).toJson()).sourceOrder,
+      SourceOrder.speed,
+    );
+    expect(PlaybackConfig.fromJson(const {}).sourceOrder, SourceOrder.quality);
   });
 
   test('最近入库：新内容多的服务器不会把其他服务器挤掉；剧集按最近更新新集排序', () async {

@@ -28,6 +28,34 @@ void main() {
     expect(matchesPlatformAsset('latest.json', UpdatePlatform.android), isFalse);
   });
 
+  test('Android 按本机架构挑拆分包，没有就用通用包，不挑别的架构', () {
+    const names = [
+      'Viora-0.2.0-android-arm64-v8a.apk',
+      'Viora-0.2.0-android-armeabi-v7a.apk',
+      'Viora-0.2.0-android.apk',
+      'Viora-0.2.0-windows-setup.exe',
+      'latest.json',
+    ];
+    expect(pickPlatformAsset(names, UpdatePlatform.android, abi: 'arm64-v8a'), 0);
+    expect(pickPlatformAsset(names, UpdatePlatform.android, abi: 'armeabi-v7a'), 1);
+    expect(pickPlatformAsset(names, UpdatePlatform.android, abi: 'x86_64'), 2);
+    expect(pickPlatformAsset(names, UpdatePlatform.android), 2);
+    expect(pickPlatformAsset(names, UpdatePlatform.windows), 3);
+    // 旧版本只有通用包
+    expect(pickPlatformAsset(['Viora-0.1.0-android.apk'], UpdatePlatform.android, abi: 'arm64-v8a'), 0);
+    // 只有别的架构的拆分包时宁可不更新
+    expect(
+      pickPlatformAsset(['Viora-0.2.0-android-arm64-v8a.apk'], UpdatePlatform.android, abi: 'armeabi-v7a'),
+      isNull,
+    );
+
+    expect(androidAbiOf('3.11.0 (stable) on "android_arm64"'), 'arm64-v8a');
+    expect(androidAbiOf('3.11.0 (stable) on "android_arm"'), 'armeabi-v7a');
+    expect(androidAbiOf('3.11.0 (stable) on "windows_x64"'), isNull);
+    expect(manifestAssetKey(UpdatePlatform.android, 'arm64-v8a'), 'android-arm64-v8a');
+    expect(manifestAssetKey(UpdatePlatform.windows, null), 'windows');
+  });
+
   test('经反向代理下载：GitHub 跳到下载服务器的那一跳也走代理', () async {
     final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
     addTearDown(() => server.close(force: true));
