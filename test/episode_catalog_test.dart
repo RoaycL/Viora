@@ -305,6 +305,50 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
+  testWidgets('集列表换成 TMDB 全部集数时焦点和行记忆跟着集号走', (tester) async {
+    tester.view.physicalSize = const Size(1920, 1080);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+    TmdbEpisode ep(int n) => TmdbEpisode(season: 1, number: n, name: '第 $n 集', airDate: DateTime(2020, 1, n));
+    final episodes = ValueNotifier([ep(3), ep(4)]);
+    int? picked;
+    await tester.pumpWidget(
+      ProviderScope(
+        child: MaterialApp(
+          home: Material(
+            child: RowFocusScope(
+              child: SingleChildScrollView(
+                child: ValueListenableBuilder(
+                  valueListenable: episodes,
+                  builder: (context, list, _) => EpisodeCatalogRow(
+                    tvId: 42,
+                    season: 1,
+                    episodes: list,
+                    selected: 4,
+                    library: const [],
+                    libraryLoaded: false,
+                    onSelect: (number) => picked = number,
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    final controller = RowFocusScope.of(tester.element(find.byType(EpisodeCatalogRow)));
+    controller.focusRow(2, index: 1);
+    await tester.pumpAndSettle();
+    episodes.value = [for (var n = 1; n <= 8; n++) ep(n)];
+    await tester.pumpAndSettle();
+    await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+    await tester.pumpAndSettle();
+    expect(picked, 4);
+    expect(controller.rowAt(2)!.rememberedIndex, 3);
+    expect(tester.takeException(), isNull);
+  });
+
   Future<void> pumpDetail(
     WidgetTester tester, {
     bool tmdb = true,

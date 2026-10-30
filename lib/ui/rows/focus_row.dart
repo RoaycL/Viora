@@ -140,11 +140,24 @@ class _FocusRowState extends State<FocusRow> implements RevealableFocusRow {
       _controller?.unregister(oldWidget.rowIndex, this);
       _controller?.register(widget.rowIndex, this);
     }
-    if (_remembered >= widget.itemCount) _remembered = 0;
     final keys = widget.itemKeys;
-    if (keys != null && !listEquals(oldWidget.itemKeys, keys)) {
+    final oldKeys = oldWidget.itemKeys;
+    var focusedMoved = false;
+    if (keys != null && oldKeys != null && _remembered < oldKeys.length && !listEquals(oldKeys, keys)) {
+      // 列表前面插入 / 删除了元素：行记忆跟着作品走；持有焦点的卡片换了位置时把行滚到它新的位置
+      final oldKey = oldKeys[_remembered];
+      final moved = keys.indexOf(oldKey);
+      focusedMoved = moved >= 0 && moved != _remembered && _nodes[oldKey]?.hasFocus == true;
+      if (moved >= 0) _remembered = moved;
+    }
+    if (_remembered >= widget.itemCount) _remembered = 0;
+    if (keys != null && !listEquals(oldKeys, keys)) {
+      final moved = _remembered;
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (!mounted) return;
+        if (focusedMoved && _scroll.hasClients) {
+          _scroll.jumpTo((moved * (widget.itemExtent + widget.gap)).clamp(0.0, _scroll.position.maxScrollExtent));
+        }
         final retired = _nodes.keys.where((k) => !widget.itemKeys!.contains(k) && _nodes[k]!.context == null).toList();
         for (final key in retired) {
           _nodes.remove(key)?.dispose();

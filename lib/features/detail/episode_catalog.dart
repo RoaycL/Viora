@@ -97,6 +97,8 @@ class EpisodeCatalogRow extends StatelessWidget {
       leading: VSpace.safeH,
       title: seasonLabel,
       initialIndex: initial < 0 ? 0 : initial,
+      // 集列表从服务器的几集换成 TMDB 全部集数时，焦点和行记忆跟着集号走，不停在同位置的另一集
+      itemKeys: [for (final e in episodes) e.number],
       itemCount: episodes.length,
       itemExtent: LandscapeCard.width,
       height: LandscapeCard.height,
