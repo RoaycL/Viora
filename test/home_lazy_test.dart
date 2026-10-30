@@ -339,6 +339,28 @@ void main() {
     await unmount(tester);
   });
 
+  testWidgets('长按左右时已挂载的卡片按键即换焦点，不等下一帧', (tester) async {
+    await pumpHome(tester);
+    await press(tester, LogicalKeyboardKey.arrowDown);
+    expect(focused, 'row3#0');
+    await tester.sendKeyDownEvent(LogicalKeyboardKey.arrowRight);
+    expect(focused, 'row3#1');
+    for (var i = 0; i < 3; i++) {
+      await tester.sendKeyRepeatEvent(LogicalKeyboardKey.arrowRight);
+    }
+    expect(focused, 'row3#4');
+    await tester.sendKeyUpEvent(LogicalKeyboardKey.arrowRight);
+    await tester.sendKeyDownEvent(LogicalKeyboardKey.arrowLeft);
+    await tester.sendKeyUpEvent(LogicalKeyboardKey.arrowLeft);
+    expect(focused, 'row3#3');
+    await tester.pumpAndSettle();
+    await press(tester, LogicalKeyboardKey.select);
+    expect(find.text('暂无可播放资源'), findsOneWidget);
+    await press(tester, LogicalKeyboardKey.escape);
+    expect(focused, 'row3#3');
+    await unmount(tester);
+  });
+
   testWidgets('快速反向导航取消旧目标，焦点与滚动最终回到 Hero', (tester) async {
     await pumpHome(tester);
     await tester.sendKeyDownEvent(LogicalKeyboardKey.arrowDown);
