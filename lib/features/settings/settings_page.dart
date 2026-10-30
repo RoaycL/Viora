@@ -20,6 +20,7 @@ import '../../ui/focus/focus_auto_scroll.dart';
 import '../../ui/focus/focusable.dart';
 import '../../ui/focus/input_mode.dart';
 import '../../ui/glass/glass.dart';
+import '../../ui/panels/context_menu.dart';
 import '../../ui/panels/form_dialog.dart';
 import '../../ui/widgets/buttons.dart';
 import '../../ui/widgets/form.dart';
@@ -280,6 +281,36 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
             value: config.playback.bufferMb,
             onChanged: (v) => _updatePlayback((p) => p.copyWith(bufferMb: v)),
           ),
+          const SizedBox(height: 20),
+          VChoice<SourceOrder>(
+            label: '资源排序（一部片有多个版本时默认选哪个；播放失败自动换源也按这个顺序。这部剧上次用的服务器始终排最前）',
+            options: const [
+              (SourceOrder.quality, '画质优先'),
+              (SourceOrder.speed, '速度优先'),
+              (SourceOrder.server, '指定服务器优先'),
+            ],
+            value: config.playback.sourceOrder,
+            onChanged: (v) => _updatePlayback((p) => p.copyWith(sourceOrder: v)),
+          ),
+          if (config.playback.sourceOrder == SourceOrder.server) ...[
+            const SizedBox(height: 12),
+            PillButton(
+              icon: Icons.dns_rounded,
+              label: '优先的服务器：${config.server(config.playback.pinnedServerId ?? '')?.displayName ?? '未选择'}',
+              onPressed: () => showContextMenu(
+                context,
+                title: '优先使用哪台服务器',
+                actions: [
+                  for (final s in config.servers)
+                    MenuAction(
+                      '${s.displayName}${s.id == config.playback.pinnedServerId ? '  ✓' : ''}',
+                      Icons.dns_rounded,
+                      () => _updatePlayback((p) => p.copyWith(pinnedServerId: s.id)),
+                    ),
+                ],
+              ),
+            ),
+          ],
           const SizedBox(height: 20),
           VToggle(
             label: '关闭播放器后清除播放缓存',

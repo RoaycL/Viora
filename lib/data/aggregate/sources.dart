@@ -64,18 +64,51 @@ List<SourceOption> visibleSourceOptions(AppConfig config, Iterable<SourceOption>
       option,
 ];
 
-/// 排序（默认选中第一个）：本剧上次用的服务器 → 分辨率 → 线路延迟 → 码率
-List<SourceOption> rankSources(List<SourceOption> options, {String? preferredServerId}) {
+/// 排序（默认选中第一个）：本剧上次用的服务器 → 按 [order]：
+/// - 画质优先：分辨率 → 线路延迟 → 码率
+/// - 速度优先：线路延迟 → 分辨率 → 码率
+/// - 指定服务器优先：[pinnedServerId] → 分辨率 → 线路延迟 → 码率
+/// 延迟相差 80ms 以内视为一样快。
+List<SourceOption> rankSources(
+  List<SourceOption> options, {
+  String? preferredServerId,
+  SourceOrder order = SourceOrder.quality,
+  String? pinnedServerId,
+}) {
+  int first(SourceOption o, String? id) => id != null && o.serverId == id ? 1 : 0;
+  int latency(SourceOption a, SourceOption b) {
+    final la = a.latencyMs ?? 99999, lb = b.latencyMs ?? 99999;
+    return (la - lb).abs() > 80 ? la - lb : 0;
+  }
+
+  int resolution(SourceOption a, SourceOption b) => b._resolutionRank - a._resolutionRank;
   final list = [...options];
   list.sort((a, b) {
-    final pa = a.serverId == preferredServerId ? 1 : 0, pb = b.serverId == preferredServerId ? 1 : 0;
-    if (pa != pb) return pb - pa;
-    if (a._resolutionRank != b._resolutionRank) return b._resolutionRank - a._resolutionRank;
-    final la = a.latencyMs ?? 99999, lb = b.latencyMs ?? 99999;
-    if ((la - lb).abs() > 80) return la - lb;
+    final preferred = first(b, preferredServerId) - first(a, preferredServerId);
+    if (preferred != 0) return preferred;
+    if (order == SourceOrder.server) {
+      final pinned = first(b, pinnedServerId) - first(a, pinnedServerId);
+      if (pinned != 0) return pinned;
+    }
+    final byOrder = order == SourceOrder.speed ? [latency(a, b), resolution(a, b)] : [resolution(a, b), latency(a, b)];
+    for (final c in byOrder) {
+      if (c != 0) return c;
+    }
     return (b.source.bitrate ?? 0) - (a.source.bitrate ?? 0);
   });
   return list;
+}
+
+/// 按设置里的排序规则排序。[remembered] 是这部剧上次用的服务器（各规则都排最前）；
+/// [home] 是正在浏览的服务器，只在画质优先（默认规则）下当作没有记录时的首选
+List<SourceOption> _rank(Ref ref, List<SourceOption> options, String? remembered, {String? home}) {
+  final playback = ref.read(configProvider).playback;
+  return rankSources(
+    options,
+    preferredServerId: remembered ?? (playback.sourceOrder == SourceOrder.quality ? home : null),
+    order: playback.sourceOrder,
+    pinnedServerId: playback.pinnedServerId,
+  );
 }
 
 /// 记住每部作品上次播放用的服务器（同一部剧连续观看时不跳服务器）
@@ -161,7 +194,7 @@ final sourceOptionsProvider = FutureProvider.family<List<SourceOption>, SourcesK
 
   final options = await _optionsOf(ref, targets);
   final preferred = await PreferredServers.get(titleKeyOf(titleItem));
-  return rankSources(options, preferredServerId: preferred ?? target.serverId);
+  return _rank(ref, options, preferred, home: target.serverId);
 });
 
 /// 并发获取每个条目的播放信息，展开成可播放版本；单台超时 / 失败不拖累整体
@@ -205,7 +238,7 @@ final tmdbSourceOptionsProvider = FutureProvider.autoDispose.family<List<SourceO
   if (key.isTv || copies.isEmpty) return const [];
   final options = await _optionsOf(ref, copies);
   final preferred = await PreferredServers.get(titleKeyOf(copies.first));
-  return rankSources(options, preferredServerId: preferred);
+  return _rank(ref, options, preferred);
 });
 
 /// 播放某个版本时记下偏好服务器
@@ -245,7 +278,7 @@ final tmdbEpisodeSourcesProvider = FutureProvider.autoDispose.family<List<Source
   final options = await _optionsOf(ref, matches);
   final copies = await ref.watch(tmdbLibrarySearchProvider(key.title).future);
   final preferred = copies.isEmpty ? null : await PreferredServers.get(titleKeyOf(copies.first));
-  return rankSources(options, preferredServerId: preferred);
+  return _rank(ref, options, preferred);
 });
 
 /// 同一剧的全集只请求一次，TMDB 入口与媒体库入口共用。
@@ -289,7 +322,7 @@ final homeEpisodeSourcesProvider = FutureProvider.autoDispose.family<List<Source
   final episodes = await ref.watch(seriesEpisodesProvider(key.series.home).future);
   final matches = episodes.where((e) => e.seasonNumber == key.season && e.episodeNumber == key.episode).toList();
   if (matches.isEmpty) return const [];
-  return rankSources(await _optionsOf(ref, matches), preferredServerId: key.series.home.serverId);
+  return _rank(ref, await _optionsOf(ref, matches), null, home: key.series.home.serverId);
 });
 
 /// 用季号和集号查实际资源，不根据播出日期过滤，也不拿下一集替代用户选择的缺集。
@@ -303,7 +336,7 @@ final libraryEpisodeSourcesProvider = FutureProvider.autoDispose.family<List<Sou
   final options = await _optionsOf(ref, matches);
   final series = await ref.watch(itemProvider(key.series.home).future);
   final preferred = await PreferredServers.get(titleKeyOf(series));
-  return rankSources(options, preferredServerId: preferred ?? key.series.home.serverId);
+  return _rank(ref, options, preferred, home: key.series.home.serverId);
 });
 
 /// 自动换源用的版本标识：「服务器/版本 ID」
