@@ -575,9 +575,17 @@ void main() {
     final trace = LoadTrace('baseline_test');
     trace.event('local_ready', count: 2);
     await LoadTrace.request('baseline_test', accountScope(server).substring(0, 10), () async => 1);
+    // 快速成功的请求不逐条记录，免得挤掉闪退前的关键日志；失败的照记
+    expect(AppLog.dump(appVersion: 'test'), isNot(contains('op=baseline_test phase=remote')));
+    await LoadTrace.request(
+      'baseline_test',
+      accountScope(server).substring(0, 10),
+      () async => 1,
+      isSuccess: (_) => false,
+    );
     final logs = AppLog.dump(appVersion: 'test');
     expect(logs, contains('phase=local_ready'));
-    expect(logs, contains('outcome=ok'));
+    expect(logs, contains('outcome=failed'));
     expect(logs, contains('active=0 peak=1'));
     expect(logs, isNot(contains('private-token')));
     expect(logs, isNot(contains('private-host.example')));

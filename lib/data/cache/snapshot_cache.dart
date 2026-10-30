@@ -73,6 +73,30 @@ abstract final class SnapshotCache {
     return next;
   }
 
+  /// 清理孤儿快照：在用的快照每次刷新成功都会重写，超过 [maxAge] 没动过的是旧版本、已删除账号
+  /// 留下的（键里带账号身份，换账号后旧文件不会再被读到），连同写到一半的 .tmp 一起删掉
+  static Future<int> prune({Duration maxAge = const Duration(days: 30), DateTime? now}) async {
+    var removed = 0;
+    try {
+      final d = await _directory();
+      if (d == null || !await d.exists()) return 0;
+      final cutoff = (now ?? DateTime.now()).subtract(maxAge);
+      await for (final f in d.list()) {
+        if (f is! File) continue;
+        final name = f.uri.pathSegments.last;
+        final stale = name.endsWith('.tmp')
+            ? !_writes.keys.any((k) => name == '$k.json.tmp')
+            : (await f.lastModified()).isBefore(cutoff);
+        if (!stale) continue;
+        try {
+          await f.delete();
+          removed++;
+        } catch (_) {}
+      }
+    } catch (_) {}
+    return removed;
+  }
+
   /// 删除所有快照（如退出登录、清除缓存）
   static Future<void> clear() async {
     _epoch++;

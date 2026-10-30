@@ -35,4 +35,16 @@ void main() {
     await File('${dir.path}/broken.json').writeAsString('{"version": 2, "data": [${'1,' * 40000}');
     expect(await SnapshotCache.read('broken'), isNull);
   });
+
+  test('清理孤儿快照：超过 30 天没写过的和残留的 .tmp 删掉，最近写过的保留', () async {
+    await SnapshotCache.write('fresh', {'version': 2});
+    await SnapshotCache.write('stale', {'version': 2});
+    final old = DateTime.now().subtract(const Duration(days: 40));
+    await File('${dir.path}/stale.json').setLastModified(old);
+    await File('${dir.path}/crashed.json.tmp').writeAsString('{');
+    expect(await SnapshotCache.prune(), 2);
+    expect(await SnapshotCache.read('fresh'), {'version': 2});
+    expect(await File('${dir.path}/stale.json').exists(), isFalse);
+    expect(await File('${dir.path}/crashed.json.tmp').exists(), isFalse);
+  });
 }

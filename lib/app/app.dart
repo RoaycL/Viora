@@ -9,6 +9,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../core/log/app_log.dart';
+import '../data/cache/snapshot_cache.dart';
 import '../data/tmdb/tmdb_disk_cache.dart';
 import '../data/config/config_store.dart';
 import '../data/media/server_registry.dart';
@@ -121,10 +122,11 @@ class _VioraAppState extends ConsumerState<VioraApp> with WidgetsBindingObserver
         await ref.read(indexSyncProvider.notifier).syncAll();
       });
       CachedNetImage.prune();
-      // 旧版本把 TMDB 缓存存在 SharedPreferences 里：启动稳定后一次性清掉，并清理磁盘缓存
+      // 旧版本把 TMDB 缓存存在 SharedPreferences 里：启动稳定后一次性清掉，并清理磁盘缓存和孤儿快照
       Future<void>.delayed(const Duration(seconds: 15), () async {
         await TmdbDiskCache.dropLegacyPreferences();
         await TmdbDiskCache.prune();
+        await SnapshotCache.prune();
       });
     }
   }
