@@ -27,14 +27,16 @@ class FocusRow extends StatefulWidget {
     this.title,
     this.trailing,
     this.gap = VSpace.rowGap,
-    this.leading = VSpace.contentLeft,
+    double? leading,
     this.verticalAlignment = 0.32,
     this.onItemFocused,
     this.initialIndex = 0,
     this.itemKeys,
     this.autoScrollVertical = true,
     this.forwardShiftWheelAtEdge = false,
-  });
+    // 命名参数不能是私有的，只能在初始化列表里赋值
+    // ignore: prefer_initializing_formals
+  }) : _leading = leading;
 
   /// 初始位置：行一出现就滚到这一项，↓ 进入本行时焦点也落在这里（如详情页当前看到的那一集）
   final int initialIndex;
@@ -54,7 +56,10 @@ class FocusRow extends StatefulWidget {
   final String? title;
   final Widget? trailing;
   final double gap;
-  final double leading;
+  final double? _leading;
+
+  /// 行的左边距（关键线），默认与内容左边距对齐（电视和 Windows 不同）
+  double get leading => _leading ?? VSpace.contentLeft;
   final double verticalAlignment;
   final ValueChanged<int>? onItemFocused;
 

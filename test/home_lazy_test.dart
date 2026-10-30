@@ -310,7 +310,8 @@ void main() {
   });
 
   testWidgets('鼠标侧栏停留时滚走旧行，键盘返回内容能恢复被回收的作品', (tester) async {
-    await pumpHome(tester);
+    // 鼠标 + 左侧导航栏只在 Windows 上有（电视是顶部标签栏）
+    await pumpHome(tester, profile: PlatformProfile.desktop);
     await press(tester, LogicalKeyboardKey.arrowDown);
     await press(tester, LogicalKeyboardKey.arrowRight, repeats: 11);
     final mouse = await tester.createGesture(kind: PointerDeviceKind.mouse);

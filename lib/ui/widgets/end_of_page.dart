@@ -4,10 +4,15 @@ import '../../app/theme.dart';
 
 /// 页面底部的「已经到底了」：代替大片留空，滚到底时告诉用户没有更多内容
 class EndOfPage extends StatelessWidget {
-  const EndOfPage({super.key, this.leading = VSpace.contentLeft});
+  // 命名参数不能是私有的，只能在初始化列表里赋值
+  // ignore: prefer_initializing_formals
+  const EndOfPage({super.key, double? leading}) : _leading = leading;
 
   /// 左边距（与页面内容对齐）
-  final double leading;
+  final double? _leading;
+
+  /// 默认与内容左边距对齐（电视和 Windows 不同）
+  double get leading => _leading ?? VSpace.contentLeft;
 
   @override
   Widget build(BuildContext context) {

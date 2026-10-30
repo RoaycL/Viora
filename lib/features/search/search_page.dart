@@ -180,7 +180,7 @@ class _SearchPageState extends ConsumerState<SearchPage> {
     );
     return FocusAutoScroll(
       child: Padding(
-        padding: const EdgeInsets.fromLTRB(VSpace.contentLeft, VSpace.safeV, 0, 0),
+        padding: EdgeInsets.fromLTRB(VSpace.contentLeft, VSpace.pageTop, 0, 0),
         child: Row(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [

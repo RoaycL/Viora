@@ -171,7 +171,7 @@ class _ServerEditPageState extends ConsumerState<ServerEditPage> {
     final editing = _existing != null;
     return FocusAutoScroll(
       child: SingleChildScrollView(
-        padding: const EdgeInsets.fromLTRB(VSpace.contentLeft, VSpace.safeV, VSpace.safeH, 200),
+        padding: EdgeInsets.fromLTRB(VSpace.contentLeft, VSpace.pageTop, VSpace.safeH, 200),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [

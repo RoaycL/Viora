@@ -25,6 +25,7 @@ import '../ui/widgets/toast.dart';
 import 'input/back_handler.dart';
 import 'input/intents.dart';
 import 'router.dart';
+import '../ui/nav/side_nav_rail.dart' show NavItem;
 import 'shell.dart';
 import 'platform_profile.dart';
 import 'theme.dart';
@@ -161,22 +162,37 @@ class _VioraAppState extends ConsumerState<VioraApp> with WidgetsBindingObserver
 
   /// 返回键（docs/07-input-control.md §2.1）：
   /// 页面自己的处理 → 导航栏回到内容 → 关闭弹层 / 出栈 → 回到首页。退出应用：电视在首页 2 秒内连按两次返回键。
+  ///
+  /// 电视（顶部标签栏）：在资源库、收藏等一级页面先回到标签栏，在标签栏上再按一次回首页；
+  /// 首页仍是连按两次退出，不经过标签栏。
   void _handleBack() {
     if (backDispatcher.dispatch()) return;
 
     final shell = ShellController.instance;
-    if (shell.railHasFocus) {
-      shell.focusContent();
-      return;
-    }
-
-    final navigator = rootNavigatorKey.currentState;
-    if (navigator != null && navigator.canPop()) {
-      navigator.pop();
-      return;
-    }
-
     final path = _router.routerDelegate.currentConfiguration.uri.path;
+    if (shell.railHasFocus) {
+      if (!shell.topBar) {
+        shell.focusContent();
+        return;
+      }
+      if (path != '/') {
+        _router.go('/');
+        WidgetsBinding.instance.addPostFrameCallback((_) => shell.focusContent());
+        return;
+      }
+      // 首页的标签栏：落到下面的退出确认
+    } else {
+      final navigator = rootNavigatorKey.currentState;
+      if (navigator != null && navigator.canPop()) {
+        navigator.pop();
+        return;
+      }
+      if (shell.topBar && path != '/' && NavItem.values.any((i) => i.path == path)) {
+        shell.focusRail();
+        return;
+      }
+    }
+
     if (path != '/') {
       _router.go(parentLocation(path));
       return;

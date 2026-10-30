@@ -81,7 +81,7 @@ class _LibraryPageState extends ConsumerState<LibraryPage> {
         const Positioned.fill(child: _Ambient()),
         Positioned.fill(
           child: SingleChildScrollView(
-            padding: const EdgeInsets.fromLTRB(VSpace.contentLeft, VSpace.safeV, VSpace.safeH, 160),
+            padding: EdgeInsets.fromLTRB(VSpace.contentLeft, VSpace.pageTop, VSpace.safeH, 160),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [

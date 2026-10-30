@@ -36,12 +36,12 @@ class ServerPage extends ConsumerWidget {
 
     return RowFocusScope(
       child: SingleChildScrollView(
-        padding: const EdgeInsets.only(top: VSpace.safeV, bottom: 400),
+        padding: EdgeInsets.only(top: VSpace.pageTop, bottom: 400),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Padding(
-              padding: const EdgeInsets.only(left: VSpace.contentLeft, bottom: 24),
+              padding: EdgeInsets.only(left: VSpace.contentLeft, bottom: 24),
               child: Row(
                 crossAxisAlignment: CrossAxisAlignment.baseline,
                 textBaseline: TextBaseline.alphabetic,
@@ -82,7 +82,7 @@ class ServerPage extends ConsumerWidget {
                     _LatestRow(rowIndex: 2 + i, serverId: serverId, library: libs[i]),
                 ],
               ),
-              _ => const Padding(
+              _ => Padding(
                 padding: EdgeInsets.only(left: VSpace.contentLeft, top: 40),
                 child: Text('正在加载媒体库…', style: VText.label),
               ),
@@ -171,7 +171,7 @@ class _ErrorBox extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Padding(
-      padding: const EdgeInsets.only(left: VSpace.contentLeft, top: 20),
+      padding: EdgeInsets.only(left: VSpace.contentLeft, top: 20),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -256,7 +256,7 @@ class _LibraryGridPageState extends ConsumerState<LibraryGridPage> {
       scrollCacheExtent: const ScrollCacheExtent.pixels(1400),
       slivers: [
         SliverPadding(
-          padding: const EdgeInsets.fromLTRB(VSpace.contentLeft, VSpace.safeV, VSpace.safeH, 24),
+          padding: EdgeInsets.fromLTRB(VSpace.contentLeft, VSpace.pageTop, VSpace.safeH, 24),
           sliver: SliverToBoxAdapter(
             child: Row(
               crossAxisAlignment: CrossAxisAlignment.center,
@@ -285,7 +285,7 @@ class _LibraryGridPageState extends ConsumerState<LibraryGridPage> {
             child: _ErrorBox(message: _error!, onRetry: _loadMore),
           ),
         SliverPadding(
-          padding: const EdgeInsets.fromLTRB(VSpace.contentLeft, 12, VSpace.safeH, 200),
+          padding: EdgeInsets.fromLTRB(VSpace.contentLeft, 12, VSpace.safeH, 200),
           sliver: SliverGrid.builder(
             gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
               crossAxisCount: columns,

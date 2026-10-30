@@ -171,6 +171,15 @@ class HomeFocusController extends RowFocusController {
     }
   }
 
+  /// 首页第一行（Hero）：逻辑位置在第一行且没有正在进行的跨行导航
+  @override
+  bool atTopEdge(FocusNode? current) {
+    if (navigating || order.isEmpty) return false;
+    final located = super.locate(current);
+    if (located == null && current != anchor) return false;
+    return (located?.row ?? _activeRow) == order.first;
+  }
+
   @override
   bool move(FocusNode? current, TraversalDirection direction) {
     final located = super.locate(current);

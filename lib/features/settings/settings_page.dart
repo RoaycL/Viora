@@ -638,7 +638,7 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
       children: [
         // 左：分类
         Padding(
-          padding: const EdgeInsets.fromLTRB(VSpace.contentLeft, VSpace.safeV, 0, VSpace.safeV),
+          padding: EdgeInsets.fromLTRB(VSpace.contentLeft, VSpace.pageTop, 0, VSpace.safeV),
           child: SizedBox(
             width: 340,
             child: Column(
@@ -663,7 +663,7 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
         // 右：外框与导航栏共用上下安全区，只有框内设置项滚动。
         Expanded(
           child: Padding(
-            padding: const EdgeInsets.fromLTRB(0, VSpace.safeV, VSpace.safeH, VSpace.safeV),
+            padding: EdgeInsets.fromLTRB(0, VSpace.pageTop, VSpace.safeH, VSpace.safeV),
             child: Glass(
               child: ClipRRect(
                 borderRadius: BorderRadius.circular(VRadius.panel),

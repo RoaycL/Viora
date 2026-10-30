@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 
+import 'platform_profile.dart';
+
 /// 设计令牌，与效果图（docs/06-ui-design.md §2）一致。
 /// 所有尺寸都基于 1920×1080 设计画布，由 [DesignScale] 统一缩放。
 abstract final class VColors {
@@ -33,8 +35,15 @@ abstract final class VSpace {
   static const safeH = 96.0;
   static const safeV = 54.0;
 
-  /// 收起态导航栏占位（24 外边距 + 88 宽 + 64 间距）
-  static const contentLeft = 176.0;
+  /// 内容左边距。Windows：收起态侧边栏占位（24 外边距 + 88 宽 + 64 间距）；
+  /// 电视：导航在顶部标签栏，左边只留安全区，每行多放约半张海报
+  static double get contentLeft => PlatformProfile.isTv ? safeH : 176.0;
+
+  /// 页面标题的上边距。电视顶部有标签栏（[topBarBottom] 以上），页面从它下面开始
+  static double get pageTop => PlatformProfile.isTv ? topBarBottom + 36 : safeV;
+
+  /// 电视顶部标签栏底边的位置
+  static const topBarBottom = 108.0;
   static const navRailWidth = 88.0;
   static const navRailExpandedWidth = 280.0;
 
