@@ -8,69 +8,62 @@ void main() {
   setUp(() => PlatformProfile.debugOverride = PlatformProfile.tv);
   tearDown(() => PlatformProfile.debugOverride = PlatformProfile.desktop);
 
-  testWidgets('电视：首页短按返回不退出，只提示长按退出；系统返回也不关闭应用', (tester) async {
+  List<String> recordExits(WidgetTester tester) {
     final exits = <String>[];
     tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(SystemChannels.platform, (call) async {
       if (call.method == 'SystemNavigator.pop') exits.add('pop');
       return null;
     });
+    return exits;
+  }
+
+  testWidgets('电视：首页按一次返回只提示，2 秒内再按一次才退出', (tester) async {
+    final exits = recordExits(tester);
     await pumpApp(tester);
-    for (var i = 0; i < 3; i++) {
-      await tester.sendKeyEvent(LogicalKeyboardKey.escape);
-      await tester.pump(const Duration(milliseconds: 300));
-    }
-    // 系统层面的返回（没被按键处理的返回键 / 返回手势）
-    expect(await tester.binding.handlePopRoute(), isTrue);
-    await tester.pump();
+    await tester.sendKeyEvent(LogicalKeyboardKey.escape);
+    await tester.pump(const Duration(milliseconds: 300));
+    expect(find.text('再按一次返回键退出 Viora'), findsOneWidget);
     expect(exits, isEmpty);
-    expect(find.text('长按返回键 3 秒可以退出 Viora'), findsOneWidget);
-    expect(find.text('退出 Viora？'), findsNothing);
+    await tester.sendKeyEvent(LogicalKeyboardKey.escape);
+    await tester.pump();
+    expect(exits, ['pop']);
     await tester.pump(const Duration(seconds: 5));
     await unmount(tester);
   });
 
-  testWidgets('电视：长按返回键 3 秒弹出确认；取消不退出，确认才退出', (tester) async {
-    final exits = <String>[];
-    tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(SystemChannels.platform, (call) async {
-      if (call.method == 'SystemNavigator.pop') exits.add('pop');
-      return null;
-    });
+  testWidgets('电视：两次返回间隔超过 2 秒不退出，重新开始计时', (tester) async {
+    final exits = recordExits(tester);
     await pumpApp(tester);
-
-    await tester.sendKeyDownEvent(LogicalKeyboardKey.escape);
-    for (var i = 0; i < 31; i++) {
-      await tester.sendKeyRepeatEvent(LogicalKeyboardKey.escape);
-      await tester.pump(const Duration(milliseconds: 100));
-    }
-    await tester.sendKeyUpEvent(LogicalKeyboardKey.escape);
-    await tester.pumpAndSettle();
-    expect(find.text('退出 Viora？'), findsOneWidget);
-
-    // 默认焦点在「取消」：OK 不会退出
-    await tester.sendKeyEvent(LogicalKeyboardKey.select);
-    await tester.pumpAndSettle();
-    expect(find.text('退出 Viora？'), findsNothing);
-    expect(exits, isEmpty);
-
-    // 再长按一次，选「退出」
-    await tester.sendKeyDownEvent(LogicalKeyboardKey.escape);
+    await tester.sendKeyEvent(LogicalKeyboardKey.escape);
     await tester.pump(const Duration(seconds: 3));
-    await tester.sendKeyUpEvent(LogicalKeyboardKey.escape);
-    await tester.pumpAndSettle();
-    await tester.tap(find.text('退出'));
-    await tester.pumpAndSettle();
-    expect(exits, ['pop']);
+    await tester.sendKeyEvent(LogicalKeyboardKey.escape);
+    await tester.pump(const Duration(milliseconds: 300));
+    expect(exits, isEmpty);
+    expect(find.text('再按一次返回键退出 Viora'), findsOneWidget);
+    await tester.pump(const Duration(seconds: 5));
     await unmount(tester);
   });
 
-  testWidgets('电视：按一下就松开不会弹出退出确认', (tester) async {
+  testWidgets('电视：按住返回键不放不会连续触发退出；系统返回同样需要连按两次', (tester) async {
+    final exits = recordExits(tester);
     await pumpApp(tester);
     await tester.sendKeyDownEvent(LogicalKeyboardKey.escape);
-    await tester.pump(const Duration(milliseconds: 500));
+    for (var i = 0; i < 10; i++) {
+      await tester.sendKeyRepeatEvent(LogicalKeyboardKey.escape);
+      await tester.pump(const Duration(milliseconds: 50));
+    }
     await tester.sendKeyUpEvent(LogicalKeyboardKey.escape);
-    await tester.pump(const Duration(seconds: 4));
-    expect(find.text('退出 Viora？'), findsNothing);
-    await tester.pump(const Duration(seconds: 6));
+    await tester.pump();
+    expect(exits, isEmpty);
+    await tester.pump(const Duration(seconds: 3));
+    // 系统层面的返回（没被按键处理的返回键 / 返回手势）
+    expect(await tester.binding.handlePopRoute(), isTrue);
+    await tester.pump();
+    expect(exits, isEmpty);
+    expect(await tester.binding.handlePopRoute(), isTrue);
+    await tester.pump();
+    expect(exits, ['pop']);
+    await tester.pump(const Duration(seconds: 5));
     await unmount(tester);
   });
 }
