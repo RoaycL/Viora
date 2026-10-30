@@ -9,6 +9,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../core/log/app_log.dart';
+import '../data/tmdb/tmdb_disk_cache.dart';
 import '../data/config/config_store.dart';
 import '../data/media/server_registry.dart';
 import '../player/playback_cache.dart';
@@ -26,7 +27,6 @@ import 'router.dart';
 import 'shell.dart';
 import 'platform_profile.dart';
 import 'theme.dart';
-import '../ui/panels/exit_dialog.dart';
 import 'window_frame.dart';
 import '../ui/focus/input_mode.dart';
 import '../features/sync/webdav_service.dart';
@@ -43,38 +43,17 @@ class VioraApp extends ConsumerStatefulWidget {
 
 class _VioraAppState extends ConsumerState<VioraApp> with WidgetsBindingObserver {
   late final GoRouter _router = buildRouter(observers: [_BackObserver(_updateCanGoBackAfterFrame)]);
-  DateTime? _lastExitHint;
+
+  /// 首页第一次按返回后开始计时，计时期间再按一次退出
+  Timer? _exitArmed;
   String? _lastLoggedPath;
   WebDavSync? _webdav;
 
-  /// 电视：长按返回键 3 秒弹出「退出 Viora？」，确认后才退出（不再"首页连按两次返回退出"，容易误退）
-  static const exitHoldDuration = Duration(seconds: 3);
-  Timer? _exitHold;
-  bool _exitDialogOpen = false;
+  /// 电视：首页按返回提示「再按一次返回键退出」，2 秒内再按一次才退出
+  static const exitConfirmWindow = Duration(seconds: 2);
 
   static bool _isBackKey(LogicalKeyboardKey k) =>
       k == LogicalKeyboardKey.goBack || k == LogicalKeyboardKey.escape || k == LogicalKeyboardKey.gameButtonB;
-
-  bool _onHardwareKey(KeyEvent e) {
-    if (!_isBackKey(e.logicalKey)) return false;
-    if (e is KeyDownEvent) {
-      _exitHold?.cancel();
-      _exitHold = Timer(exitHoldDuration, _confirmExit);
-    } else if (e is KeyUpEvent) {
-      _exitHold?.cancel();
-    }
-    // 按住不放时的重复事件不触发连续返回：返回快捷键设置了 includeRepeats: false
-    return false;
-  }
-
-  Future<void> _confirmExit() async {
-    final context = rootNavigatorKey.currentContext;
-    if (_exitDialogOpen || context == null || !context.mounted) return;
-    _exitDialogOpen = true;
-    final exit = await showExitDialog(context);
-    _exitDialogOpen = false;
-    if (exit) await SystemNavigator.pop();
-  }
 
   /// Android 系统的返回（没被按键处理的返回键、返回手势）：电视上一律按应用内返回处理，永远不直接关闭应用
   @override
@@ -119,7 +98,6 @@ class _VioraAppState extends ConsumerState<VioraApp> with WidgetsBindingObserver
     if (PlatformProfile.isTv) {
       // 先于路由注册：系统返回先到这里
       WidgetsBinding.instance.addObserver(this);
-      HardwareKeyboard.instance.addHandler(_onHardwareKey);
     }
     _router.routerDelegate.addListener(_scheduleCanGoBack);
     _autoCheckUpdate();
@@ -143,6 +121,11 @@ class _VioraAppState extends ConsumerState<VioraApp> with WidgetsBindingObserver
         await ref.read(indexSyncProvider.notifier).syncAll();
       });
       CachedNetImage.prune();
+      // 旧版本把 TMDB 缓存存在 SharedPreferences 里：启动稳定后一次性清掉，并清理磁盘缓存
+      Future<void>.delayed(const Duration(seconds: 15), () async {
+        await TmdbDiskCache.dropLegacyPreferences();
+        await TmdbDiskCache.prune();
+      });
     }
   }
 
@@ -167,8 +150,7 @@ class _VioraAppState extends ConsumerState<VioraApp> with WidgetsBindingObserver
     if (identical(WebDavSync.instance, _webdav)) WebDavSync.instance = null;
     _webdav?.dispose();
     WidgetsBinding.instance.removeObserver(this);
-    HardwareKeyboard.instance.removeHandler(_onHardwareKey);
-    _exitHold?.cancel();
+    _exitArmed?.cancel();
     _router.routerDelegate.removeListener(_scheduleCanGoBack);
     _canGoBack.dispose();
     _router.dispose();
@@ -176,7 +158,7 @@ class _VioraAppState extends ConsumerState<VioraApp> with WidgetsBindingObserver
   }
 
   /// 返回键（docs/07-input-control.md §2.1）：
-  /// 页面自己的处理 → 导航栏回到内容 → 关闭弹层 / 出栈 → 回到首页。退出应用：电视长按返回键 3 秒确认。
+  /// 页面自己的处理 → 导航栏回到内容 → 关闭弹层 / 出栈 → 回到首页。退出应用：电视在首页 2 秒内连按两次返回键。
   void _handleBack() {
     if (backDispatcher.dispatch()) return;
 
@@ -198,13 +180,15 @@ class _VioraAppState extends ConsumerState<VioraApp> with WidgetsBindingObserver
       return;
     }
 
-    // 首页再按返回不退出：电视提示长按退出（10 秒内只提示一次）；Windows 由窗口关闭按钮退出。
+    // 首页：电视上第一次按返回提示，2 秒内再按一次退出；Windows 由窗口关闭按钮退出。
     if (!PlatformProfile.isTv) return;
-    final now = DateTime.now();
-    if (_lastExitHint == null || now.difference(_lastExitHint!) > const Duration(seconds: 10)) {
-      _lastExitHint = now;
-      showToast('长按返回键 3 秒可以退出 Viora');
+    if (_exitArmed?.isActive ?? false) {
+      _exitArmed!.cancel();
+      SystemNavigator.pop();
+      return;
     }
+    _exitArmed = Timer(exitConfirmWindow, () {});
+    showToast('再按一次返回键退出 Viora');
   }
 
   @override
