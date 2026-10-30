@@ -5,6 +5,7 @@ import '../../core/log/app_log.dart';
 import '../cache/account_scope.dart';
 import '../emby/emby_client.dart';
 import '../config/config_store.dart';
+import '../media/media_models.dart';
 import '../media/server_registry.dart';
 import 'media_index.dart';
 
@@ -53,15 +54,22 @@ class SyncStatus {
 }
 
 /// 索引同步（docs/04-aggregation.md §2）：
-/// 添加服务器 / 超过 7 天 → 全量；平时启动 → 按 MinDateLastSaved 增量。
+/// 添加服务器 / 超过 30 天 → 全量；平时启动 → 按 MinDateLastSaved 增量。
+/// 服务器关掉「本地索引」时跳过（索引在绑定账号时已删除）。
 class IndexSyncController extends Notifier<Map<String, SyncStatus>> {
   final _runningScopes = <String, String>{};
   bool _active = true;
 
   /// 每页条数与页间隔：后台慢慢同步，避免 NAS 一下子满负载
   static const _pageSize = 200;
+  static const _minPageSize = 50;
   static const _pagePause = Duration(milliseconds: 400);
-  static const _fullEvery = Duration(days: 7);
+
+  /// 全量同步会把整个片库重新拉一遍，16 台服务器每周一次负担太重；增量同步照常每次启动做
+  static const _fullEvery = Duration(days: 30);
+
+  /// 一次取太多条会报 HTTP 5xx / 超时的服务器：本次运行里记住减小后的每页条数
+  final _pageSizes = <String, int>{};
 
   @override
   Map<String, SyncStatus> build() {
@@ -82,7 +90,7 @@ class IndexSyncController extends Notifier<Map<String, SyncStatus>> {
     final servers = ref.read(configProvider).servers;
     index.retainServers(indexAccountScopes(ref.read(configProvider)).keys.toSet());
     for (final s in servers) {
-      if (!s.loggedIn) continue;
+      if (!s.loggedIn || !s.indexEnabled) continue;
       await syncServer(s.id, forceFull: forceFull);
     }
   }
@@ -91,6 +99,7 @@ class IndexSyncController extends Notifier<Map<String, SyncStatus>> {
     final index = await ref.read(mediaIndexProvider.future);
     final client = ref.read(serverClientProvider(serverId));
     if (index == null || client == null) return;
+    if (ref.read(configProvider).server(serverId)?.indexEnabled == false) return;
     final scope = accountScope(client.server);
     if (_runningScopes[serverId] == scope) return;
     _runningScopes[serverId] = scope;
@@ -116,15 +125,27 @@ class IndexSyncController extends Notifier<Map<String, SyncStatus>> {
       int? total;
       final seen = <String>{};
       while (true) {
-        final page = await client.items(
-          start: start,
-          limit: _pageSize,
-          sortBy: 'DateCreated,SortName',
-          sortOrder: 'Ascending',
-          minDateLastSaved: full ? null : st.incrAt?.subtract(const Duration(minutes: 5)),
-          fields: EmbyClient.indexFields,
-          userData: false,
-        );
+        final PagedItems page;
+        final limit = _pageSizes[serverId] ?? _pageSize;
+        try {
+          page = await client.items(
+            start: start,
+            limit: limit,
+            sortBy: 'DateCreated,SortName',
+            sortOrder: 'Ascending',
+            minDateLastSaved: full ? null : st.incrAt?.subtract(const Duration(minutes: 5)),
+            fields: EmbyClient.indexFields,
+            userData: false,
+          );
+        } catch (e) {
+          // 服务器出错（5xx）或超时：一次取的条数减半，从同一位置重试；减到 50 条还不行才算失败
+          final overloaded = e is! MediaServerException || (e.statusCode ?? 500) >= 500;
+          if (!overloaded || limit <= _minPageSize || !current()) rethrow;
+          _pageSizes[serverId] = (limit ~/ 2).clamp(_minPageSize, _pageSize);
+          AppLog.add('[index] ${client.server.name} 第 $start 条起出错（$e），每页改为 ${_pageSizes[serverId]} 条重试');
+          await Future<void>.delayed(_pagePause * 3);
+          continue;
+        }
         if (page.totalKnown) {
           // 同步期间服务器新入库：按入库时间升序分页，新条目排在最后，前面的分页位置不变，接着同步到新的总数即可。
           // 全量同步时总数变少（有条目被删）会让后面的分页整体前移、漏掉条目，而全量结束会删除没出现的条目，所以只能放弃重来；

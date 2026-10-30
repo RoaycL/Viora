@@ -11,6 +11,7 @@ import '../../app/window_frame.dart' show isDesktopWindow;
 import '../../core/platform/open_url.dart';
 import '../../data/config/app_config.dart';
 import '../../data/config/config_store.dart';
+import '../../data/index/index_sync.dart';
 import '../../data/media/server_registry.dart';
 import '../../data/net/request_composer.dart';
 import '../../data/tmdb/tmdb_client.dart';
@@ -395,6 +396,30 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
                 value: s.aggregate,
                 onChanged: (v) =>
                     ref.read(configProvider.notifier).updateServer(s.id, (old) => old.copyWith(aggregate: v)),
+              ),
+              const SizedBox(height: 10),
+            ],
+          const SizedBox(height: 36),
+          const _Subtitle('本地索引'),
+          Text(
+            '在本机保存一份片库目录，用于首字母搜索、单字搜索和首页「最近入库」。启动时只同步新增内容，每 30 天完整同步一次。'
+            '偶尔用、片库特别大或同步总出错的服务器可以关掉：关掉后删除它的本地索引，搜索时实时向它查询（输入两个字以上才查），'
+            '它的新片也不出现在「最近入库」。',
+            style: VText.small.copyWith(color: VColors.textTertiary, height: 1.6),
+          ),
+          const SizedBox(height: 20),
+          if (config.servers.isEmpty)
+            Text('还没有添加服务器', style: VText.label.copyWith(color: VColors.textMuted))
+          else
+            for (final s in config.servers) ...[
+              VToggle(
+                label: s.displayName,
+                subtitle: s.indexEnabled ? '已开启' : '已关闭 · 只实时搜索',
+                value: s.indexEnabled,
+                onChanged: (v) async {
+                  await ref.read(configProvider.notifier).updateServer(s.id, (old) => old.copyWith(indexEnabled: v));
+                  if (v) unawaited(ref.read(indexSyncProvider.notifier).syncServer(s.id, forceFull: true));
+                },
               ),
               const SizedBox(height: 10),
             ],

@@ -64,6 +64,7 @@ class ServerConfig {
     this.userAgent,
     this.adult = false,
     this.aggregate = true,
+    this.indexEnabled = true,
     this.note,
     this.lastAccessAt,
     this.movieCount,
@@ -110,6 +111,9 @@ class ServerConfig {
 
   /// 参与聚合搜索（详情页的播放资源、TMDB 详情页找资源）；关掉后只在它自己的条目里使用它
   final bool aggregate;
+
+  /// 在本机建索引（首字母搜索、首页「最近入库」用）；关掉后不同步、删掉本地索引，搜索时只实时查这台服务器
+  final bool indexEnabled;
   final String? note;
   final DateTime? lastAccessAt;
   final int? movieCount;
@@ -130,6 +134,7 @@ class ServerConfig {
     bool clearUserAgent = false,
     bool? adult,
     bool? aggregate,
+    bool? indexEnabled,
     String? note,
     DateTime? lastAccessAt,
     int? movieCount,
@@ -148,6 +153,7 @@ class ServerConfig {
     userAgent: clearUserAgent ? null : (userAgent ?? this.userAgent),
     adult: adult ?? this.adult,
     aggregate: aggregate ?? this.aggregate,
+    indexEnabled: indexEnabled ?? this.indexEnabled,
     note: note ?? this.note,
     lastAccessAt: lastAccessAt ?? this.lastAccessAt,
     movieCount: movieCount ?? this.movieCount,
@@ -167,6 +173,7 @@ class ServerConfig {
     'userAgent': userAgent,
     'adult': adult,
     'aggregate': aggregate,
+    'index': indexEnabled,
     'note': note,
     'lastAccessAt': lastAccessAt?.toIso8601String(),
     'movieCount': movieCount,
@@ -186,6 +193,7 @@ class ServerConfig {
     userAgent: j['userAgent'] as String?,
     adult: j['adult'] as bool? ?? false,
     aggregate: j['aggregate'] as bool? ?? true,
+    indexEnabled: j['index'] as bool? ?? true,
     note: j['note'] as String?,
     lastAccessAt: DateTime.tryParse(j['lastAccessAt'] as String? ?? ''),
     movieCount: j['movieCount'] as int?,

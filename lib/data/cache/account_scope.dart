@@ -29,12 +29,13 @@ String mediaFeedScope(AppConfig config) => _digest([
 ]);
 
 Map<String, String> indexAccountScopes(AppConfig config) => {
-  for (final server in config.allServers.where((s) => s.loggedIn)) server.id: accountScope(server),
+  for (final server in config.allServers.where((s) => s.loggedIn && s.indexEnabled)) server.id: accountScope(server),
 };
 
 /// 各服务器旧格式的账号身份（迁移用）
 Map<String, String> legacyIndexAccountScopes(AppConfig config) => {
-  for (final server in config.allServers.where((s) => s.loggedIn)) server.id: legacyAccountScope(server),
+  for (final server in config.allServers.where((s) => s.loggedIn && s.indexEnabled))
+    server.id: legacyAccountScope(server),
 };
 
 String indexAccountsKey(AppConfig config) => _digest(indexAccountScopes(config));

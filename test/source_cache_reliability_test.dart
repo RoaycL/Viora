@@ -42,6 +42,7 @@ class FeedClient extends EmbyClient {
         appVersion: 'test',
       );
   final starts = <int>[];
+  final limits = <int>[];
   late Future<PagedItems> Function(int start) page;
   Future<List<MediaItem>> Function()? resumeAction;
   Future<PlaybackInfoResult> Function()? infoAction;
@@ -61,6 +62,7 @@ class FeedClient extends EmbyClient {
     bool userData = true,
   }) {
     starts.add(start);
+    limits.add(limit);
     return page(start);
   }
 
@@ -466,6 +468,57 @@ void main() {
     expect(container.read(indexSyncProvider)['s']!.error, isNull);
     expect(index.count('s'), 202);
     expect(index.syncState('s').fullAt, isNotNull);
+  });
+
+  test('一次取太多条时服务器报 HTTP 500：每页减半从同一位置重试，同步照常完成', () async {
+    final index = (await MediaIndex.open(path: ':memory:'))!;
+    addTearDown(index.close);
+    index.bindAccounts({'s': accountScope(server)});
+    late FeedClient client;
+    client = FeedClient(server)
+      ..page = (start) async {
+        if (client.limits.last > 100) throw const MediaServerException('服务器返回 HTTP 500', statusCode: 500);
+        final end = (start + client.limits.last).clamp(0, 150);
+        return PagedItems([for (var i = start; i < end; i++) movie('m$i')], 150);
+      };
+    final container = ProviderContainer(
+      overrides: [
+        mediaIndexProvider.overrideWith((ref) async => index),
+        serverClientProvider.overrideWith((ref, id) => client),
+      ],
+    );
+    addTearDown(container.dispose);
+    await container.read(configProvider.notifier).update((c) => AppConfig(servers: [server]));
+    await container.read(indexSyncProvider.notifier).syncServer('s', forceFull: true);
+    expect(container.read(indexSyncProvider)['s']!.error, isNull);
+    expect(index.count('s'), 150);
+    expect(client.limits, [200, 100, 100]);
+    expect(client.starts, [0, 0, 100]);
+    // 本次运行里记住：下次同步直接用 100
+    await container.read(indexSyncProvider.notifier).syncServer('s');
+    expect(client.limits.sublist(3).every((l) => l == 100), isTrue);
+  });
+
+  test('关掉本地索引的服务器不同步，账号也不绑定到索引', () async {
+    final index = (await MediaIndex.open(path: ':memory:'))!;
+    addTearDown(index.close);
+    final off = server.copyWith(indexEnabled: false);
+    final config = AppConfig(servers: [off]);
+    expect(indexAccountScopes(config), isEmpty);
+    expect(ServerConfig.fromJson(off.toJson()).indexEnabled, isFalse);
+    expect(ServerConfig.fromJson({...server.toJson()}..remove('index')).indexEnabled, isTrue);
+    final client = FeedClient(off)..page = (_) async => PagedItems([movie('m')], 1);
+    final container = ProviderContainer(
+      overrides: [
+        mediaIndexProvider.overrideWith((ref) async => index),
+        serverClientProvider.overrideWith((ref, id) => client),
+      ],
+    );
+    addTearDown(container.dispose);
+    await container.read(configProvider.notifier).update((c) => config);
+    await container.read(indexSyncProvider.notifier).syncAll();
+    await container.read(indexSyncProvider.notifier).syncServer('s', forceFull: true);
+    expect(client.starts, isEmpty);
   });
 
   test('full index sync still aborts when the server total shrinks mid-sync', () async {
