@@ -21,7 +21,7 @@ void main() {
     await press(tester, LogicalKeyboardKey.arrowUp);
     expect(focused, 'nav:/');
     await press(tester, LogicalKeyboardKey.arrowRight);
-    expect(focused, 'nav:/search');
+    expect(focused, 'nav:/library');
     await press(tester, LogicalKeyboardKey.arrowLeft);
     await press(tester, LogicalKeyboardKey.arrowLeft);
     expect(focused, 'nav:/');
@@ -51,7 +51,6 @@ void main() {
     await pumpApp(tester);
     await press(tester, LogicalKeyboardKey.arrowUp);
     await press(tester, LogicalKeyboardKey.arrowRight);
-    await press(tester, LogicalKeyboardKey.arrowRight);
     expect(focused, 'nav:/library');
     await press(tester, LogicalKeyboardKey.select);
     expect(find.text('还没有媒体服务器'), findsOneWidget);
@@ -73,7 +72,7 @@ void main() {
   testWidgets('电视设置页（不是按行导航的页面）最上面按 ↑ 也进入标签栏', (tester) async {
     await pumpApp(tester);
     await press(tester, LogicalKeyboardKey.arrowUp);
-    for (var i = 0; i < 5; i++) {
+    for (var i = 0; i < 4; i++) {
       await press(tester, LogicalKeyboardKey.arrowRight);
     }
     expect(focused, 'nav:/settings');
@@ -85,6 +84,24 @@ void main() {
     expect(focused, 'nav:/settings');
     await press(tester, LogicalKeyboardKey.arrowDown);
     expect(focused, isNot(startsWith('nav:')));
+    expect(tester.takeException(), isNull);
+    await unmount(tester);
+  });
+
+  testWidgets('电视搜索不占标签，在右上角：在「设置」上按 → 到搜索图标，OK 打开搜索页', (tester) async {
+    await pumpApp(tester);
+    expect(find.text('搜索'), findsNothing);
+    await press(tester, LogicalKeyboardKey.arrowUp);
+    for (var i = 0; i < 5; i++) {
+      await press(tester, LogicalKeyboardKey.arrowRight);
+    }
+    expect(focused, 'nav:/search');
+    await press(tester, LogicalKeyboardKey.arrowRight);
+    expect(focused, 'nav:/search');
+    await press(tester, LogicalKeyboardKey.select);
+    expect(focused, isNot(startsWith('nav:')));
+    await press(tester, LogicalKeyboardKey.escape);
+    expect(focused, 'nav:/search');
     expect(tester.takeException(), isNull);
     await unmount(tester);
   });
