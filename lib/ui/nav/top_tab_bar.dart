@@ -8,7 +8,7 @@ import 'side_nav_rail.dart' show NavItem;
 /// 电视顶部标签栏（Windows 仍用左侧 [SideNavRail]）。
 ///
 /// 一排文字标签居中：在页面第一行按 ↑ 进入，←→ 切换，OK 打开，↓ 回到内容。
-/// 右上角是服务器状态、时钟和搜索图标（在「设置」上按 → 到搜索）。
+/// 右上角是服务器状态点 + 时钟（紧凑，不挤到居中的标签）和搜索图标（在「设置」上按 → 到搜索）。
 /// 不展开、不压暗、没有毛玻璃：切换只是高亮从一个标签移到另一个，弱 GPU 的电视盒子也不掉帧。
 /// 页面往下翻时滑出屏幕（[visible]），回到顶部或焦点进入时再出现。
 class TopTabBar extends StatelessWidget {
@@ -92,7 +92,7 @@ class TopTabBar extends StatelessWidget {
                       child: Row(
                         mainAxisSize: MainAxisSize.min,
                         children: [
-                          const StatusBar(),
+                          const StatusBar(compact: true),
                           const SizedBox(width: 16),
                           FocusTraversalOrder(
                             order: NumericFocusOrder(items.length.toDouble()),

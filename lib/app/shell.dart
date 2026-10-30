@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 
@@ -39,6 +41,19 @@ class _AppShellState extends State<AppShell> {
     super.initState();
     ShellController.instance._attach(this);
     _railScope.addListener(_onBarFocus);
+    FocusManager.instance.addListener(_onFocusChange);
+  }
+
+  /// 焦点落在内容区的空容器上（页面路由打开时会把焦点拿到自己的 FocusScope 上；页面还在加载、
+  /// 没有可聚焦的控件时就停在那里，方向键没有反应）：把焦点还给当前导航项，可以继续切换
+  void _onFocusChange() {
+    final primary = FocusManager.instance.primaryFocus;
+    if (primary is! FocusScopeNode || (primary != _contentScope && !primary.ancestors.contains(_contentScope))) return;
+    if (_hasFocusableContent) return;
+    scheduleMicrotask(() {
+      if (!mounted || FocusManager.instance.primaryFocus != primary || _hasFocusableContent) return;
+      _railNodes[_active.path]?.requestFocus();
+    });
   }
 
   void _onBarFocus() {
@@ -63,6 +78,7 @@ class _AppShellState extends State<AppShell> {
   void dispose() {
     ShellController.instance._detach(this);
     _railScope.removeListener(_onBarFocus);
+    FocusManager.instance.removeListener(_onFocusChange);
     _railScope.dispose();
     _contentScope.dispose();
     for (final node in _railNodes.values) {
@@ -75,9 +91,17 @@ class _AppShellState extends State<AppShell> {
 
   void focusRail() => _railNodes[_active.path]!.requestFocus();
 
+  /// 回到内容区上次的焦点；页面还没有可聚焦的内容（加载中、空列表）时不动，焦点留在导航上，
+  /// 可以继续切换（不然焦点落在页面的空容器上，方向键回不到导航，要等加载完才能动）
   void focusContent() {
+    // 上次的焦点（通常是页面的 FocusScope，由它恢复具体控件；首页的卡片被回收时由首页按作品找回）
     final last = _contentScope.focusedChild;
-    if (last != null && last.context != null) {
+    if (!_hasFocusableContent) return;
+    if (last is FocusScopeNode && last.context != null && last.focusedChild == null) {
+      // 页面还没有聚焦过任何控件（加载完之前焦点一直在导航上）：进入它的第一个控件
+      last.requestFocus();
+      last.nextFocus();
+    } else if (last != null && last.context != null) {
       last.requestFocus();
     } else {
       _contentScope.requestFocus();
@@ -85,10 +109,25 @@ class _AppShellState extends State<AppShell> {
     }
   }
 
+  /// 只看当前页面：切换后同一帧里上一个页面还在树上（转场完成后才移除）
+  bool get _hasFocusableContent => _contentScope.traversalDescendants.any((n) {
+    final context = n.context;
+    return n is! FocusScopeNode && context != null && (ModalRoute.of(context)?.isCurrent ?? true);
+  });
+
   void _select(NavItem item) {
     if (item != _active) context.go(item.path);
     // 选中后进入内容区；新页面的 autofocus 会接管焦点。
-    WidgetsBinding.instance.addPostFrameCallback((_) => focusContent());
+    // 新页面还没有可聚焦的内容（收藏、观看记录加载中）：焦点回到刚选的导航项，可以继续切换，
+    // 页面在后台加载，加载完按 ↓ / → 进入（新页面打开时路由会把焦点拿到它的空容器上）
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      if (_hasFocusableContent) {
+        focusContent();
+      } else {
+        _railNodes[item.path]?.requestFocus();
+      }
+    });
   }
 
   @override
@@ -113,31 +152,29 @@ class _AppShellState extends State<AppShell> {
         color: VColors.background,
         child: Stack(
           children: [
+            // 方向键处理放在 FocusScope 外层：焦点落在页面的空容器（FocusScope 本身）上时也能处理
             Positioned.fill(
-              child: FocusScope(
-                node: _contentScope,
-                child: Actions(
-                  actions: <Type, Action<Intent>>{
-                    DirectionalFocusIntent: EdgeAwareDirectionalAction((direction) {
-                      if (direction == toBar) focusRail();
-                      return true;
-                    }),
-                  },
+              child: Actions(
+                actions: <Type, Action<Intent>>{
+                  DirectionalFocusIntent: EdgeAwareDirectionalAction((direction) {
+                    if (direction == toBar) focusRail();
+                    return true;
+                  }),
+                },
+                child: FocusScope(
+                  node: _contentScope,
                   child: NotificationListener<ScrollNotification>(onNotification: _onScroll, child: widget.child),
                 ),
               ),
             ),
-            FocusScope(
-              node: _railScope,
-              child: Actions(
-                actions: <Type, Action<Intent>>{
-                  DirectionalFocusIntent: EdgeAwareDirectionalAction((direction) {
-                    if (direction == toContent) focusContent();
-                    return true;
-                  }),
-                },
-                child: nav,
-              ),
+            Actions(
+              actions: <Type, Action<Intent>>{
+                DirectionalFocusIntent: EdgeAwareDirectionalAction((direction) {
+                  if (direction == toContent) focusContent();
+                  return true;
+                }),
+              },
+              child: FocusScope(node: _railScope, child: nav),
             ),
           ],
         ),

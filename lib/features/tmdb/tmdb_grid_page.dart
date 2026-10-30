@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../ui/widgets/skeleton.dart';
 import '../../ui/widgets/fill_grid.dart';
 
 import '../../app/theme.dart';
@@ -124,7 +125,10 @@ class _TmdbGrid extends StatelessWidget {
                     if (error != null)
                       Text(error!, style: VText.label.copyWith(color: VColors.bad))
                     else if (loading && items.isEmpty)
-                      const Text('加载中…', style: VText.label)
+                      FillGrid(
+                        itemWidth: PosterCard.width,
+                        children: [for (var i = 0; i < 12; i++) const SkeletonShimmer(child: SkeletonCard())],
+                      )
                     else
                       FillGrid(
                         itemWidth: PosterCard.width,

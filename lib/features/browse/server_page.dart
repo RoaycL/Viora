@@ -10,6 +10,7 @@ import '../../data/media/server_registry.dart';
 import '../../ui/focus/focusable.dart';
 import '../../ui/focus/row_focus.dart';
 import '../../ui/rows/cards.dart';
+import '../../ui/widgets/skeleton.dart';
 import '../../ui/rows/focus_row.dart';
 import '../../ui/widgets/buttons.dart';
 import '../../ui/widgets/server_image.dart';
@@ -82,9 +83,13 @@ class ServerPage extends ConsumerWidget {
                     _LatestRow(rowIndex: 2 + i, serverId: serverId, library: libs[i]),
                 ],
               ),
-              _ => Padding(
-                padding: EdgeInsets.only(left: VSpace.contentLeft, top: 40),
-                child: Text('正在加载媒体库…', style: VText.label),
+              // 加载中：和真实内容同样排布的占位（媒体库卡片一行 + 最近添加一行）
+              _ => const Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  SkeletonRow(title: '媒体库', itemWidth: 400, imageHeight: 225),
+                  SkeletonRow(title: '最近添加'),
+                ],
               ),
             },
           ],
@@ -293,8 +298,16 @@ class _LibraryGridPageState extends ConsumerState<LibraryGridPage> {
               crossAxisSpacing: 24,
               childAspectRatio: PosterCard.width / PosterCard.height,
             ),
-            itemCount: _items.length,
+            // 第一页还没回来：同样网格的占位
+            itemCount: _items.isEmpty && _error == null && _total != 0 ? columns * 3 : _items.length,
             itemBuilder: (context, i) {
+              if (_items.isEmpty) {
+                return const FittedBox(
+                  fit: BoxFit.fitWidth,
+                  alignment: Alignment.topLeft,
+                  child: SkeletonShimmer(child: SkeletonCard()),
+                );
+              }
               if (i >= _items.length - columns * 2) WidgetsBinding.instance.addPostFrameCallback((_) => _loadMore());
               return FittedBox(
                 fit: BoxFit.fitWidth,
