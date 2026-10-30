@@ -55,6 +55,7 @@ class ExternalRatings extends ConsumerWidget {
     }
     var loading = false;
     var externalTomato = false;
+    final shown = <RatingSource>{};
     String? certification;
     if (query != null) {
       for (final p in settings.value?.providers ?? const <RatingProviderSettings>[]) {
@@ -73,11 +74,13 @@ class ExternalRatings extends ConsumerWidget {
         }
         if (result == null) continue;
         for (final r in result.data.ratings) {
+          // 几个服务都给出同一种评分时只显示排在前面的服务的（设置里可以调顺序）
+          if (!shown.add(r.source)) continue;
           if (r.source == RatingSource.rottenTomatoes) externalTomato = true;
           badge(RatingBrand.of(r.source), r.short, stale: result.stale, votes: r.votes);
         }
         if (serverCertification == null && result.data.certification != null) {
-          certification = 'OMDb 年龄分级：${result.data.certification}${result.stale ? '（旧缓存）' : ''}';
+          certification = '${p.id.label} 年龄分级：${result.data.certification}${result.stale ? '（旧缓存）' : ''}';
         }
         // 缺少 ID、没有评分都不是故障：详情页首屏不显示这类提示，只在真正失败时提示并可重试
         if (result.error != null && !result.unsupported) {

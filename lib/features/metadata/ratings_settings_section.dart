@@ -43,12 +43,16 @@ class _RatingsSettingsSectionState extends ConsumerState<RatingsSettingsSection>
       context,
       title: '${p.id.label} 评分',
       saveLabel: '保存并测试',
-      description: p.id == RatingProviderId.omdb
-          ? '填写 OMDb Key，也可以粘贴申请邮件里的示例链接。用于 IMDb、烂番茄和 Metacritic 评分。'
-          : '填写 Trakt 应用的 Client ID，公开评分无需登录，也无需 Client Secret。',
+      description: switch (p.id) {
+        RatingProviderId.omdb => '填写 OMDb Key，也可以粘贴申请邮件里的示例链接。用于 IMDb、烂番茄和 Metacritic 评分。',
+        RatingProviderId.trakt => '填写 Trakt 应用的 Client ID，公开评分无需登录，也无需 Client Secret。',
+        RatingProviderId.mdblist =>
+          '在 mdblist.com 登录后，到 Preferences 页面的 API Access 生成 Key（免费，每天约 1000 次）。'
+              '电影和剧集都有 IMDb、烂番茄、Metacritic、Trakt 评分。和 OMDb 同时开启时，同一来源只显示排在前面的那个。',
+      },
       children: [
         VTextField(
-          label: p.id == RatingProviderId.omdb ? 'OMDb API Key' : 'Trakt Client ID',
+          label: p.id == RatingProviderId.trakt ? 'Trakt Client ID' : '${p.id.label} API Key',
           controller: key,
           obscure: true,
           autofocus: true,
@@ -128,13 +132,18 @@ class _RatingsSettingsSectionState extends ConsumerState<RatingsSettingsSection>
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Text(
-          '进入详情页时按作品 ID 查询，各来源独立显示。年龄分级是参考信息，不是详细家长指南。',
+          '进入详情页时按作品 ID 查询。几个服务都给出同一种评分（如 IMDb）时，只显示排在前面的服务的，可以用箭头调整顺序。'
+          '年龄分级是参考信息，不是详细家长指南。',
           style: VText.caption.copyWith(color: VColors.textSecondary),
         ),
         const SizedBox(height: 20),
         for (final (i, p) in settings.providers.indexed) ...[
           SettingsEntry(
-            title: p.id == RatingProviderId.omdb ? 'OMDb · IMDb / 烂番茄 / Metacritic' : 'Trakt 社区评分',
+            title: switch (p.id) {
+              RatingProviderId.omdb => 'OMDb · IMDb / 烂番茄 / Metacritic',
+              RatingProviderId.trakt => 'Trakt 社区评分',
+              RatingProviderId.mdblist => 'MDBList · 电影和剧集的 IMDb / 烂番茄 / Metacritic / Trakt',
+            },
             subtitle: p.effectiveUrl,
             status: p.configured ? '已配置' : '未配置',
             trailing: [
@@ -149,7 +158,7 @@ class _RatingsSettingsSectionState extends ConsumerState<RatingsSettingsSection>
                 onPressed: i == settings.providers.length - 1 ? null : () => _move(settings, i, 1),
               ),
               SmallSwitch(
-                label: '${p.id == RatingProviderId.omdb ? 'OMDb' : 'Trakt'} 评分',
+                label: '${p.id.label} 评分',
                 value: p.enabled && p.configured,
                 onChanged: (enabled) {
                   if (_saving) return;

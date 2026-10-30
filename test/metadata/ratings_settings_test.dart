@@ -166,8 +166,9 @@ void main() {
         },
       }),
     );
-    expect(fromPhone.providers.last.apiKey, '9sample');
-    expect(fromPhone.providers.last.enabled, isTrue);
+    final trakt = fromPhone.providers.firstWhere((p) => p.id == RatingProviderId.trakt);
+    expect(trakt.apiKey, '9sample');
+    expect(trakt.enabled, isTrue);
   });
 
   test('同步凭据时只发送自己填写的 Key，空 Key 不会清掉对方已填的', () {

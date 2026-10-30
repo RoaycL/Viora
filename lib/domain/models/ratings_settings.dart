@@ -1,6 +1,9 @@
 enum RatingProviderId {
   omdb('OMDb', 'https://www.omdbapi.com'),
-  trakt('Trakt', 'https://api.trakt.tv');
+  trakt('Trakt', 'https://api.trakt.tv'),
+
+  /// 剧集也有烂番茄分；免费 Key 每天约 1000 次请求
+  mdblist('MDBList', 'https://api.mdblist.com');
 
   const RatingProviderId(this.label, this.defaultUrl);
   final String label;
@@ -9,6 +12,7 @@ enum RatingProviderId {
   String get builtinKey => switch (this) {
     omdb => const String.fromEnvironment('VIORA_OMDB_KEY'),
     trakt => const String.fromEnvironment('VIORA_TRAKT_CLIENT_ID'),
+    mdblist => const String.fromEnvironment('VIORA_MDBLIST_KEY'),
   };
 }
 
@@ -83,7 +87,7 @@ class RatingsSettings {
   }
 }
 
-/// Accept a copied OMDb example URL and HTML-encoded Trakt IDs from chat.
+/// Accept a copied OMDb / MDBList example URL and HTML-encoded Trakt IDs from chat.
 String normalizeRatingKey(RatingProviderId id, String input) {
   var key = input
       .trim()
@@ -92,7 +96,7 @@ String normalizeRatingKey(RatingProviderId id, String input) {
         return code != null && code > 0 && code <= 0x10ffff ? String.fromCharCode(code) : m[0]!;
       })
       .replaceAll('&amp;', '&');
-  if (id == RatingProviderId.omdb && key.contains('://')) {
+  if ((id == RatingProviderId.omdb || id == RatingProviderId.mdblist) && key.contains('://')) {
     final extracted = Uri.tryParse(key)?.queryParameters['apikey'];
     if (extracted == null || extracted.isEmpty) throw const FormatException('示例链接需要包含 apikey 参数');
     key = extracted;

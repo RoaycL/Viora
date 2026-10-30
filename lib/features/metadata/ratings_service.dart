@@ -8,6 +8,7 @@ import 'package:path_provider/path_provider.dart';
 import '../../core/storage/ratings_settings_store.dart';
 import '../../data/config/app_config.dart';
 import '../../data/config/config_store.dart';
+import '../../data/metadata/mdblist_provider.dart';
 import '../../data/metadata/omdb_provider.dart';
 import '../../data/metadata/rating_provider.dart';
 import '../../data/metadata/ratings_cache.dart';
@@ -73,6 +74,8 @@ RatingsResolver buildRatingsResolver(
         providers[p.id] = OmdbProvider(apiKey: p.effectiveKey, baseUrl: Uri.parse(p.effectiveUrl), fetcher: fetch);
       case RatingProviderId.trakt:
         providers[p.id] = TraktProvider(clientId: p.effectiveKey, baseUrl: Uri.parse(p.effectiveUrl), fetcher: fetch);
+      case RatingProviderId.mdblist:
+        providers[p.id] = MdbListProvider(apiKey: p.effectiveKey, baseUrl: Uri.parse(p.effectiveUrl), fetcher: fetch);
     }
   }
   final signature = jsonEncode({
