@@ -291,7 +291,8 @@ class HomeHeroState extends State<HomeHero> with WidgetsBindingObserver implemen
               ],
             ),
           ),
-          const Positioned(right: VSpace.safeH, top: VSpace.safeV, child: StatusBar()),
+          // 电视的服务器状态和时钟在顶部标签栏右侧
+          if (!PlatformProfile.isTv) const Positioned(right: VSpace.safeH, top: VSpace.safeV, child: StatusBar()),
           if (_carousel)
             Positioned(
               right: VSpace.safeH,

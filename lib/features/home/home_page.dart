@@ -1062,7 +1062,8 @@ class _Welcome extends StatelessWidget {
       height: height ?? HomeHero.heightOf(context),
       child: Stack(
         children: [
-          const Positioned(right: VSpace.safeH, top: VSpace.safeV, child: StatusBar()),
+          // 电视的服务器状态和时钟在顶部标签栏右侧
+          if (!PlatformProfile.isTv) const Positioned(right: VSpace.safeH, top: VSpace.safeV, child: StatusBar()),
           Positioned(
             left: VSpace.contentLeft,
             bottom: HomeHero.buttonsBottom,
@@ -1233,7 +1234,8 @@ class _HeroSkeleton extends StatelessWidget {
       height: height ?? HomeHero.heightOf(context),
       child: Stack(
         children: [
-          const Positioned(right: VSpace.safeH, top: VSpace.safeV, child: StatusBar()),
+          // 电视的服务器状态和时钟在顶部标签栏右侧
+          if (!PlatformProfile.isTv) const Positioned(right: VSpace.safeH, top: VSpace.safeV, child: StatusBar()),
           Positioned(
             left: VSpace.contentLeft,
             bottom: HomeHero.buttonsBottom,
