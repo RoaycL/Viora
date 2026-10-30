@@ -6,6 +6,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../app/platform_profile.dart';
 
 import '../../ui/widgets/fill_grid.dart';
+import '../../ui/widgets/skeleton.dart';
 
 import '../../app/theme.dart';
 import '../../data/config/config_store.dart';
@@ -55,6 +56,7 @@ class FavoritesPage extends ConsumerWidget {
       title: '收藏',
       itemWidth: PosterCard.width,
       subtitle: async.value == null ? '加载中…' : '${async.value!.length} 部作品${note.isEmpty ? '' : ' · $note'}',
+      loading: async.value == null,
       empty: async.hasValue && async.value!.isEmpty
           ? ((feed?.failures ?? 0) > 0 ? '暂时无法获取完整收藏，请稍后刷新' : '还没有收藏：在详情页按 ♡ 收藏')
           : null,
@@ -83,14 +85,11 @@ class HistoryPage extends ConsumerWidget {
     return _CollectionScaffold(
       title: '观看记录',
       itemWidth: LandscapeCard.width,
-      subtitle: '继续观看 ${resume.length} · 最近看过 ${played.length}${failures > 0 ? ' · 部分记录暂未刷新' : ''}',
-      empty: all.isEmpty
-          ? (loading
-                ? '正在加载观看记录…'
-                : failures > 0
-                ? '暂时无法获取完整记录，请稍后刷新'
-                : '还没有观看记录')
-          : null,
+      subtitle: all.isEmpty && loading
+          ? '加载中…'
+          : '继续观看 ${resume.length} · 最近看过 ${played.length}${failures > 0 ? ' · 部分记录暂未刷新' : ''}',
+      loading: all.isEmpty && loading,
+      empty: all.isEmpty && !loading ? (failures > 0 ? '暂时无法获取完整记录，请稍后刷新' : '还没有观看记录') : null,
       itemCount: all.length,
       itemBuilder: (context, i) {
         final it = all[i];
@@ -108,7 +107,11 @@ class _CollectionScaffold extends StatelessWidget {
     required this.itemBuilder,
     required this.itemWidth,
     this.empty,
+    this.loading = false,
   });
+
+  /// 还没有数据：显示和卡片同样排布的占位
+  final bool loading;
 
   /// 卡片设计宽度（网格按它铺满整行）
   final double itemWidth;
@@ -144,7 +147,9 @@ class _CollectionScaffold extends StatelessWidget {
           ),
           SliverPadding(
             padding: EdgeInsets.fromLTRB(VSpace.contentLeft, 0, VSpace.safeH, 200),
-            sliver: empty != null
+            sliver: loading
+                ? SliverSkeletonGrid(landscape: itemWidth == LandscapeCard.width)
+                : empty != null
                 ? SliverToBoxAdapter(
                     child: Text(empty!, style: VText.label.copyWith(color: VColors.textTertiary)),
                   )

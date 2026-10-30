@@ -97,7 +97,11 @@ class _AppShellState extends State<AppShell> {
     // 上次的焦点（通常是页面的 FocusScope，由它恢复具体控件；首页的卡片被回收时由首页按作品找回）
     final last = _contentScope.focusedChild;
     if (!_hasFocusableContent) return;
-    if (last != null && last.context != null) {
+    if (last is FocusScopeNode && last.context != null && last.focusedChild == null) {
+      // 页面还没有聚焦过任何控件（加载完之前焦点一直在导航上）：进入它的第一个控件
+      last.requestFocus();
+      last.nextFocus();
+    } else if (last != null && last.context != null) {
       last.requestFocus();
     } else {
       _contentScope.requestFocus();
