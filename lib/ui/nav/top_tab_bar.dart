@@ -46,9 +46,9 @@ class TopTabBar extends StatelessWidget {
           opacity: visible ? 1 : 0,
           duration: duration,
           child: Container(
+            width: double.infinity,
             height: VSpace.topBarBottom,
             padding: const EdgeInsets.only(left: VSpace.safeH, right: VSpace.safeH, top: 36),
-            alignment: Alignment.topLeft,
             // 只是一层渐变，让标签在海报 / 大图上看得清
             decoration: const BoxDecoration(
               gradient: LinearGradient(
@@ -57,30 +57,41 @@ class TopTabBar extends StatelessWidget {
                 colors: [Color(0xCC07080B), Color(0x0007080B)],
               ),
             ),
-            child: FocusTraversalGroup(
-              policy: OrderedTraversalPolicy(),
-              child: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  ClipRRect(
-                    borderRadius: BorderRadius.circular(VRadius.sm),
-                    child: Image.asset(
-                      'assets/images/app_icon.png',
-                      width: 44,
-                      height: 44,
-                      filterQuality: FilterQuality.medium,
+            // Logo 靠左，标签在整个屏幕宽度上居中（不同分辨率、缩放都居中）
+            child: Stack(
+              alignment: Alignment.topCenter,
+              children: [
+                Align(
+                  alignment: Alignment.topLeft,
+                  child: Padding(
+                    padding: const EdgeInsets.only(top: 4),
+                    child: ClipRRect(
+                      borderRadius: BorderRadius.circular(VRadius.sm),
+                      child: Image.asset(
+                        'assets/images/app_icon.png',
+                        width: 44,
+                        height: 44,
+                        filterQuality: FilterQuality.medium,
+                      ),
                     ),
                   ),
-                  const SizedBox(width: 28),
-                  for (final (i, item) in items.indexed) ...[
-                    if (i > 0) const SizedBox(width: 8),
-                    FocusTraversalOrder(
-                      order: NumericFocusOrder(i.toDouble()),
-                      child: _Tab(item: item, node: nodes[item.path]!, active: item == active, onSelect: onSelect),
-                    ),
-                  ],
-                ],
-              ),
+                ),
+                FocusTraversalGroup(
+                  policy: OrderedTraversalPolicy(),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      for (final (i, item) in items.indexed) ...[
+                        if (i > 0) const SizedBox(width: 8),
+                        FocusTraversalOrder(
+                          order: NumericFocusOrder(i.toDouble()),
+                          child: _Tab(item: item, node: nodes[item.path]!, active: item == active, onSelect: onSelect),
+                        ),
+                      ],
+                    ],
+                  ),
+                ),
+              ],
             ),
           ),
         ),

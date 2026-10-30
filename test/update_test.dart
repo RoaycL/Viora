@@ -43,6 +43,16 @@ void main() {
     expect(pickPlatformAsset(names, UpdatePlatform.windows), 3);
     // 旧版本只有通用包
     expect(pickPlatformAsset(['Viora-0.1.0-android.apk'], UpdatePlatform.android, abi: 'arm64-v8a'), 0);
+    // 现在的命名：按文件名排序时通用包在前（旧版本取第一个 .apk 拿到通用包），新版本仍认得出拆分包
+    const renamed = [
+      'Viora-0.2.0-android.apk',
+      'Viora-0.2.0-android.split-arm64-v8a.apk',
+      'Viora-0.2.0-android.split-armeabi-v7a.apk',
+    ];
+    expect([...renamed]..sort((a, b) => a.toLowerCase().compareTo(b.toLowerCase())), renamed);
+    expect(pickPlatformAsset(renamed, UpdatePlatform.android, abi: 'armeabi-v7a'), 2);
+    expect(pickPlatformAsset(renamed, UpdatePlatform.android, abi: 'arm64-v8a'), 1);
+    expect(pickPlatformAsset(renamed, UpdatePlatform.android), 0);
     // 只有别的架构的拆分包时宁可不更新
     expect(
       pickPlatformAsset(['Viora-0.2.0-android-arm64-v8a.apk'], UpdatePlatform.android, abi: 'armeabi-v7a'),

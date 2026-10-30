@@ -66,7 +66,8 @@ String? androidAbiOf(String dartVersion) {
 }
 
 /// 安装包命名约定（与 .github/workflows/release.yml 保持一致）：
-/// - Android：`Viora-<版本>-android-<ABI>.apk`（按架构拆分，体积小）和 `Viora-<版本>-android.apk`（通用包）
+/// - Android：`Viora-<版本>-android.split-<ABI>.apk`（按架构拆分，体积小；v0.15.17 叫 `-android-<ABI>.apk`）
+///   和 `Viora-<版本>-android.apk`（通用包）。拆分包按 `-<ABI>.apk` 结尾识别，两种命名都认
 /// - Windows：`Viora-<版本>-windows-setup.exe`
 bool matchesPlatformAsset(String name, UpdatePlatform platform) {
   final n = name.toLowerCase();
