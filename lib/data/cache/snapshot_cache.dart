@@ -29,11 +29,16 @@ abstract final class SnapshotCache {
     }
   }();
 
+  /// 超过这个大小的快照在后台 isolate 里读和解析（收藏、观看记录可能有几百 KB，
+  /// 启动时几份一起解析会卡住首页）；小文件直接解析，省掉起 isolate 的开销
+  static const _isolateThreshold = 64 * 1024;
+
   static Future<Object?> read(String key) async {
     try {
       final f = File('${(await _directory())!.path}/$key.json');
       if (!await f.exists()) return null;
-      return jsonDecode(await f.readAsString());
+      if (await f.length() < _isolateThreshold) return jsonDecode(await f.readAsString());
+      return await compute(_readJson, f.path, debugLabel: 'snapshot $key');
     } catch (_) {
       return null;
     }
@@ -98,6 +103,8 @@ abstract final class SnapshotCache {
   @visibleForTesting
   static set directoryForTest(Directory d) => _dir = Future.value(d);
 }
+
+Object? _readJson(String path) => jsonDecode(File(path).readAsStringSync());
 
 enum SnapshotStatus { cached, fresh, failed, incomplete }
 
