@@ -53,6 +53,14 @@ SourceOption _option(String id, {required int width, String server = '家里的 
 );
 
 void main() {
+  test('自动换源按排序取第一个没试过的版本，全部试过时返回 null', () {
+    final ranked = [_option('a', width: 3840), _option('b', width: 1920), _option('c', width: 1280)];
+    expect(nextFailoverOption(ranked, {})?.source.id, 'a');
+    expect(nextFailoverOption(ranked, {'s1/a'})?.source.id, 'b');
+    expect(nextFailoverOption(ranked, {'s1/a', 's1/b'})?.source.id, 'c');
+    expect(nextFailoverOption(ranked, {'s1/a', 's1/b', 's1/c'}), isNull);
+  });
+
   Future<void> pump(WidgetTester tester, Widget section) async {
     tester.view.physicalSize = const Size(1920, 2400);
     tester.view.devicePixelRatio = 1;

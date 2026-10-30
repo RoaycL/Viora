@@ -299,3 +299,10 @@ final libraryEpisodeSourcesProvider = FutureProvider.autoDispose.family<List<Sou
   final preferred = await PreferredServers.get(titleKeyOf(series));
   return rankSources(options, preferredServerId: preferred ?? key.series.home.serverId);
 });
+
+/// 自动换源用的版本标识：「服务器/版本 ID」
+String failoverKey(SourceOption o) => '${o.serverId}/${o.source.id}';
+
+/// 当前版本打不开时下一个要试的版本：按已有排序取第一个没试过的
+SourceOption? nextFailoverOption(List<SourceOption> ranked, Set<String> tried) =>
+    ranked.where((o) => !tried.contains(failoverKey(o))).firstOrNull;

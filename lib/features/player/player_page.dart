@@ -49,12 +49,22 @@ import 'player_osd.dart';
 /// 内核：Windows 用 mpv；Android 默认 ExoPlayer（HDR / 音频直通、自动帧率），
 /// ExoPlayer 解码或格式不支持时自动换 mpv 重试。
 class PlayerPage extends ConsumerStatefulWidget {
-  const PlayerPage({super.key, required this.serverId, required this.itemId, this.startMs = 0, this.sourceId});
+  const PlayerPage({
+    super.key,
+    required this.serverId,
+    required this.itemId,
+    this.startMs = 0,
+    this.sourceId,
+    this.triedSources = const [],
+  });
 
   final String serverId;
   final String itemId;
   final int startMs;
   final String? sourceId;
+
+  /// 自动换源时已经试过、打不开的版本（「服务器/版本 ID」），换到其他服务器时带过去，避免来回切
+  final List<String> triedSources;
 
   @override
   ConsumerState<PlayerPage> createState() => _PlayerPageState();
@@ -74,6 +84,10 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
 
   /// 本次播放已经从 ExoPlayer 回退过 mpv
   bool _fellBack = false;
+
+  /// 自动换源：开播前打不开时按排序换下一个版本（已试过的不再试）
+  late final _tried = {...widget.triedSources};
+  bool _failingOver = false;
 
   bool _osd = true;
   bool _info = false;
@@ -221,7 +235,44 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
       await _switchEngine(forceMpv: true);
       return;
     }
-    if (!_started && mounted) setState(() => _error = e.message);
+    if (_started || !mounted) return;
+    if (await _failover()) return;
+    if (mounted) setState(() => _error = e.message);
+  }
+
+  /// 开播前当前版本打不开：按资源排序换到下一个没试过的版本（同服务器换源，或换到其他服务器从当前进度继续）。
+  /// 返回 false 表示没有可换的版本，由调用方显示错误。
+  Future<bool> _failover() async {
+    if (_failingOver || _started) return false;
+    _failingOver = true;
+    try {
+      final current = _source;
+      if (current != null) _tried.add('${widget.serverId}/${current.id}');
+      showToast('当前版本无法播放，正在尝试其他版本…');
+      final all = await ref
+          .read(sourceOptionsProvider((serverId: widget.serverId, itemId: widget.itemId)).future)
+          .timeout(const Duration(seconds: 15));
+      if (!mounted || _started) return false;
+      final next = nextFailoverOption(visibleSourceOptions(ref.read(configProvider), all), _tried);
+      if (next == null) return false;
+      _tried.add(failoverKey(next));
+      final at = Duration(milliseconds: widget.startMs);
+      showToast('已切换到 ${next.source.resolutionLabel} ${next.source.rangeLabel} · ${next.serverName}');
+      if (next.serverId == widget.serverId && next.item.id == widget.itemId) {
+        setState(() => _error = null);
+        // 不等待：新版本再失败时会再次进入 _failover（此时本次的 _failingOver 已复位）
+        unawaited(_start(sourceId: next.source.id, at: at));
+      } else {
+        final tried = Uri.encodeComponent(_tried.join(','));
+        _handoffTo('${next.playRoute(position: at)}&tried=$tried');
+      }
+      return true;
+    } catch (e) {
+      debugPrint('failover: $e');
+      return false;
+    } finally {
+      _failingOver = false;
+    }
   }
 
   Future<void> _switchEngine({bool forceMpv = false, bool forceExo = false}) async {
@@ -254,6 +305,7 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
       if (info.sources.isEmpty) throw const MediaServerException('没有可播放的资源');
       final wanted = sourceId ?? widget.sourceId;
       final source = info.sources.where((s) => s.id == wanted).firstOrNull ?? info.sources.first;
+      _source = source;
       _request = client.stream(source, playSessionId: info.playSessionId);
       if (!mounted) return;
       setState(() {
@@ -269,6 +321,9 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
       unawaited(_beginDanmaku());
       ref.read(configProvider.notifier).updateServer(widget.serverId, (s) => s.copyWith(lastAccessAt: DateTime.now()));
     } catch (e) {
+      // 拿不到播放信息 / 打不开：先自动换其他版本，没有可换的才显示错误
+      if (!mounted) return;
+      if (!_started && await _failover()) return;
       if (mounted) setState(() => _error = e.toString());
     }
   }
