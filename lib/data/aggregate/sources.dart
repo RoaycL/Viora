@@ -218,9 +218,16 @@ final tmdbSeriesEpisodesProvider = FutureProvider.autoDispose.family<List<MediaI
   ref.watch(mediaFeedScopeProvider);
   final copies = await ref.watch(tmdbLibrarySearchProvider(key).future);
   if (!key.isTv || copies.isEmpty) return const [];
+  var failed = 0;
   final lists = await Future.wait([
-    for (final copy in copies) ref.watch(seriesEpisodesProvider((serverId: copy.serverId, itemId: copy.id)).future),
+    for (final copy in copies)
+      ref.watch(seriesEpisodesProvider((serverId: copy.serverId, itemId: copy.id)).future).catchError((Object _) {
+        failed++;
+        return const <MediaItem>[];
+      }),
   ]);
+  // 全部副本都没拿到集列表：报错，页面不能据此把每一集标成「无资源」
+  if (failed == copies.length) throw StateError('series episodes unavailable');
   return [for (final list in lists) ...list];
 });
 
@@ -242,15 +249,13 @@ final tmdbEpisodeSourcesProvider = FutureProvider.autoDispose.family<List<Source
 });
 
 /// 同一剧的全集只请求一次，TMDB 入口与媒体库入口共用。
+/// 超时 / 请求失败时是错误状态而不是空列表：空列表会被当成「这台服务器一集都没有」。
+/// 不自动重试，下次进入详情页再请求。
 final seriesEpisodesProvider = FutureProvider.autoDispose.family<List<MediaItem>, SourcesKey>((ref, key) async {
   final client = ref.watch(serverClientProvider(key.serverId));
   if (client == null) return const [];
-  try {
-    return await client.episodes(key.itemId).timeout(const Duration(seconds: 10));
-  } catch (_) {
-    return const [];
-  }
-});
+  return client.episodes(key.itemId).timeout(const Duration(seconds: 10));
+}, retry: (_, _) => null);
 
 typedef LibrarySeriesKey = ({SourcesKey home, TmdbSearchKey title});
 typedef LibraryEpisodeKey = ({LibrarySeriesKey series, int season, int episode});
@@ -263,8 +268,9 @@ final librarySeriesEpisodesProvider = FutureProvider.autoDispose.family<List<Med
   ref.watch(
     configProvider.select((c) => (c.serversKey, c.parental.enabled, c.parental.maxAge, c.parental.blockUnrated)),
   );
-  final own = ref.watch(seriesEpisodesProvider(key.home).future);
-  final others = ref.watch(tmdbSeriesEpisodesProvider(key.title).future);
+  // 单边失败时用另一边的集；当前服务器失败由页面看 seriesEpisodesProvider 的错误状态
+  final own = ref.watch(seriesEpisodesProvider(key.home).future).catchError((Object _) => const <MediaItem>[]);
+  final others = ref.watch(tmdbSeriesEpisodesProvider(key.title).future).catchError((Object _) => const <MediaItem>[]);
   final lists = await Future.wait([own, others]);
   final unique = <String, MediaItem>{};
   for (final list in lists) {

@@ -9,12 +9,24 @@ import '../../ui/widgets/tmdb_image.dart';
 import '../../app/theme.dart';
 
 /// TMDB 为主，保留服务器独有的集数（例如尚未被 TMDB 收录的超前资源）。
-List<TmdbEpisode> mergeEpisodeCatalog(List<TmdbEpisode> metadata, List<MediaItem> library, int season) {
+///
+/// [trustedSeries]（`服务器/剧 ID`）：只有这些剧能添加 TMDB 没有的集。只按片名对上的同名剧
+/// 可能是另一部，它的集数不能混进选集（仍可给 TMDB 列出的集提供资源）。为 null 时不限制；
+/// TMDB 这一季没有数据、可信的剧也没有这一季时，退回用全部服务器的集。
+List<TmdbEpisode> mergeEpisodeCatalog(
+  List<TmdbEpisode> metadata,
+  List<MediaItem> library,
+  int season, {
+  Set<String>? trustedSeries,
+}) {
   final episodes = <int, TmdbEpisode>{
     for (final episode in metadata.where((e) => e.season == season)) episode.number: episode,
   };
-  for (final item in library) {
-    if (item.seasonNumber != season || item.episodeNumber == null) continue;
+  bool trusted(MediaItem item) => trustedSeries == null || trustedSeries.contains('${item.serverId}/${item.seriesId}');
+  final inSeason = library.where((i) => i.seasonNumber == season && i.episodeNumber != null).toList();
+  final restrict = episodes.isNotEmpty || inSeason.any(trusted);
+  for (final item in inSeason) {
+    if (restrict && !trusted(item)) continue;
     episodes.putIfAbsent(
       item.episodeNumber!,
       () => TmdbEpisode(
@@ -28,6 +40,13 @@ List<TmdbEpisode> mergeEpisodeCatalog(List<TmdbEpisode> metadata, List<MediaItem
   }
   return episodes.values.toList()..sort((a, b) => a.number.compareTo(b.number));
 }
+
+/// 能确认是这部剧的服务器副本：当前服务器上的这部剧 + TMDB ID 一致的副本
+Set<String> idConfirmedSeries(int tmdbId, List<MediaItem> copies, {String? homeServerId, String? homeSeriesId}) => {
+  if (homeServerId != null && homeSeriesId != null) '$homeServerId/$homeSeriesId',
+  for (final c in copies)
+    if (c.tmdbId?.trim() == '$tmdbId') '${c.serverId}/${c.id}',
+};
 
 List<TmdbSeason> mergeSeasonCatalog(List<TmdbSeason> metadata, List<MediaItem> library) {
   final seasons = <int, TmdbSeason>{for (final season in metadata) season.number: season};
