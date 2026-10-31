@@ -6,6 +6,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../app/desktop_tray.dart';
+import '../../app/input/back_handler.dart';
 import '../../app/input/intents.dart';
 import '../../app/platform_profile.dart';
 import '../../app/theme.dart';
@@ -871,29 +872,44 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
     if (PlatformProfile.isTv) _focusControls();
   }
 
-  /// 返回键：关面板 → 焦点回到画面 → 关媒体信息 → 退出小窗 / 全屏（Windows）→ 隐藏控制层 → 退出播放
-  Future<void> _back() async {
-    if (_panel != OsdPanel.none) {
-      _closePanel();
-      return;
-    }
-    if (PlatformProfile.isTv && _onControls) {
+  /// 返回键，返回 true 表示已处理（不退出播放）。
+  /// - 电视：面板、按钮、控制层哪个开着都先回到默认的播放画面（关面板、隐藏控制层、焦点回到画面），
+  ///   默认画面上再按才退出
+  /// - Windows：关面板 → 关媒体信息 → 退出小窗 / 全屏 → 隐藏控制层 → 退出播放
+  ///
+  /// 遥控器返回键在安卓上走系统返回（不经过按键事件），所以通过 [BackHandler] 挂到应用的返回链上；
+  /// 键盘 Esc 等由 [_onKey] 调这里
+  bool _handleBack() {
+    if (!mounted) return false;
+    final tv = PlatformProfile.isTv;
+    if (_panel != OsdPanel.none || (tv && (_onControls || _osd))) {
+      _osdTimer?.cancel();
+      setState(() {
+        _panel = OsdPanel.none;
+        _osd = false;
+      });
       _focus.requestFocus();
-      return;
+      return true;
     }
     if (_info) {
       setState(() => _info = false);
-      return;
+      return true;
     }
     if (PlatformProfile.isDesktop) {
-      if (MiniPlayerWindow.active.value) return MiniPlayerWindow.exit();
-      if (windowFullScreen.value) return toggleFullScreen();
+      if (MiniPlayerWindow.active.value) {
+        unawaited(MiniPlayerWindow.exit());
+        return true;
+      }
+      if (windowFullScreen.value) {
+        unawaited(toggleFullScreen());
+        return true;
+      }
     }
     if (_osd && _state.playing) {
       setState(() => _osd = false);
-      return;
+      return true;
     }
-    if (mounted) context.pop();
+    return false;
   }
 
   static bool _isBack(LogicalKeyboardKey key) =>
@@ -908,7 +924,7 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
     final repeat = event is KeyRepeatEvent;
 
     if (_isBack(key)) {
-      if (!repeat) _back();
+      if (!repeat && !_handleBack() && mounted) context.pop();
       return KeyEventResult.handled;
     }
     if (_onControls) {
@@ -1315,181 +1331,184 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
     final engine = _engine;
     final isEpisode = _item?.kind == MediaKind.episode;
 
-    return Material(
-      color: Colors.black,
-      child: Focus(
-        focusNode: _focus,
-        autofocus: true,
-        onKeyEvent: _onKey,
-        child: MouseRegion(
-          onHover: (_) => _showOsd(),
-          child: ValueListenableBuilder<bool>(
-            valueListenable: MiniPlayerWindow.active,
-            builder: (context, mini, _) => Stack(
-              fit: StackFit.expand,
-              children: [
-                if (engine != null) KeyedSubtree(key: ObjectKey(engine), child: engine.buildView()),
-                if (engine != null && _danmaku != null && _danmakuVisible && _error == null && !mini)
-                  DanmakuLayer(
-                    comments: _danmaku!.comments,
-                    state: engine.state,
-                    config: ref.watch(configProvider.select((c) => c.danmaku)),
-                    shift: Duration(milliseconds: _danmakuChoice.shiftMs),
+    return BackHandler(
+      onBack: _handleBack,
+      child: Material(
+        color: Colors.black,
+        child: Focus(
+          focusNode: _focus,
+          autofocus: true,
+          onKeyEvent: _onKey,
+          child: MouseRegion(
+            onHover: (_) => _showOsd(),
+            child: ValueListenableBuilder<bool>(
+              valueListenable: MiniPlayerWindow.active,
+              builder: (context, mini, _) => Stack(
+                fit: StackFit.expand,
+                children: [
+                  if (engine != null) KeyedSubtree(key: ObjectKey(engine), child: engine.buildView()),
+                  if (engine != null && _danmaku != null && _danmakuVisible && _error == null && !mini)
+                    DanmakuLayer(
+                      comments: _danmaku!.comments,
+                      state: engine.state,
+                      config: ref.watch(configProvider.select((c) => c.danmaku)),
+                      shift: Duration(milliseconds: _danmakuChoice.shiftMs),
+                    ),
+                  // 画面：单击暂停 / 播放（打开面板时先关面板）；Windows 双击全屏、右键播放设置
+                  Positioned.fill(
+                    child: GestureDetector(
+                      behavior: HitTestBehavior.opaque,
+                      onTap: () {
+                        if (_panel != OsdPanel.none) {
+                          _closePanel();
+                        } else {
+                          _togglePlay();
+                        }
+                      },
+                      onDoubleTap: PlatformProfile.isDesktop && !mini ? toggleFullScreen : null,
+                      onSecondaryTap: mini ? null : _openMenu,
+                    ),
                   ),
-                // 画面：单击暂停 / 播放（打开面板时先关面板）；Windows 双击全屏、右键播放设置
-                Positioned.fill(
-                  child: GestureDetector(
-                    behavior: HitTestBehavior.opaque,
-                    onTap: () {
-                      if (_panel != OsdPanel.none) {
-                        _closePanel();
-                      } else {
-                        _togglePlay();
-                      }
-                    },
-                    onDoubleTap: PlatformProfile.isDesktop && !mini ? toggleFullScreen : null,
-                    onSecondaryTap: mini ? null : _openMenu,
-                  ),
-                ),
-                if (_error != null)
-                  _ErrorPanel(
-                    message: _error!,
-                    userAgent: _request?.userAgent,
-                    onRetry: () {
-                      setState(() => _error = null);
-                      _start(sourceId: _source?.id);
-                    },
-                    onSwitchEngine: ExoEngine.supported && engine != null
-                        ? () {
-                            setState(() => _error = null);
-                            _switchEngine(
-                              forceMpv: engine.kind == EngineKind.exo,
-                              forceExo: engine.kind == EngineKind.mpv,
-                            );
-                          }
-                        : null,
-                  ),
-                if (engine != null)
-                  ValueListenableBuilder<EngineState>(
-                    valueListenable: engine.state,
-                    builder: (context, s, _) => mini
-                        ? MiniPlayerOverlay(
-                            state: s,
-                            title: _title,
-                            onPlayPause: _togglePlay,
-                            onClose: () => context.pop(),
-                          )
-                        : Stack(
-                            fit: StackFit.expand,
-                            children: [
-                              if (s.buffering && _error == null)
-                                const IgnorePointer(
-                                  child: Center(
-                                    child: SizedBox(
-                                      width: 72,
-                                      height: 72,
-                                      child: CircularProgressIndicator(strokeWidth: 5, color: Colors.white),
+                  if (_error != null)
+                    _ErrorPanel(
+                      message: _error!,
+                      userAgent: _request?.userAgent,
+                      onRetry: () {
+                        setState(() => _error = null);
+                        _start(sourceId: _source?.id);
+                      },
+                      onSwitchEngine: ExoEngine.supported && engine != null
+                          ? () {
+                              setState(() => _error = null);
+                              _switchEngine(
+                                forceMpv: engine.kind == EngineKind.exo,
+                                forceExo: engine.kind == EngineKind.mpv,
+                              );
+                            }
+                          : null,
+                    ),
+                  if (engine != null)
+                    ValueListenableBuilder<EngineState>(
+                      valueListenable: engine.state,
+                      builder: (context, s, _) => mini
+                          ? MiniPlayerOverlay(
+                              state: s,
+                              title: _title,
+                              onPlayPause: _togglePlay,
+                              onClose: () => context.pop(),
+                            )
+                          : Stack(
+                              fit: StackFit.expand,
+                              children: [
+                                if (s.buffering && _error == null)
+                                  const IgnorePointer(
+                                    child: Center(
+                                      child: SizedBox(
+                                        width: 72,
+                                        height: 72,
+                                        child: CircularProgressIndicator(strokeWidth: 5, color: Colors.white),
+                                      ),
                                     ),
                                   ),
-                                ),
-                              if (_pendingSeek != null)
-                                IgnorePointer(
-                                  child: Center(
-                                    child: Glass(
-                                      radius: VRadius.panel,
-                                      padding: const EdgeInsets.symmetric(horizontal: 36, vertical: 20),
-                                      child: Text(formatClock(_pendingSeek!), style: VText.h2.copyWith(fontSize: 44)),
+                                if (_pendingSeek != null)
+                                  IgnorePointer(
+                                    child: Center(
+                                      child: Glass(
+                                        radius: VRadius.panel,
+                                        padding: const EdgeInsets.symmetric(horizontal: 36, vertical: 20),
+                                        child: Text(formatClock(_pendingSeek!), style: VText.h2.copyWith(fontSize: 44)),
+                                      ),
                                     ),
                                   ),
-                                ),
-                              // 控制层隐藏时不能拿焦点（遥控器焦点回到画面上）
-                              ExcludeFocus(
-                                excluding: !_osd,
-                                child: IgnorePointer(
-                                  ignoring: !_osd,
-                                  child: AnimatedOpacity(
-                                    opacity: _osd ? 1 : 0,
-                                    duration: VMotion.scroll,
-                                    child: FocusTraversalGroup(
-                                      child: PlayerOsd(
-                                        state: s,
-                                        title: _title,
-                                        source: _source,
-                                        pendingSeek: _pendingSeek,
-                                        segments: _segmentList,
-                                        danmakuOn: _danmaku != null && _danmakuVisible,
-                                        isEpisode: isEpisode,
-                                        hasNext: _nextEpisode != null,
-                                        panel: _panel,
-                                        panelChild: switch (_panel) {
-                                          OsdPanel.sources => SourcesPanel(
-                                            serverId: widget.serverId,
-                                            itemId: widget.itemId,
-                                            currentSourceId: _source?.id,
-                                            onPick: _switchToOption,
-                                          ),
-                                          OsdPanel.episodes when _episodes != null => EpisodesPanel(
-                                            episodes: _episodes!,
-                                            currentId: widget.itemId,
-                                            onPick: _pickEpisode,
-                                          ),
-                                          _ => null,
-                                        },
-                                        playNode: _playNode,
-                                        onBack: () => context.pop(),
-                                        onPlayPause: _togglePlay,
-                                        onNext: _playNext,
-                                        onSeek: _seekTo,
-                                        onDanmaku: _toggleDanmaku,
-                                        onDanmakuMenu: _openDanmakuMenu,
-                                        onAudio: _openAudioMenu,
-                                        onSubtitle: _openSubtitleMenu,
-                                        onMore: _openMenu,
-                                        onSources: () => _openPanel(OsdPanel.sources),
-                                        onEpisodes: () => _openPanel(OsdPanel.episodes),
-                                        onRate: _openRateMenu,
-                                        onHoverControls: (v) => _hoverControls = v,
+                                // 控制层隐藏时不能拿焦点（遥控器焦点回到画面上）
+                                ExcludeFocus(
+                                  excluding: !_osd,
+                                  child: IgnorePointer(
+                                    ignoring: !_osd,
+                                    child: AnimatedOpacity(
+                                      opacity: _osd ? 1 : 0,
+                                      duration: VMotion.scroll,
+                                      child: FocusTraversalGroup(
+                                        child: PlayerOsd(
+                                          state: s,
+                                          title: _title,
+                                          source: _source,
+                                          pendingSeek: _pendingSeek,
+                                          segments: _segmentList,
+                                          danmakuOn: _danmaku != null && _danmakuVisible,
+                                          isEpisode: isEpisode,
+                                          hasNext: _nextEpisode != null,
+                                          panel: _panel,
+                                          panelChild: switch (_panel) {
+                                            OsdPanel.sources => SourcesPanel(
+                                              serverId: widget.serverId,
+                                              itemId: widget.itemId,
+                                              currentSourceId: _source?.id,
+                                              onPick: _switchToOption,
+                                            ),
+                                            OsdPanel.episodes when _episodes != null => EpisodesPanel(
+                                              episodes: _episodes!,
+                                              currentId: widget.itemId,
+                                              onPick: _pickEpisode,
+                                            ),
+                                            _ => null,
+                                          },
+                                          playNode: _playNode,
+                                          onBack: () => context.pop(),
+                                          onPlayPause: _togglePlay,
+                                          onNext: _playNext,
+                                          onSeek: _seekTo,
+                                          onDanmaku: _toggleDanmaku,
+                                          onDanmakuMenu: _openDanmakuMenu,
+                                          onAudio: _openAudioMenu,
+                                          onSubtitle: _openSubtitleMenu,
+                                          onMore: _openMenu,
+                                          onSources: () => _openPanel(OsdPanel.sources),
+                                          onEpisodes: () => _openPanel(OsdPanel.episodes),
+                                          onRate: _openRateMenu,
+                                          onHoverControls: (v) => _hoverControls = v,
+                                        ),
                                       ),
                                     ),
                                   ),
                                 ),
-                              ),
-                              // 跳过按钮：不随控制层隐藏；控制层显示时让出底部的位置
-                              AnimatedPositioned(
-                                duration: VMotion.scroll,
-                                curve: Curves.easeOutCubic,
-                                right: VSpace.safeH,
-                                bottom: _osd ? (_panel == OsdPanel.none ? 250 : 420) : 110,
-                                child: AnimatedSwitcher(
-                                  duration: VMotion.focus,
-                                  child: _skipPrompt == null
-                                      ? const SizedBox.shrink()
-                                      : _SkipButton(
-                                          key: ValueKey('${_skipPrompt!.segment.type}${_skipPrompt!.segment.start}'),
-                                          action: _skipPrompt!,
-                                          onPressed: _activateSkip,
-                                        ),
-                                ),
-                              ),
-                              if (_info)
-                                Positioned(
+                                // 跳过按钮：不随控制层隐藏；控制层显示时让出底部的位置
+                                AnimatedPositioned(
+                                  duration: VMotion.scroll,
+                                  curve: Curves.easeOutCubic,
                                   right: VSpace.safeH,
-                                  top: 150,
-                                  child: _InfoPanel(
-                                    state: s,
-                                    engine: engine.kind,
-                                    source: _source,
-                                    request: _request,
-                                    segments: _segmentList,
-                                    danmaku: _danmaku == null
-                                        ? (_danmakuError ?? (_danmakuLoading ? '加载中…' : null))
-                                        : '${_danmaku!.comments.length} 条 · ${_danmaku!.source}',
+                                  bottom: _osd ? (_panel == OsdPanel.none ? 250 : 420) : 110,
+                                  child: AnimatedSwitcher(
+                                    duration: VMotion.focus,
+                                    child: _skipPrompt == null
+                                        ? const SizedBox.shrink()
+                                        : _SkipButton(
+                                            key: ValueKey('${_skipPrompt!.segment.type}${_skipPrompt!.segment.start}'),
+                                            action: _skipPrompt!,
+                                            onPressed: _activateSkip,
+                                          ),
                                   ),
                                 ),
-                            ],
-                          ),
-                  ),
-              ],
+                                if (_info)
+                                  Positioned(
+                                    right: VSpace.safeH,
+                                    top: 150,
+                                    child: _InfoPanel(
+                                      state: s,
+                                      engine: engine.kind,
+                                      source: _source,
+                                      request: _request,
+                                      segments: _segmentList,
+                                      danmaku: _danmaku == null
+                                          ? (_danmakuError ?? (_danmakuLoading ? '加载中…' : null))
+                                          : '${_danmaku!.comments.length} 条 · ${_danmaku!.source}',
+                                    ),
+                                  ),
+                              ],
+                            ),
+                    ),
+                ],
+              ),
             ),
           ),
         ),

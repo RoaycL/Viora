@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -167,5 +169,60 @@ void main() {
     await tester.sendKeyEvent(LogicalKeyboardKey.arrowLeft);
     await tester.pumpAndSettle();
     expect(label(), '暂停');
+  });
+
+  testWidgets('选集面板替换掉刚按下的按钮、集列表异步到达后，焦点落在正在看的那一集，←→ 可以切换', (tester) async {
+    PlatformProfile.debugOverride = PlatformProfile.tv;
+    addTearDown(() => PlatformProfile.debugOverride = PlatformProfile.desktop);
+    tester.view.physicalSize = const Size(1920, 1080);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+    final button = FocusNode(debugLabel: '选集按钮');
+    addTearDown(button.dispose);
+    final list = Completer<List<MediaItem>>();
+    final panel = ValueNotifier(false);
+    MediaItem? picked;
+    MediaItem ep(int n) =>
+        MediaItem(serverId: 's', id: 'e$n', name: '第 $n 集', kind: MediaKind.episode, seasonNumber: 1, episodeNumber: n);
+    await tester.pumpWidget(
+      ProviderScope(
+        child: MaterialApp(
+          home: Scaffold(
+            body: Focus(
+              autofocus: true,
+              child: Align(
+                alignment: Alignment.bottomCenter,
+                child: ValueListenableBuilder(
+                  valueListenable: panel,
+                  builder: (context, open, _) => open
+                      ? EpisodesPanel(episodes: list.future, currentId: 'e2', onPick: (e) => picked = e)
+                      : Focus(focusNode: button, child: const SizedBox(width: 80, height: 60)),
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+    button.requestFocus();
+    await tester.pumpAndSettle();
+    panel.value = true;
+    await tester.pump();
+    list.complete([ep(1), ep(2), ep(3)]);
+    await tester.pumpAndSettle();
+    await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+    await tester.pumpAndSettle();
+    expect(picked?.id, 'e2');
+    await tester.sendKeyEvent(LogicalKeyboardKey.arrowRight);
+    await tester.pumpAndSettle();
+    await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+    await tester.pumpAndSettle();
+    expect(picked?.id, 'e3');
+    await tester.sendKeyEvent(LogicalKeyboardKey.arrowLeft);
+    await tester.sendKeyEvent(LogicalKeyboardKey.arrowLeft);
+    await tester.pumpAndSettle();
+    await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+    await tester.pumpAndSettle();
+    expect(picked?.id, 'e1');
   });
 }

@@ -643,7 +643,7 @@ class SourcesPanel extends ConsumerStatefulWidget {
   ConsumerState<SourcesPanel> createState() => _SourcesPanelState();
 }
 
-class _SourcesPanelState extends ConsumerState<SourcesPanel> {
+class _SourcesPanelState extends ConsumerState<SourcesPanel> with _PanelEntry {
   String? _group;
 
   bool _isCurrent(SourceOption o) => o.serverId == widget.serverId && o.source.id == widget.currentSourceId;
@@ -660,6 +660,7 @@ class _SourcesPanelState extends ConsumerState<SourcesPanel> {
     final group = _group ?? current?.group ?? groups.firstOrNull;
     final shown = options.where((o) => o.group == group).toList();
     final servers = ref.watch(configProvider.select((c) => c.servers));
+    enterAfterBuild();
     return SizedBox(
       height: 270,
       child: Column(
@@ -688,7 +689,7 @@ class _SourcesPanelState extends ConsumerState<SourcesPanel> {
                 _SourceCard(
                   option: o,
                   current: _isCurrent(o),
-                  autofocus: _isCurrent(o) || (current == null && identical(o, shown.first)),
+                  focusNode: _isCurrent(o) || (current == null && identical(o, shown.first)) ? entryNode : null,
                   logo: servers.where((s) => s.id == o.serverId).firstOrNull?.type,
                   onPick: () => widget.onPick(o),
                 ),
@@ -704,14 +705,14 @@ class _SourceCard extends StatelessWidget {
   const _SourceCard({
     required this.option,
     required this.current,
-    required this.autofocus,
+    required this.focusNode,
     required this.logo,
     required this.onPick,
   });
 
   final SourceOption option;
   final bool current;
-  final bool autofocus;
+  final FocusNode? focusNode;
   final ServerType? logo;
   final VoidCallback onPick;
 
@@ -720,7 +721,7 @@ class _SourceCard extends StatelessWidget {
     final s = option.source;
     const dim = TextStyle(fontSize: 20, color: Color(0xB3FFFFFF));
     return VFocusable(
-      autofocus: autofocus,
+      focusNode: focusNode,
       radius: VRadius.md,
       scale: 1.03,
       onActivate: onPick,
@@ -786,12 +787,21 @@ class _SourceCard extends StatelessWidget {
 }
 
 /// 「选集」面板：本季所有集
-class EpisodesPanel extends StatelessWidget {
+class EpisodesPanel extends StatefulWidget {
   const EpisodesPanel({super.key, required this.episodes, required this.currentId, required this.onPick});
 
   final Future<List<MediaItem>> episodes;
   final String currentId;
   final ValueChanged<MediaItem> onPick;
+
+  @override
+  State<EpisodesPanel> createState() => _EpisodesPanelState();
+}
+
+class _EpisodesPanelState extends State<EpisodesPanel> with _PanelEntry {
+  Future<List<MediaItem>> get episodes => widget.episodes;
+  String get currentId => widget.currentId;
+  ValueChanged<MediaItem> get onPick => widget.onPick;
 
   @override
   Widget build(BuildContext context) {
@@ -802,6 +812,8 @@ class EpisodesPanel extends StatelessWidget {
         builder: (context, snap) {
           final eps = snap.data ?? const <MediaItem>[];
           final season = eps.where((e) => e.id == currentId).firstOrNull?.seasonNumber;
+          final hasCurrent = eps.any((e) => e.id == currentId);
+          enterAfterBuild();
           return Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
@@ -817,7 +829,13 @@ class EpisodesPanel extends StatelessWidget {
               _HorizontalList(
                 height: 230,
                 children: [
-                  for (final e in eps) _EpisodeCard(episode: e, current: e.id == currentId, onPick: () => onPick(e)),
+                  for (final (i, e) in eps.indexed)
+                    _EpisodeCard(
+                      episode: e,
+                      current: e.id == currentId,
+                      focusNode: e.id == currentId || (!hasCurrent && i == 0) ? entryNode : null,
+                      onPick: () => onPick(e),
+                    ),
                 ],
               ),
             ],
@@ -829,10 +847,11 @@ class EpisodesPanel extends StatelessWidget {
 }
 
 class _EpisodeCard extends StatelessWidget {
-  const _EpisodeCard({required this.episode, required this.current, required this.onPick});
+  const _EpisodeCard({required this.episode, required this.current, required this.onPick, this.focusNode});
 
   final MediaItem episode;
   final bool current;
+  final FocusNode? focusNode;
   final VoidCallback onPick;
 
   static const width = 320.0;
@@ -846,7 +865,7 @@ class _EpisodeCard extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           VFocusable(
-            autofocus: current,
+            focusNode: focusNode,
             radius: VRadius.md,
             scale: 1.04,
             onActivate: onPick,
@@ -950,5 +969,29 @@ class _StepAction extends Action<DirectionalFocusIntent> {
     final next = i + (intent.direction == TraversalDirection.right ? 1 : -1);
     if (next >= 0 && next < buttons.length) buttons[next].requestFocus();
     return null;
+  }
+}
+
+/// 面板打开后把焦点放到「当前」那一项（当前版本 / 正在看的集，没有就第一项）。
+/// 不能靠 autofocus：打开面板时刚按下的按钮被换掉，那一刻页面上还有焦点，autofocus 会被跳过，
+/// 焦点随后落空，遥控器选不了面板里的东西；集列表是异步加载的，同样要等内容出来再进入。
+mixin _PanelEntry<T extends StatefulWidget> on State<T> {
+  final entryNode = FocusNode(debugLabel: 'panel-entry');
+  bool _entered = false;
+
+  /// 在 build 里调用：这一帧画完后，如果入口卡片已经出现，焦点移过去（只做一次）
+  void enterAfterBuild() {
+    if (_entered) return;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || _entered || entryNode.context == null) return;
+      _entered = true;
+      entryNode.requestFocus();
+    });
+  }
+
+  @override
+  void dispose() {
+    entryNode.dispose();
+    super.dispose();
   }
 }
