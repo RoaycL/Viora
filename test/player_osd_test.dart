@@ -95,8 +95,9 @@ void main() {
         child: MaterialApp(
           home: Scaffold(
             body: Focus(
-              // 和播放页一样：外面有一层铺满屏幕的焦点（画面本身）
+              // 和播放页一样：外面有一层铺满屏幕的焦点（画面本身），不参与方向导航
               autofocus: true,
+              skipTraversal: true,
               child: PlayerOsd(
                 state: const EngineState(
                   position: Duration(seconds: 41),
@@ -169,6 +170,24 @@ void main() {
     await tester.sendKeyEvent(LogicalKeyboardKey.arrowLeft);
     await tester.pumpAndSettle();
     expect(label(), '暂停');
+
+    // ↑ 到顶部的弹幕 / 音轨 / 字幕 / 更多（按钮行只接管左右时 ↑ 会被吞掉）；顶部也按顺序左右移动、到两端停住
+    await tester.sendKeyEvent(LogicalKeyboardKey.arrowUp);
+    await tester.pumpAndSettle();
+    expect(['弹幕：开', '音轨', '字幕', '更多'], contains(label()));
+    for (var i = 0; i < 5; i++) {
+      await tester.sendKeyEvent(LogicalKeyboardKey.arrowLeft);
+      await tester.pumpAndSettle();
+    }
+    expect(label(), '弹幕：开');
+    for (var i = 0; i < 5; i++) {
+      await tester.sendKeyEvent(LogicalKeyboardKey.arrowRight);
+      await tester.pumpAndSettle();
+    }
+    expect(label(), '更多');
+    await tester.sendKeyEvent(LogicalKeyboardKey.arrowDown);
+    await tester.pumpAndSettle();
+    expect(['暂停', '下一集', '4K', '选集', '倍速'], contains(label()));
   });
 
   testWidgets('选集面板替换掉刚按下的按钮、集列表异步到达后，焦点落在正在看的那一集，←→ 可以切换', (tester) async {

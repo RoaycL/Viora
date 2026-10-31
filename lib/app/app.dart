@@ -61,7 +61,8 @@ class _VioraAppState extends ConsumerState<VioraApp> with WidgetsBindingObserver
   @override
   Future<bool> didPopRoute() async {
     if (!PlatformProfile.isTv) return false;
-    _handleBack();
+    // 刚由按键处理过的那次返回，松开按键时系统又转来一次：丢掉，避免一次按键退两步
+    if (!BackDedup.isEchoOfKey()) _handleBack();
     return true;
   }
 
@@ -235,7 +236,13 @@ class _VioraAppState extends ConsumerState<VioraApp> with WidgetsBindingObserver
       },
       actions: <Type, Action<Intent>>{
         ...WidgetsApp.defaultActions,
-        BackIntent: CallbackAction<BackIntent>(onInvoke: (_) => _handleBack()),
+        BackIntent: CallbackAction<BackIntent>(
+          onInvoke: (_) {
+            BackDedup.markKey();
+            _handleBack();
+            return null;
+          },
+        ),
         SearchIntent: CallbackAction<SearchIntent>(onInvoke: (_) => _router.go('/search')),
         FullScreenIntent: CallbackAction<FullScreenIntent>(onInvoke: (_) => toggleFullScreen()),
       },

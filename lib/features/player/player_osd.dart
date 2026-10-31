@@ -136,30 +136,36 @@ class PlayerOsd extends StatelessWidget {
                 const SizedBox(width: 24),
                 _Status(speed: state.speed),
                 const SizedBox(width: 24),
-                OsdIconButton(
-                  label: danmakuOn ? '弹幕：开' : '弹幕：关',
-                  onPressed: onDanmaku,
-                  onMenu: onDanmakuMenu,
-                  child: (focused) => _DanmakuGlyph(on: danmakuOn, focused: focused),
-                ),
-                if (desktop) ...[
-                  OsdIconButton(
-                    icon: Icons.picture_in_picture_alt_rounded,
-                    label: '小窗播放',
-                    onPressed: MiniPlayerWindow.toggle,
-                  ),
-                  ValueListenableBuilder<bool>(
-                    valueListenable: windowFullScreen,
-                    builder: (context, full, _) => OsdIconButton(
-                      icon: full ? Icons.fullscreen_exit_rounded : Icons.fullscreen_rounded,
-                      label: full ? '退出全屏' : '全屏',
-                      onPressed: toggleFullScreen,
+                // 右上角的按钮也按顺序左右移动，到两端停住（按位置找时最左边的「弹幕」按 ← 会跳到底部）
+                OrderedButtonRow(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    OsdIconButton(
+                      label: danmakuOn ? '弹幕：开' : '弹幕：关',
+                      onPressed: onDanmaku,
+                      onMenu: onDanmakuMenu,
+                      child: (focused) => _DanmakuGlyph(on: danmakuOn, focused: focused),
                     ),
-                  ),
-                ],
-                OsdIconButton(icon: Icons.graphic_eq_rounded, label: '音轨', onPressed: onAudio),
-                OsdIconButton(icon: Icons.subtitles_outlined, label: '字幕', onPressed: onSubtitle),
-                OsdIconButton(icon: Icons.more_horiz_rounded, label: '更多', onPressed: onMore),
+                    if (desktop) ...[
+                      OsdIconButton(
+                        icon: Icons.picture_in_picture_alt_rounded,
+                        label: '小窗播放',
+                        onPressed: MiniPlayerWindow.toggle,
+                      ),
+                      ValueListenableBuilder<bool>(
+                        valueListenable: windowFullScreen,
+                        builder: (context, full, _) => OsdIconButton(
+                          icon: full ? Icons.fullscreen_exit_rounded : Icons.fullscreen_rounded,
+                          label: full ? '退出全屏' : '全屏',
+                          onPressed: toggleFullScreen,
+                        ),
+                      ),
+                    ],
+                    OsdIconButton(icon: Icons.graphic_eq_rounded, label: '音轨', onPressed: onAudio),
+                    OsdIconButton(icon: Icons.subtitles_outlined, label: '字幕', onPressed: onSubtitle),
+                    OsdIconButton(icon: Icons.more_horiz_rounded, label: '更多', onPressed: onMore),
+                  ],
+                ),
               ],
             ),
           ),
@@ -922,9 +928,12 @@ class _EpisodeCard extends StatelessWidget {
 
 /// 一排按钮：←→ 按位置顺序移到左 / 右相邻的按钮，到两端停住；↑↓ 照常交给方向导航。
 class OrderedButtonRow extends StatefulWidget {
-  const OrderedButtonRow({super.key, required this.children});
+  const OrderedButtonRow({super.key, required this.children, this.mainAxisSize = MainAxisSize.max});
 
   final List<Widget> children;
+
+  /// 放在另一行里时用 min（只占按钮的宽度）
+  final MainAxisSize mainAxisSize;
 
   @override
   State<OrderedButtonRow> createState() => _OrderedButtonRowState();
@@ -944,7 +953,7 @@ class _OrderedButtonRowState extends State<OrderedButtonRow> {
     actions: <Type, Action<Intent>>{DirectionalFocusIntent: _StepAction(_group)},
     child: Focus(
       focusNode: _group,
-      child: Row(children: widget.children),
+      child: Row(mainAxisSize: widget.mainAxisSize, children: widget.children),
     ),
   );
 }
@@ -954,13 +963,15 @@ class _StepAction extends Action<DirectionalFocusIntent> {
 
   final FocusNode group;
 
-  /// 只接管左右；上下不处理时继续交给外层（默认的方向导航）
-  @override
-  bool isEnabled(DirectionalFocusIntent intent, [BuildContext? context]) =>
-      intent.direction == TraversalDirection.left || intent.direction == TraversalDirection.right;
-
+  /// 接管四个方向。左右在本行里按顺序移动；上下按位置找（和默认的方向导航一样）。
+  /// 不能只接管左右、让上下「交给外层」：同一个 Actions 里禁用的动作不会再往外找，↑ 就被吞掉了
+  /// （之前按钮行按 ↑ 到不了顶部的弹幕 / 音轨 / 字幕按钮）
   @override
   Object? invoke(DirectionalFocusIntent intent) {
+    if (intent.direction == TraversalDirection.up || intent.direction == TraversalDirection.down) {
+      FocusManager.instance.primaryFocus?.focusInDirection(intent.direction);
+      return null;
+    }
     final current = FocusManager.instance.primaryFocus;
     final buttons = group.traversalDescendants.where((n) => n.context != null).toList()
       ..sort((a, b) => a.rect.left.compareTo(b.rect.left));

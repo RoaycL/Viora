@@ -105,4 +105,23 @@ void main() {
     expect(tester.takeException(), isNull);
     await unmount(tester);
   });
+
+  testWidgets('电视一次返回只退一步：按键处理过的返回，紧接着到的系统返回（松开按键时转来的）被丢掉', (tester) async {
+    await pumpApp(tester);
+    await press(tester, LogicalKeyboardKey.arrowUp);
+    await press(tester, LogicalKeyboardKey.arrowRight);
+    await press(tester, LogicalKeyboardKey.select);
+    expect(find.text('还没有媒体服务器'), findsOneWidget);
+    await tester.sendKeyEvent(LogicalKeyboardKey.escape);
+    await tester.binding.handlePopRoute();
+    await tester.pumpAndSettle();
+    expect(focused, 'nav:/library');
+    expect(find.text('还没有媒体服务器'), findsOneWidget);
+    // 单独到达的系统返回照常处理（标签栏上返回 → 回首页）
+    await tester.pump(const Duration(milliseconds: 400));
+    await tester.binding.handlePopRoute();
+    await tester.pumpAndSettle();
+    expect(find.text('时光代理人'), findsWidgets);
+    await unmount(tester);
+  });
 }
