@@ -142,9 +142,6 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
   bool _hoverControls = false;
   final _playNode = FocusNode(debugLabel: 'osd-play');
 
-  /// 电视：进度条（聚焦时 ←→ 快进快退、OK 暂停 / 播放）
-  final _seekNode = FocusNode(debugLabel: 'osd-seek');
-
   /// 累加快进 / 快退（连续按键 0.8 秒后才真正 seek）
   Duration? _pendingSeek;
   Timer? _seekTimer;
@@ -798,7 +795,6 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
     _segments?.dispose();
     _focus.dispose();
     _playNode.dispose();
-    _seekNode.dispose();
     // 退出播放时恢复窗口；连播下一集 / 换服务器时保持小窗
     if (!handoff) MiniPlayerWindow.exit();
     super.dispose();
@@ -830,13 +826,11 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
     });
   }
 
-  /// 电视按 ↓：显示控制层，焦点落在进度条上（←→ 快进快退，再按 ↓ 到按钮行）；
-  /// 关面板时回到播放 / 暂停按钮
-  void _focusControls({bool seekBar = false}) {
+  /// 电视按 ↓：显示控制层，焦点落在播放 / 暂停按钮上
+  void _focusControls() {
     _showOsd();
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!mounted) return;
-      (seekBar ? _seekNode : _playNode).requestFocus();
+      if (mounted) _playNode.requestFocus();
     });
   }
 
@@ -919,18 +913,13 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
     }
     if (_onControls) {
       if (PlatformProfile.isTv) {
-        // 电视：焦点在按钮 / 面板上时，方向键移动焦点、OK 点击，交给按钮处理；
-        // 焦点在进度条上时 ←→ 快进快退、OK 暂停 / 播放，↑↓ 照常移动焦点
+        // 电视：焦点在按钮 / 面板上时，方向键移动焦点、OK 点击，交给按钮处理
         _showOsd();
-        final onSeekBar =
-            _seekNode.hasPrimaryFocus &&
-            (key == LogicalKeyboardKey.arrowLeft || key == LogicalKeyboardKey.arrowRight || confirmKeys.contains(key));
-        if (!onSeekBar) return KeyEventResult.ignored;
-      } else {
-        // Windows：鼠标悬停让按钮拿到了焦点，回车照常点击按钮，其他快捷键仍然作用于播放器
-        if (confirmKeys.contains(key)) return KeyEventResult.ignored;
-        _focus.requestFocus();
+        return KeyEventResult.ignored;
       }
+      // Windows：鼠标悬停让按钮拿到了焦点，回车照常点击按钮，其他快捷键仍然作用于播放器
+      if (confirmKeys.contains(key)) return KeyEventResult.ignored;
+      _focus.requestFocus();
     }
 
     final step = Duration(seconds: ref.read(configProvider).playback.seekStepSeconds);
@@ -960,7 +949,7 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
       _showOsd();
     } else if (key == LogicalKeyboardKey.arrowDown) {
       // 电视：焦点移到底部按钮行；Windows：打开播放设置菜单
-      PlatformProfile.isTv ? _focusControls(seekBar: true) : _openMenu();
+      PlatformProfile.isTv ? _focusControls() : _openMenu();
     } else if (key == LogicalKeyboardKey.contextMenu || key == LogicalKeyboardKey.gameButtonX) {
       _openMenu();
     } else if (key == LogicalKeyboardKey.keyI || key == LogicalKeyboardKey.info) {
@@ -1447,7 +1436,6 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
                                           _ => null,
                                         },
                                         playNode: _playNode,
-                                        seekNode: _seekNode,
                                         onBack: () => context.pop(),
                                         onPlayPause: _togglePlay,
                                         onNext: _playNext,
