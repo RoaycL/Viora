@@ -36,19 +36,59 @@ class _AppShellState extends State<AppShell> {
   bool _atTop = true;
   bool _barFocused = false;
 
+  /// 电视：焦点停在标签上一会儿就切到那个页面（不用按 OK）；快速划过的标签不切，免得每个页面都去请求服务器
+  static const tabSwitchDelay = Duration(milliseconds: 280);
+  Timer? _tabTimer;
+
+  /// 正在用标签栏浏览页面：新页面的自动聚焦（首页的播放按钮、资源库第一台服务器……）不能把焦点从标签栏拿走，
+  /// 按 ↓ / OK 进入内容时结束
+  NavItem? _browsing;
+
   @override
   void initState() {
     super.initState();
     ShellController.instance._attach(this);
     _railScope.addListener(_onBarFocus);
     FocusManager.instance.addListener(_onFocusChange);
+    if (_topBar) {
+      for (final item in NavItem.values) {
+        final node = _railNodes[item.path]!;
+        node.addListener(() {
+          if (node.hasPrimaryFocus) _onTabFocus(item);
+        });
+      }
+    }
+  }
+
+  /// 搜索不跟着焦点切换：搜索页打开时焦点进输入框，电视上可能弹出输入法，仍然按 OK 进入
+  void _onTabFocus(NavItem item) {
+    _tabTimer?.cancel();
+    if (item == NavItem.search) return;
+    _tabTimer = Timer(tabSwitchDelay, () {
+      if (!mounted || !_railNodes[item.path]!.hasPrimaryFocus) return;
+      _browsing = item;
+      if (item != _active) context.go(item.path);
+    });
   }
 
   /// 焦点落在内容区的空容器上（页面路由打开时会把焦点拿到自己的 FocusScope 上；页面还在加载、
   /// 没有可聚焦的控件时就停在那里，方向键没有反应）：把焦点还给当前导航项，可以继续切换
   void _onFocusChange() {
     final primary = FocusManager.instance.primaryFocus;
-    if (primary is! FocusScopeNode || (primary != _contentScope && !primary.ancestors.contains(_contentScope))) return;
+    final inContent = primary != null && (primary == _contentScope || primary.ancestors.contains(_contentScope));
+    final browsing = _browsing;
+    if (browsing != null) {
+      if (inContent) {
+        // 用标签栏浏览时新页面自己抢走了焦点：还给标签
+        scheduleMicrotask(() {
+          if (mounted && _browsing == browsing) _railNodes[browsing.path]?.requestFocus();
+        });
+        return;
+      }
+      // 焦点去了标签栏、内容区以外的地方（弹窗、详情页……）：不再拦
+      if (primary == null || !primary.ancestors.contains(_railScope)) _browsing = null;
+    }
+    if (primary is! FocusScopeNode || !inContent) return;
     if (_hasFocusableContent) return;
     scheduleMicrotask(() {
       if (!mounted || FocusManager.instance.primaryFocus != primary || _hasFocusableContent) return;
@@ -77,6 +117,7 @@ class _AppShellState extends State<AppShell> {
   @override
   void dispose() {
     ShellController.instance._detach(this);
+    _tabTimer?.cancel();
     _railScope.removeListener(_onBarFocus);
     FocusManager.instance.removeListener(_onFocusChange);
     _railScope.dispose();
@@ -97,6 +138,8 @@ class _AppShellState extends State<AppShell> {
     // 上次的焦点（通常是页面的 FocusScope，由它恢复具体控件；首页的卡片被回收时由首页按作品找回）
     final last = _contentScope.focusedChild;
     if (!_hasFocusableContent) return;
+    _browsing = null;
+    _tabTimer?.cancel();
     if (last is FocusScopeNode && last.context != null && last.focusedChild == null) {
       // 页面还没有聚焦过任何控件（加载完之前焦点一直在导航上）：进入它的第一个控件
       last.requestFocus();
@@ -116,6 +159,8 @@ class _AppShellState extends State<AppShell> {
   });
 
   void _select(NavItem item) {
+    _browsing = null;
+    _tabTimer?.cancel();
     if (item != _active) context.go(item.path);
     // 选中后进入内容区；新页面的 autofocus 会接管焦点。
     // 新页面还没有可聚焦的内容（收藏、观看记录加载中）：焦点回到刚选的导航项，可以继续切换，
