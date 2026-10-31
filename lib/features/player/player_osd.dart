@@ -40,6 +40,7 @@ class PlayerOsd extends StatelessWidget {
     required this.hasNext,
     required this.panel,
     required this.playNode,
+    this.seekNode,
     required this.onBack,
     required this.onPlayPause,
     required this.onNext,
@@ -69,6 +70,9 @@ class PlayerOsd extends StatelessWidget {
 
   /// 播放 / 暂停按钮的焦点（电视按 ↓ 时焦点落在这里）
   final FocusNode playNode;
+
+  /// 电视：进度条的焦点（聚焦时 ←→ 快进快退）
+  final FocusNode? seekNode;
 
   final VoidCallback onBack;
   final VoidCallback onPlayPause;
@@ -185,6 +189,8 @@ class PlayerOsd extends StatelessWidget {
                         buffered: state.buffered,
                         segments: segments,
                         onSeek: desktop ? onSeek : null,
+                        focusNode: desktop ? null : seekNode,
+                        down: playNode,
                       ),
                     ),
                     SizedBox(
@@ -200,6 +206,7 @@ class PlayerOsd extends StatelessWidget {
                   // ←→ 严格按顺序在按钮间移动：「下一集」和右边「分辨率」之间隔着大段空白，
                   // 按几何位置猜下一个按钮时电视上会过不去
                   OrderedButtonRow(
+                    up: desktop ? null : seekNode,
                     children: [
                       OsdIconButton(
                         focusNode: playNode,
@@ -451,7 +458,15 @@ class SeekBar extends StatefulWidget {
     required this.buffered,
     this.segments = const [],
     this.onSeek,
+    this.focusNode,
+    this.down,
   });
+
+  /// 电视：进度条可以拿焦点，聚焦时变粗，←→ 快进快退由播放页处理
+  final FocusNode? focusNode;
+
+  /// 电视：进度条上按 ↓ 去的按钮（播放 / 暂停）
+  final FocusNode? down;
 
   final Duration position;
   final Duration duration;
@@ -481,7 +496,8 @@ class _SeekBarState extends State<SeekBar> {
     return LayoutBuilder(
       builder: (context, c) {
         final width = c.maxWidth;
-        final active = _drag != null || _hover != null;
+        final focused = widget.focusNode?.hasFocus ?? false;
+        final active = _drag != null || _hover != null || focused;
         final bar = CustomPaint(
           size: Size(width, 44),
           painter: _SeekPainter(
@@ -493,6 +509,16 @@ class _SeekBarState extends State<SeekBar> {
             thick: active,
           ),
         );
+        final node = widget.focusNode;
+        if (node != null) {
+          final down = widget.down;
+          return Actions(
+            actions: <Type, Action<Intent>>{
+              if (down != null) DirectionalFocusIntent: _JumpAction(TraversalDirection.down, down),
+            },
+            child: Focus(focusNode: node, onFocusChange: (_) => setState(() {}), child: bar),
+          );
+        }
         if (!interactive) return bar;
         final hoverAt = _drag ?? _hover;
         return MouseRegion(
@@ -903,9 +929,12 @@ class _EpisodeCard extends StatelessWidget {
 
 /// 一排按钮：←→ 按位置顺序移到左 / 右相邻的按钮，到两端停住；↑↓ 照常交给方向导航。
 class OrderedButtonRow extends StatefulWidget {
-  const OrderedButtonRow({super.key, required this.children});
+  const OrderedButtonRow({super.key, required this.children, this.up});
 
   final List<Widget> children;
+
+  /// 按 ↑ 去的地方（电视：进度条，它不在按钮正上方，按位置找不到）
+  final FocusNode? up;
 
   @override
   State<OrderedButtonRow> createState() => _OrderedButtonRowState();
@@ -922,7 +951,7 @@ class _OrderedButtonRowState extends State<OrderedButtonRow> {
 
   @override
   Widget build(BuildContext context) => Actions(
-    actions: <Type, Action<Intent>>{DirectionalFocusIntent: _StepAction(_group)},
+    actions: <Type, Action<Intent>>{DirectionalFocusIntent: _StepAction(_group, up: widget.up)},
     child: Focus(
       focusNode: _group,
       child: Row(children: widget.children),
@@ -931,17 +960,25 @@ class _OrderedButtonRowState extends State<OrderedButtonRow> {
 }
 
 class _StepAction extends Action<DirectionalFocusIntent> {
-  _StepAction(this.group);
+  _StepAction(this.group, {this.up});
 
   final FocusNode group;
+  final FocusNode? up;
 
-  /// 只接管左右；上下不处理时继续交给外层（默认的方向导航）
+  /// 接管左右（和指定了去处的 ↑）；其他方向不处理时继续交给外层（默认的方向导航）
   @override
-  bool isEnabled(DirectionalFocusIntent intent, [BuildContext? context]) =>
-      intent.direction == TraversalDirection.left || intent.direction == TraversalDirection.right;
+  bool isEnabled(DirectionalFocusIntent intent, [BuildContext? context]) => switch (intent.direction) {
+    TraversalDirection.left || TraversalDirection.right => true,
+    TraversalDirection.up => up?.context != null,
+    TraversalDirection.down => false,
+  };
 
   @override
   Object? invoke(DirectionalFocusIntent intent) {
+    if (intent.direction == TraversalDirection.up) {
+      up!.requestFocus();
+      return null;
+    }
     final current = FocusManager.instance.primaryFocus;
     final buttons = group.traversalDescendants.where((n) => n.context != null).toList()
       ..sort((a, b) => a.rect.left.compareTo(b.rect.left));
@@ -949,6 +986,24 @@ class _StepAction extends Action<DirectionalFocusIntent> {
     if (i < 0) return null;
     final next = i + (intent.direction == TraversalDirection.right ? 1 : -1);
     if (next >= 0 && next < buttons.length) buttons[next].requestFocus();
+    return null;
+  }
+}
+
+/// 某个方向固定去一个节点；其他方向继续交给外层
+class _JumpAction extends Action<DirectionalFocusIntent> {
+  _JumpAction(this.direction, this.target);
+
+  final TraversalDirection direction;
+  final FocusNode target;
+
+  @override
+  bool isEnabled(DirectionalFocusIntent intent, [BuildContext? context]) =>
+      intent.direction == direction && target.context != null;
+
+  @override
+  Object? invoke(DirectionalFocusIntent intent) {
+    target.requestFocus();
     return null;
   }
 }

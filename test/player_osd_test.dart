@@ -88,6 +88,8 @@ void main() {
     addTearDown(tester.view.reset);
     final node = FocusNode(debugLabel: 'play');
     addTearDown(node.dispose);
+    final seek = FocusNode(debugLabel: 'seek');
+    addTearDown(seek.dispose);
     await tester.pumpWidget(
       ProviderScope(
         child: MaterialApp(
@@ -114,6 +116,7 @@ void main() {
               hasNext: true,
               panel: OsdPanel.none,
               playNode: node,
+              seekNode: seek,
               onBack: () {},
               onPlayPause: () {},
               onNext: () {},
@@ -161,6 +164,18 @@ void main() {
     }
     expect(label(), '暂停');
     await tester.sendKeyEvent(LogicalKeyboardKey.arrowLeft);
+    await tester.pumpAndSettle();
+    expect(label(), '暂停');
+
+    // 进度条可以拿焦点：按钮行按 ↑ 到进度条（聚焦时变粗），按 ↓ 回到按钮行
+    await tester.sendKeyEvent(LogicalKeyboardKey.arrowUp);
+    await tester.pumpAndSettle();
+    expect(seek.hasPrimaryFocus, isTrue);
+    expect(
+      tester.widget<CustomPaint>(find.descendant(of: find.byType(SeekBar), matching: find.byType(CustomPaint))).painter,
+      isA<CustomPainter>(),
+    );
+    await tester.sendKeyEvent(LogicalKeyboardKey.arrowDown);
     await tester.pumpAndSettle();
     expect(label(), '暂停');
   });
