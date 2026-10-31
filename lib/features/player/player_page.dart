@@ -919,14 +919,18 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
       key == LogicalKeyboardKey.backspace;
 
   KeyEventResult _onKey(FocusNode node, KeyEvent event) {
-    if (event is KeyUpEvent) return KeyEventResult.ignored;
     final key = event.logicalKey;
     final repeat = event is KeyRepeatEvent;
 
     if (_isBack(key)) {
-      if (!repeat && !_handleBack() && mounted) context.pop();
+      // 松开也消费掉：不然安卓会把没被处理的松开再转成一次系统返回，一次按键退两步
+      if (event is KeyDownEvent) {
+        BackDedup.markKey();
+        if (!_handleBack() && mounted) context.pop();
+      }
       return KeyEventResult.handled;
     }
+    if (event is KeyUpEvent) return KeyEventResult.ignored;
     if (_onControls) {
       if (PlatformProfile.isTv) {
         // 电视：焦点在按钮 / 面板上时，方向键移动焦点、OK 点击，交给按钮处理

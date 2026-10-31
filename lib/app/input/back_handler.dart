@@ -23,6 +23,23 @@ class BackDispatcher {
 
 final backDispatcher = BackDispatcher();
 
+/// 遥控器按一次返回可能走两条路到达：按键事件（按下时页面自己处理）和安卓系统返回（松开时没被消费的
+/// 返回键会被系统转成一次返回）。按键路径处理过返回后短时间内到的系统返回当作同一次，丢掉，
+/// 否则一次按键会连退两步（如关掉面板后紧接着退出播放）。
+abstract final class BackDedup {
+  static DateTime? _lastKeyBack;
+  static const window = Duration(milliseconds: 350);
+
+  /// 按键路径处理了一次返回
+  static void markKey() => _lastKeyBack = DateTime.now();
+
+  /// 系统返回到达：是不是刚才那次按键的重复
+  static bool isEchoOfKey() {
+    final last = _lastKeyBack;
+    return last != null && DateTime.now().difference(last) < window;
+  }
+}
+
 class BackHandler extends StatefulWidget {
   const BackHandler({super.key, required this.onBack, required this.child});
 
