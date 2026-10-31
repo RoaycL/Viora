@@ -26,8 +26,10 @@ import '../../ui/widgets/buttons.dart';
 import '../../ui/widgets/form.dart';
 import '../../ui/widgets/toast.dart';
 import '../danmaku/danmaku_settings_section.dart';
+import '../metadata/ratings_service.dart';
 import '../metadata/ratings_settings_section.dart';
 import '../parental/parental_settings_section.dart';
+import '../segments/segment_service.dart';
 import '../segments/segment_settings_section.dart';
 import '../sync/sync_settings_section.dart';
 import '../update/update_controller.dart';
@@ -233,6 +235,100 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
   Future<void> _check() async {
     final info = await ref.read(updateControllerProvider.notifier).check();
     if (info != null && mounted) await showUpdateDialog(context, info);
+  }
+
+  /// 反向代理的汇总：哪些服务、哪些服务器线路经过代理，都在这里看、在这里开关（其他地方不再单独设置；
+  /// 只有添加 / 编辑服务器时还能勾选，因为只能经代理连上的服务器要先连上才能保存）
+  List<Widget> _proxyUsers(AppConfig config, UpdateController updater) {
+    final hasProxy = config.proxy.enabled;
+    final https = Uri.tryParse(config.proxy.baseUrl.trim())?.scheme == 'https';
+    final ratings = ref.watch(ratingsSettingsProvider).value;
+    final segments = ref.watch(segmentSettingsProvider).value;
+    bool guard(bool on, {bool needHttps = false}) {
+      if (!on) return true;
+      if (!hasProxy) {
+        showToast('请先填写上面的反向代理地址');
+        return false;
+      }
+      if (needHttps && !https) {
+        showToast('这项需要 HTTPS 的反向代理地址');
+        return false;
+      }
+      return true;
+    }
+
+    Widget toggle(String label, String subtitle, bool value, ValueChanged<bool> onChanged, {bool needHttps = false}) =>
+        Padding(
+          padding: const EdgeInsets.only(bottom: 10),
+          child: VToggle(
+            label: label,
+            subtitle: subtitle,
+            value: value && hasProxy,
+            onChanged: (v) {
+              if (guard(v, needHttps: needHttps)) onChanged(v);
+            },
+          ),
+        );
+
+    return [
+      Text('经过反向代理的服务', style: VText.label.copyWith(fontWeight: FontWeight.w600)),
+      const SizedBox(height: 8),
+      Text(
+        hasProxy ? '打开的服务经上面的地址访问；国内直连不稳定的服务打开即可。内网地址始终直连。' : '先填写上面的地址，才能打开下面的开关。',
+        style: VText.small.copyWith(color: VColors.textTertiary, height: 1.6),
+      ),
+      const SizedBox(height: 16),
+      toggle(
+        'TMDB',
+        '元数据、推荐和图片（image.tmdb.org）',
+        config.tmdb.useProxy,
+        (v) => ref.read(configProvider.notifier).update((c) => c.copyWith(tmdb: c.tmdb.copyWith(useProxy: v))),
+      ),
+      if (ratings != null)
+        toggle(
+          '外部评分',
+          'OMDb、Trakt、MDBList（IMDb / 烂番茄 / Metacritic）',
+          ratings.useProxy,
+          (v) => ref.read(ratingsSettingsProvider.notifier).save(ratings.copyWith(useProxy: v)),
+          needHttps: true,
+        ),
+      if (segments != null)
+        toggle(
+          '片头片尾数据库',
+          'TheIntroDB 等第三方片头片尾数据',
+          segments.useProxy,
+          (v) => ref.read(segmentSettingsProvider.notifier).save(segments.copyWith(useProxy: v)),
+        ),
+      toggle('应用更新', '检查和下载更新（GitHub）。关闭时直连失败也会自动改走反向代理再试一次', updater.settings.useProxy, (v) async {
+        await updater.saveSettings(updater.settings.copyWith(useProxy: v));
+        if (mounted) setState(() {});
+      }),
+      const SizedBox(height: 14),
+      Text('媒体服务器线路', style: VText.label.copyWith(fontWeight: FontWeight.w600)),
+      const SizedBox(height: 8),
+      Text(
+        '勾选的线路：登录、浏览、图片和视频播放全部经过代理。添加 / 编辑服务器时也可以勾选。',
+        style: VText.small.copyWith(color: VColors.textTertiary, height: 1.6),
+      ),
+      const SizedBox(height: 16),
+      if (config.servers.isEmpty)
+        Text('还没有添加服务器', style: VText.label.copyWith(color: VColors.textMuted))
+      else
+        for (final s in config.servers)
+          for (final l in s.lines)
+            toggle(
+              '${s.displayName} · ${l.name}',
+              l.url,
+              l.proxied,
+              (v) => ref
+                  .read(configProvider.notifier)
+                  .updateServer(
+                    s.id,
+                    (old) =>
+                        old.copyWith(lines: [for (final x in old.lines) x.id == l.id ? x.copyWith(proxied: v) : x]),
+                  ),
+            ),
+    ];
   }
 
   @override
@@ -462,7 +558,7 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
         title: '接口与网络',
         children: [
           Text(
-            '所有第三方服务的 API Key、地址集中在这里。国内直连不稳定的服务，可以单独勾选「通过反向代理访问」。',
+            '所有第三方服务的 API Key、地址集中在这里。哪些服务走反向代理，统一在下面的「反向代理」里设置。',
             style: VText.small.copyWith(color: VColors.textTertiary, height: 1.6),
           ),
           const SizedBox(height: 24),
@@ -472,8 +568,10 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
             controller: _proxy,
             hint: 'https://embyproxy.example.com/proxy/',
             keyboardType: TextInputType.url,
-            helper: '下面各服务和服务器线路勾选后经过这个代理。示例：https://emby.a.com → …/proxy/https/emby.a.com/443',
+            helper: '下面勾选的服务和服务器线路经过这个代理。示例：https://emby.a.com → …/proxy/https/emby.a.com/443',
           ),
+          const SizedBox(height: 24),
+          ..._proxyUsers(config, updater),
           const SizedBox(height: 36),
           const _Subtitle('TMDB（元数据、推荐、中文标题）'),
           Text(
@@ -491,16 +589,8 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
                 : (TmdbConfig.builtinToken.isNotEmpty ? '使用内置令牌' : '未配置'),
             onConfigure: _configureTmdb,
           ),
-          const SizedBox(height: 20),
-          VToggle(
-            label: '通过反向代理访问 TMDB',
-            subtitle: 'API 与图片（image.tmdb.org）都走反向代理；国内直连 TMDB 不稳定时打开',
-            value: config.tmdb.useProxy,
-            onChanged: (v) =>
-                ref.read(configProvider.notifier).update((c) => c.copyWith(tmdb: c.tmdb.copyWith(useProxy: v))),
-          ),
           const SizedBox(height: 36),
-          const _Subtitle('评分（OMDb / Trakt）'),
+          const _Subtitle('评分（OMDb / Trakt / MDBList）'),
           const RatingsSettingsSection(),
           const SizedBox(height: 36),
           const _Subtitle('片头片尾数据库'),
@@ -510,49 +600,12 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
           const DanmakuSettingsSection(servers: true),
           const SizedBox(height: 36),
           const _Subtitle('应用更新'),
-          VToggle(
-            label: '通过反向代理检查和下载更新',
-            subtitle: updater.proxyAvailable ? '电视连不上 GitHub 时打开（使用上面的反向代理地址）。关闭时直连失败也会自动改走反向代理再试一次' : '需要先在上面填写反向代理地址',
-            value: updater.settings.useProxy && updater.proxyAvailable,
-            onChanged: (v) async {
-              if (v && !updater.proxyAvailable) {
-                showToast('请先在上面填写反向代理地址');
-                return;
-              }
-              await updater.saveSettings(updater.settings.copyWith(useProxy: v));
-              setState(() {});
-            },
-          ),
-          const SizedBox(height: 20),
           VTextField(
             label: '自定义更新地址（latest.json，留空使用 GitHub Releases）',
             controller: _manifest,
             hint: 'https://example.com/viora/latest.json',
             keyboardType: TextInputType.url,
           ),
-          const SizedBox(height: 36),
-          const _Subtitle('媒体服务器线路走反向代理'),
-          Text('勾选的线路：登录、浏览、图片和视频播放全部经过代理；内网地址始终直连。', style: VText.small.copyWith(color: VColors.textTertiary)),
-          const SizedBox(height: 16),
-          if (config.servers.isEmpty)
-            Text('还没有添加服务器', style: VText.label.copyWith(color: VColors.textMuted))
-          else
-            for (final s in config.servers)
-              for (final l in s.lines) ...[
-                VToggle(
-                  label: '${s.name} · ${l.name}',
-                  subtitle: l.url,
-                  value: l.proxied,
-                  onChanged: (v) => ref
-                      .read(configProvider.notifier)
-                      .updateServer(
-                        s.id,
-                        (old) =>
-                            old.copyWith(lines: [for (final x in old.lines) x.id == l.id ? x.copyWith(proxied: v) : x]),
-                      ),
-                ),
-                const SizedBox(height: 10),
-              ],
         ],
       ),
 

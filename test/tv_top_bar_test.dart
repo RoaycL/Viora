@@ -124,4 +124,42 @@ void main() {
     expect(find.text('时光代理人'), findsWidgets);
     await unmount(tester);
   });
+
+  testWidgets('电视标签停留一会儿就切到那个页面，焦点留在标签上；快速划过的不切；搜索仍要按 OK', (tester) async {
+    await pumpApp(tester);
+    await press(tester, LogicalKeyboardKey.arrowUp);
+    await tester.sendKeyEvent(LogicalKeyboardKey.arrowRight);
+    await tester.pump(const Duration(milliseconds: 400));
+    await tester.pumpAndSettle();
+    expect(find.text('还没有媒体服务器'), findsOneWidget);
+    expect(focused, 'nav:/library');
+    // 快速划过「收藏」到「观看记录」：只打开最后停下的那个
+    await tester.sendKeyEvent(LogicalKeyboardKey.arrowRight);
+    await tester.pump(const Duration(milliseconds: 100));
+    await tester.sendKeyEvent(LogicalKeyboardKey.arrowRight);
+    await tester.pump(const Duration(milliseconds: 400));
+    await tester.pumpAndSettle();
+    expect(find.text('还没有观看记录'), findsOneWidget);
+    expect(focused, 'nav:/history');
+    // 回到首页：首页的播放按钮会自动聚焦，浏览标签时不能抢走焦点
+    for (var i = 0; i < 3; i++) {
+      await tester.sendKeyEvent(LogicalKeyboardKey.arrowLeft);
+    }
+    await tester.pump(const Duration(milliseconds: 400));
+    await tester.pumpAndSettle();
+    expect(find.text('时光代理人'), findsWidgets);
+    expect(focused, 'nav:/');
+    await press(tester, LogicalKeyboardKey.arrowDown);
+    expect(focused, 'hero#0');
+    // 搜索图标停留不切页面
+    await press(tester, LogicalKeyboardKey.arrowUp);
+    for (var i = 0; i < 5; i++) {
+      await tester.sendKeyEvent(LogicalKeyboardKey.arrowRight);
+    }
+    await tester.pump(const Duration(milliseconds: 400));
+    await tester.pumpAndSettle();
+    expect(focused, 'nav:/search');
+    expect(find.text('时光代理人'), findsWidgets);
+    await unmount(tester);
+  });
 }

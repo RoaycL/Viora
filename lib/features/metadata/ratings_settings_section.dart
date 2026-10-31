@@ -2,7 +2,6 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../app/theme.dart';
-import '../../data/config/config_store.dart';
 import '../../data/metadata/ratings_http.dart';
 import '../../domain/models/external_rating.dart';
 import '../../domain/models/ratings_settings.dart';
@@ -174,21 +173,6 @@ class _RatingsSettingsSectionState extends ConsumerState<RatingsSettingsSection>
           ),
           const SizedBox(height: 12),
         ],
-        VToggle(
-          label: '通过反向代理访问评分服务',
-          subtitle: '使用上面填写的 HTTPS 反向代理地址',
-          value: settings.useProxy,
-          onChanged: (v) {
-            if (_saving) return;
-            final proxy = ref.read(configProvider).proxy;
-            if (v && (!proxy.enabled || Uri.tryParse(proxy.baseUrl)?.scheme != 'https')) {
-              showToast('请先配置 HTTPS 反向代理地址');
-              return;
-            }
-            _save(settings.copyWith(useProxy: v));
-          },
-        ),
-        const SizedBox(height: 12),
         VToggle(
           label: '同步评分凭据',
           subtitle: '将自行填写的 Key 和 Client ID 加入配置同步；默认只同步开关与地址',

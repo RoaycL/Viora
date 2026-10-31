@@ -252,13 +252,6 @@ class _SegmentSettingsSectionState extends ConsumerState<SegmentSettingsSection>
         Text('媒体服务器没有片头片尾标记时，按下面的顺序查询（取第一个有数据的）。', style: VText.caption.copyWith(color: VColors.textSecondary)),
         const SizedBox(height: 16),
         for (var i = 0; i < s.providers.length; i++) ...[_providerEntry(s, i), const SizedBox(height: 12)],
-        VToggle(
-          label: '通过反向代理访问',
-          subtitle: '国内直连不稳定时打开（使用上面填写的反向代理地址）',
-          value: s.useProxy,
-          onChanged: (v) => _save(s.copyWith(useProxy: v)),
-        ),
-        const SizedBox(height: 12),
         Text(
           'API Key 保存在系统安全存储中（Windows 凭据管理器 / Android Keystore），不写入普通配置文件。',
           style: VText.small.copyWith(color: VColors.textTertiary),
