@@ -44,6 +44,8 @@ class PillButton extends StatelessWidget {
       semanticLabel: label,
       semanticValue: subtitle,
       radius: VRadius.pill,
+      // 胶囊按钮往右放大：长按钮（如「继续 S1E194 · 19:26」）按默认的 8% 会盖住右边的按钮，用小一点的放大
+      scale: 1.04,
       alignment: Alignment.centerLeft,
       showRing: false,
       builder: (context, focused) {

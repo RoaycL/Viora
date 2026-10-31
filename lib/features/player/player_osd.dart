@@ -197,7 +197,9 @@ class PlayerOsd extends StatelessWidget {
                 if (panel != OsdPanel.none && panelChild != null)
                   panelChild!
                 else
-                  Row(
+                  // ←→ 严格按顺序在按钮间移动：「下一集」和右边「分辨率」之间隔着大段空白，
+                  // 按几何位置猜下一个按钮时电视上会过不去
+                  OrderedButtonRow(
                     children: [
                       OsdIconButton(
                         focusNode: playNode,
@@ -896,5 +898,57 @@ class _EpisodeCard extends StatelessWidget {
         ],
       ),
     );
+  }
+}
+
+/// 一排按钮：←→ 按位置顺序移到左 / 右相邻的按钮，到两端停住；↑↓ 照常交给方向导航。
+class OrderedButtonRow extends StatefulWidget {
+  const OrderedButtonRow({super.key, required this.children});
+
+  final List<Widget> children;
+
+  @override
+  State<OrderedButtonRow> createState() => _OrderedButtonRowState();
+}
+
+class _OrderedButtonRowState extends State<OrderedButtonRow> {
+  final _group = FocusNode(debugLabel: 'osd-row', skipTraversal: true, canRequestFocus: false);
+
+  @override
+  void dispose() {
+    _group.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) => Actions(
+    actions: <Type, Action<Intent>>{DirectionalFocusIntent: _StepAction(_group)},
+    child: Focus(
+      focusNode: _group,
+      child: Row(children: widget.children),
+    ),
+  );
+}
+
+class _StepAction extends Action<DirectionalFocusIntent> {
+  _StepAction(this.group);
+
+  final FocusNode group;
+
+  /// 只接管左右；上下不处理时继续交给外层（默认的方向导航）
+  @override
+  bool isEnabled(DirectionalFocusIntent intent, [BuildContext? context]) =>
+      intent.direction == TraversalDirection.left || intent.direction == TraversalDirection.right;
+
+  @override
+  Object? invoke(DirectionalFocusIntent intent) {
+    final current = FocusManager.instance.primaryFocus;
+    final buttons = group.traversalDescendants.where((n) => n.context != null).toList()
+      ..sort((a, b) => a.rect.left.compareTo(b.rect.left));
+    final i = current == null ? -1 : buttons.indexOf(current);
+    if (i < 0) return null;
+    final next = i + (intent.direction == TraversalDirection.right ? 1 : -1);
+    if (next >= 0 && next < buttons.length) buttons[next].requestFocus();
+    return null;
   }
 }
