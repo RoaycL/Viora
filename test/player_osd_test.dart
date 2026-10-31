@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:viora/app/platform_profile.dart';
 import 'package:viora/data/media/media_models.dart';
 import 'package:viora/features/player/player_osd.dart';
 import 'package:viora/player/engine.dart';
@@ -76,5 +78,94 @@ void main() {
   test('网速格式', () {
     expect(formatSpeed(6400000), '6.1 MB/s');
     expect(formatSpeed(870400), '850 KB/s');
+  });
+
+  testWidgets('电视底部按钮行：←→ 按顺序移动，中间隔着空白也能到分辨率、选集、倍速，两端停住', (tester) async {
+    PlatformProfile.debugOverride = PlatformProfile.tv;
+    addTearDown(() => PlatformProfile.debugOverride = PlatformProfile.desktop);
+    tester.view.physicalSize = const Size(1920, 1080);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+    final node = FocusNode(debugLabel: 'play');
+    addTearDown(node.dispose);
+    await tester.pumpWidget(
+      ProviderScope(
+        child: MaterialApp(
+          home: Scaffold(
+            body: Focus(
+              // 和播放页一样：外面有一层铺满屏幕的焦点（画面本身）
+              autofocus: true,
+              child: PlayerOsd(
+                state: const EngineState(
+                  position: Duration(seconds: 41),
+                  duration: Duration(minutes: 20),
+                  playing: true,
+                  buffering: false,
+                ),
+                title: '凡人修仙传 第 194 集',
+                source: const MediaSourceInfo(
+                  serverId: 's',
+                  itemId: 'i',
+                  id: 'x',
+                  container: 'mkv',
+                  streams: [MediaStreamInfo(index: 0, type: 'Video', width: 3840, height: 2160)],
+                ),
+                pendingSeek: null,
+                segments: const [],
+                danmakuOn: true,
+                isEpisode: true,
+                hasNext: true,
+                panel: OsdPanel.none,
+                playNode: node,
+                onBack: () {},
+                onPlayPause: () {},
+                onNext: () {},
+                onSeek: (_) {},
+                onDanmaku: () {},
+                onDanmakuMenu: () {},
+                onAudio: () {},
+                onSubtitle: () {},
+                onMore: () {},
+                onSources: () {},
+                onEpisodes: () {},
+                onRate: () {},
+                onHoverControls: (_) {},
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+    node.requestFocus();
+    await tester.pumpAndSettle();
+    String? label() {
+      final context = FocusManager.instance.primaryFocus?.context;
+      return context == null
+          ? null
+          : tester
+                .widget<Semantics>(
+                  find
+                      .ancestor(of: find.byElementPredicate((e) => e == context), matching: find.byType(Semantics))
+                      .first,
+                )
+                .properties
+                .label;
+    }
+
+    final seen = <String?>[label()];
+    for (var i = 0; i < 6; i++) {
+      await tester.sendKeyEvent(LogicalKeyboardKey.arrowRight);
+      await tester.pumpAndSettle();
+      seen.add(label());
+    }
+    expect(seen, ['暂停', '下一集', '4K', '选集', '倍速', '倍速', '倍速']);
+    for (var i = 0; i < 4; i++) {
+      await tester.sendKeyEvent(LogicalKeyboardKey.arrowLeft);
+      await tester.pumpAndSettle();
+    }
+    expect(label(), '暂停');
+    await tester.sendKeyEvent(LogicalKeyboardKey.arrowLeft);
+    await tester.pumpAndSettle();
+    expect(label(), '暂停');
   });
 }

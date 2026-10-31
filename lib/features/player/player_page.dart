@@ -71,7 +71,9 @@ class PlayerPage extends ConsumerStatefulWidget {
 }
 
 class _PlayerPageState extends ConsumerState<PlayerPage> {
-  final _focus = FocusNode(debugLabel: 'player');
+  /// 画面本身（不在按钮上时接收快进 / 暂停等按键）。不参与方向导航：它铺满整个屏幕，
+  /// 按位置找下一个控件时会被当成「最近的」，焦点从按钮跳到它上面就看不见了（电视上「丢失指针」）
+  final _focus = FocusNode(debugLabel: 'player', skipTraversal: true);
   final _engineSubs = <StreamSubscription<Object?>>[];
 
   PlayerEngine? _engine;

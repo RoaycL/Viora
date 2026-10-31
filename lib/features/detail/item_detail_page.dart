@@ -202,6 +202,7 @@ class _ItemDetailPageState extends ConsumerState<ItemDetailPage> {
         ? ref.watch(_episodesProvider((serverId: widget.serverId, seriesId: item.id, seasonId: seasonId))).value ??
               const <MediaItem>[]
         : const <MediaItem>[];
+    final seriesOfEpisode = item.kind == MediaKind.episode ? item.seriesId : null;
     final parent = item.kind == MediaKind.episode && item.seriesId != null
         ? ref.watch(itemProvider((serverId: item.serverId, itemId: item.seriesId!))).value
         : null;
@@ -333,6 +334,7 @@ class _ItemDetailPageState extends ConsumerState<ItemDetailPage> {
             itemKeys: [
               'play',
               if (resumeAt > Duration.zero) 'restart',
+              if (seriesOfEpisode != null) 'series',
               if (optionsAsync != null) 'resources',
               if (zh.overview?.isNotEmpty == true) 'overview',
               'favorite',
@@ -352,6 +354,14 @@ class _ItemDetailPageState extends ConsumerState<ItemDetailPage> {
                   icon: Icons.replay_rounded,
                   label: '从头播放',
                   onPressed: () => play(selected, fromStart: true),
+                ),
+              // 单集详情（如从继续观看进来）没有选集行：到整部剧的页面选季、选集
+              if (seriesOfEpisode != null)
+                (node) => PillButton(
+                  focusNode: node,
+                  icon: Icons.format_list_numbered_rounded,
+                  label: '选集',
+                  onPressed: () => context.push('/item/${item.serverId}/$seriesOfEpisode'),
                 ),
               if (optionsAsync != null)
                 (node) => PillButton(

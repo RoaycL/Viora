@@ -397,6 +397,41 @@ void main() {
     await tester.pumpAndSettle();
   }
 
+  testWidgets('单集详情（如从继续观看进来）有「选集」按钮，打开整部剧的页面', (tester) async {
+    tester.view.physicalSize = const Size(1920, 1080);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+    final a = _Client(home, [episode('home-first')]);
+    final router = GoRouter(
+      initialLocation: '/item',
+      routes: [
+        GoRoute(
+          path: '/item',
+          builder: (_, _) => const ItemDetailPage(serverId: 'home', itemId: 'home-first'),
+        ),
+        GoRoute(path: '/item/:server/:id', builder: (_, state) => Text('series ${state.pathParameters['id']}')),
+      ],
+    );
+    addTearDown(router.dispose);
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          configProvider.overrideWith(_Config.new),
+          serverClientProvider.overrideWith((ref, id) => a),
+          tmdbTitleProvider.overrideWith((ref, key) async => null),
+          mediaIndexProvider.overrideWith((ref) async => null),
+        ],
+        child: MaterialApp.router(routerConfig: router),
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(find.text('选集'), findsOneWidget);
+    await tester.tap(find.text('选集'));
+    await tester.pumpAndSettle();
+    expect(find.text('series show'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets('library detail selects unavailable future episode without playing the next-up instead', (tester) async {
     await pumpDetail(tester);
     expect(find.byType(EpisodeCatalogRow), findsOneWidget);
