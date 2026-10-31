@@ -118,7 +118,7 @@ void main() {
     expect(focused, 'nav:/library');
     expect(find.text('还没有媒体服务器'), findsOneWidget);
     // 单独到达的系统返回照常处理（标签栏上返回 → 回首页）
-    await tester.runAsync(() => Future<void>.delayed(const Duration(milliseconds: 400)));
+    await tester.pump(const Duration(milliseconds: 400));
     await tester.binding.handlePopRoute();
     await tester.pumpAndSettle();
     expect(find.text('时光代理人'), findsWidgets);
