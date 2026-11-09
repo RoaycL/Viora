@@ -69,7 +69,12 @@ class ServerPage extends ConsumerWidget {
                       itemCount: resume.length,
                       itemExtent: LandscapeCard.width,
                       height: LandscapeCard.height,
-                      itemBuilder: (context, i, node) => mediaLandscapeCard(context, resume[i], node),
+                      itemBuilder: (context, i, node) => mediaLandscapeCard(
+                        context,
+                        resume[i],
+                        node,
+                        onMenu: () => openWatchedItem(context, resume[i]),
+                      ),
                     ),
                   FocusRow(
                     rowIndex: 1,

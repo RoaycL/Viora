@@ -356,6 +356,8 @@ void main() {
     bool tmdbEntry = false,
     bool withSecondSeason = false,
     Future<List<MediaItem>>? otherServers,
+    int? initialSeason,
+    int? initialEpisode,
   }) async {
     tester.view.physicalSize = const Size(1920, 1600);
     tester.view.devicePixelRatio = 1;
@@ -370,7 +372,12 @@ void main() {
           path: '/item',
           builder: (_, _) => tmdbEntry
               ? const TmdbDetailPage(isTv: true, id: 42)
-              : const ItemDetailPage(serverId: 'home', itemId: 'show'),
+              : ItemDetailPage(
+                  serverId: 'home',
+                  itemId: 'show',
+                  initialSeason: initialSeason,
+                  initialEpisode: initialEpisode,
+                ),
         ),
         GoRoute(path: '/play/:server/:item', builder: (_, state) => Text('playing ${state.pathParameters['item']}')),
       ],
@@ -409,7 +416,10 @@ void main() {
           path: '/item',
           builder: (_, _) => const ItemDetailPage(serverId: 'home', itemId: 'home-first'),
         ),
-        GoRoute(path: '/item/:server/:id', builder: (_, state) => Text('series ${state.pathParameters['id']}')),
+        GoRoute(
+          path: '/item/:server/:id',
+          builder: (_, state) => Text('series ${state.pathParameters['id']} ${state.uri.query}'),
+        ),
       ],
     );
     addTearDown(router.dispose);
@@ -428,7 +438,14 @@ void main() {
     expect(find.text('选集'), findsOneWidget);
     await tester.tap(find.text('选集'));
     await tester.pumpAndSettle();
-    expect(find.text('series show'), findsOneWidget);
+    // 停在正在看的那一集
+    expect(find.text('series show season=1&episode=1'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('从继续观看的某一集打开整部剧：停在那一集，而不是下一集', (tester) async {
+    await pumpDetail(tester, initialSeason: 1, initialEpisode: 3);
+    expect(find.text('暂无 S1E3 资源'), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
 
