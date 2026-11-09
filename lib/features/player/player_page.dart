@@ -67,6 +67,10 @@ class PlayerPage extends ConsumerStatefulWidget {
   /// 自动换源时已经试过、打不开的版本（「服务器/版本 ID」），换到其他服务器时带过去，避免来回切
   final List<String> triedSources;
 
+  /// 测试用：换成假的播放内核（测试环境里 mpv / ExoPlayer 都跑不起来），用来测遥控器操作、面板、返回键
+  @visibleForTesting
+  static PlayerEngine Function(EngineOptions options)? debugEngineFactory;
+
   @override
   ConsumerState<PlayerPage> createState() => _PlayerPageState();
 }
@@ -186,6 +190,8 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
   }
 
   PlayerEngine _createEngine({bool forceMpv = false, bool forceExo = false}) {
+    final fake = PlayerPage.debugEngineFactory;
+    if (fake != null) return fake(_options);
     final p = ref.read(configProvider).playback;
     final useExo = ExoEngine.supported && (forceExo || (!forceMpv && p.engine != EnginePreference.mpv));
     return useExo ? ExoEngine(options: _options) : MpvEngine(options: _options);
@@ -356,8 +362,11 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
       final container = _container;
       final key = (serverId: widget.serverId, itemId: widget.itemId);
       Future(() => client.reportStopped(source, _state.position, _playSessionId)).catchError((_) {}).whenComplete(() {
-        container?.read(mediaFeedRefreshProvider.notifier).refresh(MediaFeedKind.resume);
-        container?.invalidate(itemProvider(key));
+        // 应用正在关闭（容器已销毁）时不再刷新
+        try {
+          container?.read(mediaFeedRefreshProvider.notifier).refresh(MediaFeedKind.resume);
+          container?.invalidate(itemProvider(key));
+        } on StateError catch (_) {}
       });
     }
   }
@@ -829,10 +838,18 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
 
   /// 电视按 ↓：显示控制层，焦点落在播放 / 暂停按钮上
   void _focusControls() {
+    final visible = _osd;
     _showOsd();
+    // 控制层已经显示：直接移焦点。还没显示：等它画出来（按钮不再被排除在焦点外）再移。
+    // 只加帧后回调不会触发新的一帧——暂停时画面不变，焦点就一直移不过去，所以要确保有下一帧
+    if (visible) {
+      _playNode.requestFocus();
+      return;
+    }
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) _playNode.requestFocus();
     });
+    WidgetsBinding.instance.ensureVisualUpdate();
   }
 
   void _seekBy(Duration delta) {
@@ -1279,7 +1296,8 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
     if (panel == OsdPanel.episodes) {
       final client = _client;
       if (item == null || client == null || item.seriesId == null) return;
-      _episodes ??= client.episodes(item.seriesId!, seasonId: item.seasonId);
+      // 整部剧的所有季：面板里可以切换季
+      _episodes ??= client.episodes(item.seriesId!);
     }
     setState(() => _panel = panel);
     _showOsd(sticky: true);

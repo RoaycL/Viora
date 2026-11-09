@@ -14,6 +14,16 @@ void openMediaItem(BuildContext context, MediaItem item) {
   context.push('/item/${item.serverId}/${item.id}');
 }
 
+/// 继续观看 / 观看记录里的条目：单集打开整部剧的页面并停在这一集（能直接选集、换季），其他同 [openMediaItem]
+void openWatchedItem(BuildContext context, MediaItem item) {
+  final series = item.kind == MediaKind.episode ? item.seriesId : null;
+  if (series == null) return openMediaItem(context, item);
+  final query = item.seasonNumber == null
+      ? ''
+      : '?season=${item.seasonNumber}${item.episodeNumber == null ? '' : '&episode=${item.episodeNumber}'}';
+  context.push('/item/${item.serverId}/$series$query');
+}
+
 /// 播放条目（继续观看等）
 void playMediaItem(BuildContext context, MediaItem item, {bool fromStart = false}) {
   final pos = fromStart ? 0 : item.position.inMilliseconds;

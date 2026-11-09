@@ -211,7 +211,7 @@ class _LandscapeTileState extends State<_LandscapeTile> {
       widget.item,
       _node,
       watchedOn: widget.server ?? '未知服务器',
-      onMenu: () => openMediaItem(context, widget.item),
+      onMenu: () => openWatchedItem(context, widget.item),
     ),
   );
 }

@@ -74,7 +74,12 @@ GoRouter buildRouter({List<NavigatorObserver>? observers}) {
         path: '/item/:sid/:id',
         pageBuilder: (context, state) => CustomTransitionPage<void>(
           key: state.pageKey,
-          child: ItemDetailPage(serverId: state.pathParameters['sid']!, itemId: state.pathParameters['id']!),
+          child: ItemDetailPage(
+            serverId: state.pathParameters['sid']!,
+            itemId: state.pathParameters['id']!,
+            initialSeason: int.tryParse(state.uri.queryParameters['season'] ?? ''),
+            initialEpisode: int.tryParse(state.uri.queryParameters['episode'] ?? ''),
+          ),
           transitionsBuilder: (context, animation, _, child) => FadeTransition(opacity: animation, child: child),
         ),
       ),

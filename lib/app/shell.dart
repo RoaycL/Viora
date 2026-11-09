@@ -92,9 +92,15 @@ class _AppShellState extends State<AppShell> {
     if (_hasFocusableContent) return;
     scheduleMicrotask(() {
       if (!mounted || FocusManager.instance.primaryFocus != primary || _hasFocusableContent) return;
+      // 焦点留在来的地方：从导航切过来的一级页面（收藏、观看记录……）还给导航；
+      // 在内容里按 OK 进来的子页面（某台服务器、某个媒体库）留在页面里，内容到了由页面自己聚焦第一项
+      // （↑ / ← 仍能回到导航）。不然加载时焦点先跳到导航、加载完又跳回内容
+      if (!_onTabRoot) return;
       _railNodes[_active.path]?.requestFocus();
     });
   }
+
+  bool get _onTabRoot => NavItem.values.any((i) => i.path == widget.location);
 
   void _onBarFocus() {
     if (_topBar && _barFocused != _railScope.hasFocus) setState(() => _barFocused = _railScope.hasFocus);

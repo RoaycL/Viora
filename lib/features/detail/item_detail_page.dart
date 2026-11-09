@@ -49,10 +49,20 @@ final _nextUpProvider = FutureProvider.family<MediaItem?, _Key>((ref, k) async {
 
 /// 媒体服务器条目的详情页（效果图：详情页 · 首屏 / 下滑）。
 class ItemDetailPage extends ConsumerStatefulWidget {
-  const ItemDetailPage({super.key, required this.serverId, required this.itemId});
+  const ItemDetailPage({
+    super.key,
+    required this.serverId,
+    required this.itemId,
+    this.initialSeason,
+    this.initialEpisode,
+  });
 
   final String serverId;
   final String itemId;
+
+  /// 剧集：打开时选中的季 / 集（从继续观看、观看记录的某一集进来时，停在正在看的那一集）
+  final int? initialSeason;
+  final int? initialEpisode;
 
   @override
   ConsumerState<ItemDetailPage> createState() => _ItemDetailPageState();
@@ -69,6 +79,13 @@ class _ItemDetailPageState extends ConsumerState<ItemDetailPage> {
   bool? _favorite;
   bool? _played;
   int _accountGeneration = 0;
+
+  @override
+  void initState() {
+    super.initState();
+    _catalogSeason = widget.initialSeason;
+    _catalogEpisode = widget.initialSeason == null ? null : widget.initialEpisode;
+  }
 
   @override
   void didUpdateWidget(ItemDetailPage oldWidget) {
@@ -157,7 +174,10 @@ class _ItemDetailPageState extends ConsumerState<ItemDetailPage> {
   Widget _content(MediaItem item) {
     final isSeries = item.kind == MediaKind.series;
     final seasons = isSeries ? ref.watch(_seasonsProvider(_key)).value ?? const <MediaItem>[] : const <MediaItem>[];
-    final seasonId = _seasonId ?? seasons.firstOrNull?.id;
+    final seasonId =
+        _seasonId ??
+        seasons.where((s) => s.seasonNumber != null && s.seasonNumber == widget.initialSeason).firstOrNull?.id ??
+        seasons.firstOrNull?.id;
     final nextUpAsync = isSeries ? ref.watch(_nextUpProvider(_key)) : null;
     final nextUp = nextUpAsync?.value;
     final zh = localizedMeta(ref, item);
@@ -361,7 +381,7 @@ class _ItemDetailPageState extends ConsumerState<ItemDetailPage> {
                   focusNode: node,
                   icon: Icons.format_list_numbered_rounded,
                   label: '选集',
-                  onPressed: () => context.push('/item/${item.serverId}/$seriesOfEpisode'),
+                  onPressed: () => openWatchedItem(context, item),
                 ),
               if (optionsAsync != null)
                 (node) => PillButton(

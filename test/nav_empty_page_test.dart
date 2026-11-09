@@ -1,4 +1,7 @@
+import 'dart:async';
+
 import 'package:flutter/services.dart';
+import 'package:flutter/widgets.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:viora/app/app.dart';
@@ -115,6 +118,44 @@ void main() {
     await press(tester, LogicalKeyboardKey.arrowDown);
     expect(focused, 'favorite');
     expect(tester.takeException(), isNull);
+    await unmount(tester);
+  });
+
+  testWidgets('电视：在内容里按 OK 进入的子页面加载中焦点留在页面里，不先跳到标签栏；加载完落在第一项', (tester) async {
+    PlatformProfile.debugOverride = PlatformProfile.tv;
+    autoCheckUpdatesOnLaunch = false;
+    tester.view.physicalSize = const Size(1920, 1080);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+    final libraries = Completer<List<Library>>();
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          ...tmdbFixtures,
+          configProvider.overrideWith(OneServer.new),
+          librariesProvider.overrideWith((ref, id) => libraries.future),
+          mediaFeedStateProvider.overrideWith((ref, kind) => const AsyncValue.data(MediaFeedResult(SnapshotBatch([])))),
+        ],
+        child: const VioraApp(),
+      ),
+    );
+    await tester.pumpAndSettle();
+    // 标签栏切到资源库，↓ 进入，OK 打开这台服务器
+    await press(tester, LogicalKeyboardKey.arrowUp);
+    await tester.sendKeyEvent(LogicalKeyboardKey.arrowRight);
+    await tester.pump(const Duration(milliseconds: 400));
+    await tester.pumpAndSettle();
+    expect(focused, 'nav:/library');
+    await press(tester, LogicalKeyboardKey.arrowDown);
+    expect(focused, isNot(startsWith('nav:')));
+    await press(tester, LogicalKeyboardKey.select);
+    expect(find.text('fixture'), findsWidgets);
+    expect(focused, isNot(startsWith('nav:')));
+    libraries.complete(const [Library(id: 'movies', name: '电影')]);
+    await tester.pumpAndSettle();
+    expect(find.text('电影'), findsWidgets);
+    expect(focused, isNot(startsWith('nav:')));
+    expect(FocusManager.instance.primaryFocus, isNot(isA<FocusScopeNode>()));
     await unmount(tester);
   });
 }

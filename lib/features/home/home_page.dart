@@ -726,7 +726,7 @@ class _HomeBodyState extends ConsumerState<_HomeBody> {
                   resume[i],
                   node,
                   watchedOn: serverNames[resume[i].serverId] ?? '未知服务器',
-                  onMenu: () => openMediaItem(context, resume[i]),
+                  onMenu: () => openWatchedItem(context, resume[i]),
                 ),
               ),
             );
