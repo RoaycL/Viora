@@ -245,13 +245,13 @@ void main() {
       await press(tester, LogicalKeyboardKey.arrowRight);
     }
     await press(tester, LogicalKeyboardKey.enter);
-    expect(find.textContaining('选集 · 第 1 季'), findsOneWidget);
+    expect(find.text('选集 · 共 3 集：'), findsOneWidget);
     expect(focused, 'panel-entry');
 
     // 系统返回（安卓遥控器）：先回到默认画面
     appBack(h.router);
     await tester.pumpAndSettle();
-    expect(find.textContaining('选集 · 第 1 季'), findsNothing);
+    expect(find.text('选集 · 共 3 集：'), findsNothing);
     expect(focused, 'player');
     expect(find.byType(PlayerPage), findsOneWidget);
 
@@ -283,6 +283,31 @@ void main() {
     expect(h.engine.state.value.rate, 0.5);
     expect(find.text('0.5x'), findsOneWidget);
     expect(FocusManager.instance.primaryFocus!.rect.top, greaterThan(900));
+    await unmountPlayer(tester);
+  });
+
+  testWidgets('电视：选集面板可以切换季，默认是正在看的那一季', (tester) async {
+    await pumpPlayer(tester);
+    await press(tester, LogicalKeyboardKey.arrowDown);
+    for (var i = 0; i < 3; i++) {
+      await press(tester, LogicalKeyboardKey.arrowRight);
+    }
+    await press(tester, LogicalKeyboardKey.enter);
+    expect(find.text('第 1 季'), findsOneWidget);
+    expect(find.text('第 2 季'), findsOneWidget);
+    expect(find.text('选集 · 共 3 集：'), findsOneWidget);
+    // 集卡片按 ↑ 到季按钮，选第 2 季
+    await press(tester, LogicalKeyboardKey.arrowUp);
+    var guard = 0;
+    while (FocusManager.instance.primaryFocus!.rect.left < tester.getRect(find.text('第 2 季')).left - 40 &&
+        guard++ < 4) {
+      await press(tester, LogicalKeyboardKey.arrowRight);
+    }
+    await press(tester, LogicalKeyboardKey.enter);
+    expect(find.text('选集 · 共 1 集：'), findsOneWidget);
+    // ↓ 回到这一季的集
+    await press(tester, LogicalKeyboardKey.arrowDown);
+    expect(FocusManager.instance.primaryFocus!.rect.top, greaterThan(tester.getRect(find.text('第 2 季')).bottom));
     await unmountPlayer(tester);
   });
 }

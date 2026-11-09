@@ -1296,7 +1296,8 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
     if (panel == OsdPanel.episodes) {
       final client = _client;
       if (item == null || client == null || item.seriesId == null) return;
-      _episodes ??= client.episodes(item.seriesId!, seasonId: item.seasonId);
+      // 整部剧的所有季：面板里可以切换季
+      _episodes ??= client.episodes(item.seriesId!);
     }
     setState(() => _panel = panel);
     _showOsd(sticky: true);

@@ -579,7 +579,7 @@ class _SeekPainter extends CustomPainter {
 
 /// 横向滚动的卡片列表：遥控器移动焦点时自动滚到可见；鼠标滚轮横向滚动
 class _HorizontalList extends StatefulWidget {
-  const _HorizontalList({required this.height, required this.children});
+  const _HorizontalList({super.key, required this.height, required this.children});
 
   final double height;
   final List<Widget> children;
@@ -805,42 +805,69 @@ class EpisodesPanel extends StatefulWidget {
 }
 
 class _EpisodesPanelState extends State<EpisodesPanel> with _PanelEntry {
-  Future<List<MediaItem>> get episodes => widget.episodes;
-  String get currentId => widget.currentId;
-  ValueChanged<MediaItem> get onPick => widget.onPick;
+  /// 选中的季（null = 正在看的那一季）
+  int? _season;
+
+  static String seasonLabel(int n) => n == 0 ? '特别篇' : '第 $n 季';
 
   @override
   Widget build(BuildContext context) {
     return SizedBox(
-      height: 290,
+      // 标题行有季按钮时比纯文字高
+      height: 310,
       child: FutureBuilder<List<MediaItem>>(
-        future: episodes,
+        future: widget.episodes,
         builder: (context, snap) {
-          final eps = snap.data ?? const <MediaItem>[];
-          final season = eps.where((e) => e.id == currentId).firstOrNull?.seasonNumber;
-          final hasCurrent = eps.any((e) => e.id == currentId);
+          final all = snap.data ?? const <MediaItem>[];
+          final current = all.where((e) => e.id == widget.currentId).firstOrNull;
+          // 季按顺序排，特别篇（第 0 季）放最后
+          final seasons = {for (final e in all) e.seasonNumber ?? 1}.toList()
+            ..sort((a, b) => a == 0 ? 1 : (b == 0 ? -1 : a.compareTo(b)));
+          final season = _season ?? current?.seasonNumber ?? seasons.firstOrNull;
+          final eps = [
+            for (final e in all)
+              if ((e.seasonNumber ?? 1) == season) e,
+          ];
+          final hasCurrent = eps.any((e) => e.id == widget.currentId);
           enterAfterBuild();
+          final status = snap.hasError
+              ? '获取集列表失败'
+              : snap.connectionState != ConnectionState.done
+              ? '正在获取集列表…'
+              : null;
           return Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Text(
-                snap.hasError
-                    ? '获取集列表失败'
-                    : snap.connectionState != ConnectionState.done
-                    ? '正在获取集列表…'
-                    : '选集${season == null ? '' : ' · 第 $season 季'} · 共 ${eps.length} 集',
-                style: VText.label.copyWith(fontWeight: FontWeight.w600),
+              Row(
+                children: [
+                  Text(
+                    status ??
+                        (seasons.length > 1
+                            ? '选集 · 共 ${eps.length} 集：'
+                            : '选集${season == null ? '' : ' · ${seasonLabel(season)}'} · 共 ${eps.length} 集'),
+                    style: VText.label.copyWith(fontWeight: FontWeight.w600),
+                  ),
+                  // 多季时可以切换季（和「播放资源」的分组按钮一样）
+                  if (status == null && seasons.length > 1)
+                    for (final n in seasons)
+                      OsdTextButton(
+                        label: seasonLabel(n),
+                        selected: n == season,
+                        onPressed: () => setState(() => _season = n),
+                      ),
+                ],
               ),
               const SizedBox(height: 16),
               _HorizontalList(
+                key: ValueKey(season),
                 height: 230,
                 children: [
                   for (final (i, e) in eps.indexed)
                     _EpisodeCard(
                       episode: e,
-                      current: e.id == currentId,
-                      focusNode: e.id == currentId || (!hasCurrent && i == 0) ? entryNode : null,
-                      onPick: () => onPick(e),
+                      current: e.id == widget.currentId,
+                      focusNode: e.id == widget.currentId || (!hasCurrent && i == 0) ? entryNode : null,
+                      onPick: () => widget.onPick(e),
                     ),
                 ],
               ),
