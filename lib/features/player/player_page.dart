@@ -163,12 +163,25 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
       if (_started && _state.playing) _report();
     });
     _start();
+    _focus.addListener(_keepFocus);
     // Windows 关闭到托盘时暂停（窗口看不见了，不在后台继续放）
     DesktopTray.instance.hiddenToTray.addListener(_onHiddenToTray);
   }
 
   void _onHiddenToTray() {
     if (DesktopTray.instance.hiddenToTray.value && _state.playing) _engine?.pause();
+  }
+
+  /// 焦点离开了播放页（按钮、面板卡片、跳过按钮消失时会落到页面的空容器上）而没有弹出菜单：
+  /// 收回到画面上。不然遥控器按键都到不了播放页，暂停、快进都没反应（电视上「丢失指针」）
+  void _keepFocus() {
+    if (_focus.hasFocus) return;
+    scheduleMicrotask(() {
+      if (!mounted || _focus.hasFocus) return;
+      // 菜单、对话框盖在上面时焦点在它们那里，不抢
+      if (ModalRoute.of(context)?.isCurrent != true) return;
+      _focus.requestFocus();
+    });
   }
 
   // ───────────────────────── 内核 ─────────────────────────
@@ -803,6 +816,7 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
     _progressTimer?.cancel();
     _seekTimer?.cancel();
     _segments?.dispose();
+    _focus.removeListener(_keepFocus);
     _focus.dispose();
     _playNode.dispose();
     // 退出播放时恢复窗口；连播下一集 / 换服务器时保持小窗
@@ -1306,6 +1320,8 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
   /// 切换到另一个版本：同一台服务器同一条目直接换源，其他服务器的版本换到那台服务器从当前进度继续
   void _switchToOption(SourceOption o) {
     setState(() => _panel = OsdPanel.none);
+    // 选中的卡片随面板一起消失：焦点回到画面，否则落空后暂停、快进都不响应
+    _focus.requestFocus();
     _armOsdTimer();
     if (o.serverId == widget.serverId && o.source.id == _source?.id) return;
     final at = _state.position;

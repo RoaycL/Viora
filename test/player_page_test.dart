@@ -310,4 +310,18 @@ void main() {
     expect(FocusManager.instance.primaryFocus!.rect.top, greaterThan(tester.getRect(find.text('第 2 季')).bottom));
     await unmountPlayer(tester);
   });
+
+  testWidgets('电视：焦点从按钮上掉下来（按钮消失等）会回到画面，暂停照常能用', (tester) async {
+    final h = await pumpPlayer(tester);
+    await press(tester, LogicalKeyboardKey.arrowDown);
+    expect(focused, 'osd-play');
+    // 模拟按钮消失：焦点落到页面的空容器上
+    FocusManager.instance.primaryFocus!.unfocus();
+    await tester.pumpAndSettle();
+    expect(focused, 'player');
+    expect(h.engine.state.value.playing, isTrue);
+    await press(tester, LogicalKeyboardKey.enter);
+    expect(h.engine.state.value.playing, isFalse);
+    await unmountPlayer(tester);
+  });
 }

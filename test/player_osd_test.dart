@@ -77,6 +77,15 @@ void main() {
     expect(seekTo, const Duration(minutes: 10));
   });
 
+  test('右上角下载状态：在下就显示速度；缓冲满了停下时显示已缓冲多少，而不是 0', () {
+    expect(downloadStatus(null, Duration.zero), isNull);
+    expect(downloadStatus(6400000, Duration.zero), '6.1 MB/s');
+    expect(downloadStatus(0, const Duration(seconds: 80)), '已缓冲 1 分 20 秒');
+    expect(downloadStatus(0, const Duration(minutes: 2)), '已缓冲 2 分');
+    expect(downloadStatus(0, const Duration(seconds: 45)), '已缓冲 45 秒');
+    expect(downloadStatus(0, const Duration(seconds: 2)), '0 KB/s');
+  });
+
   test('网速格式', () {
     expect(formatSpeed(6400000), '6.1 MB/s');
     expect(formatSpeed(870400), '850 KB/s');

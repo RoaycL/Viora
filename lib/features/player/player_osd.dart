@@ -134,7 +134,7 @@ class PlayerOsd extends StatelessWidget {
                   ),
                 ),
                 const SizedBox(width: 24),
-                _Status(speed: state.speed),
+                _Status(speed: state.speed, bufferedAhead: state.buffered - state.position),
                 const SizedBox(width: 24),
                 // 右上角的按钮也按顺序左右移动，到两端停住（按位置找时最左边的「弹幕」按 ← 会跳到底部）
                 OrderedButtonRow(
@@ -257,10 +257,23 @@ String formatSpeed(int bytesPerSecond) {
 }
 
 /// 右上角：时间 · 网速
+/// 右上角的下载状态。播放器是一阵一阵下载的：缓冲满了就停下、用掉一些再接着下，停下时速度就是 0
+/// （不是断网）。所以速度为 0 但前面还有缓冲时显示「已缓冲 x」，两样都没有时才显示 0
+String? downloadStatus(int? speed, Duration bufferedAhead) {
+  if (speed == null) return null;
+  if (speed > 0) return formatSpeed(speed);
+  if (bufferedAhead >= const Duration(seconds: 5)) {
+    final m = bufferedAhead.inMinutes, sec = bufferedAhead.inSeconds % 60;
+    return '已缓冲 ${m > 0 ? '$m 分 ' : ''}${m > 0 && sec == 0 ? '' : '$sec 秒'}'.trim();
+  }
+  return formatSpeed(0);
+}
+
 class _Status extends StatefulWidget {
-  const _Status({required this.speed});
+  const _Status({required this.speed, required this.bufferedAhead});
 
   final int? speed;
+  final Duration bufferedAhead;
 
   @override
   State<_Status> createState() => _StatusState();
@@ -286,7 +299,7 @@ class _StatusState extends State<_Status> {
     final now = TimeOfDay.now();
     final clock = '${now.hour.toString().padLeft(2, '0')}:${now.minute.toString().padLeft(2, '0')}';
     return Text(
-      [clock, if (widget.speed != null) formatSpeed(widget.speed!)].join('   '),
+      [clock, ?downloadStatus(widget.speed, widget.bufferedAhead)].join('   '),
       style: const TextStyle(
         fontSize: 22,
         color: Color(0xD9FFFFFF),
