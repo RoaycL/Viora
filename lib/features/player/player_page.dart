@@ -467,6 +467,13 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
               setState(() => _skipPrompt = action);
             },
             onResolution: (r) {
+              // 写进日志：没跳过时能看出是没查到数据、来源出错，还是查到了但模式是「显示按钮」
+              debugPrint(
+                'segments: ${item.name} tmdb=${query.tmdbId} imdb=${query.imdbId} '
+                's${query.season}e${query.episode} ${duration.inSeconds}s → '
+                '${r.segments.isEmpty ? '没有片段' : r.segments.map((s) => '${s.type.name}@${s.provider} ${s.start.inSeconds}-${s.end.inSeconds}s').join(', ')}'
+                '${r.fromCache ? '（缓存）' : ''}${r.failures.isEmpty ? '' : ' 失败：${r.failures.map((k, v) => MapEntry(k, v.name))}'}',
+              );
               if (mounted) setState(() => _segmentList = r.segments);
             },
             onAutoSkip: (action) => showToast(_autoSkipText(action)),
