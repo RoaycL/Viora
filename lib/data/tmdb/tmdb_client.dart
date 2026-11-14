@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:dio/dio.dart';
@@ -83,19 +84,53 @@ class TmdbClient {
   /// 网络偶发失败（国内直连 TMDB 常见：连接超时、连接被重置、5xx、429）时再试两次（1 秒、3 秒后），
   /// 首页推荐行不至于一次失败就显示「加载失败」；4xx（Key 错误、不存在）不重试
   Future<Response<Map<String, dynamic>>> _getWithRetry(Uri url) async {
-    final dio = Dio(
-      BaseOptions(connectTimeout: const Duration(seconds: 10), receiveTimeout: const Duration(seconds: 15)),
-    );
     final options = Options(headers: {if (_isBearer) 'Authorization': 'Bearer $_key', 'Accept': 'application/json'});
     for (var attempt = 0; ; attempt++) {
       try {
-        return await dio.getUri<Map<String, dynamic>>(url, options: options);
+        await _acquire();
+        try {
+          return await _dio.getUri<Map<String, dynamic>>(url, options: options);
+        } finally {
+          _release();
+        }
       } on DioException catch (e) {
         final status = e.response?.statusCode;
         final transient = status == null || status >= 500 || status == 429;
         if (!transient || attempt >= 2) rethrow;
         await Future<void>.delayed(Duration(seconds: attempt == 0 ? 1 : 3));
       }
+    }
+  }
+
+  /// 所有 TMDB 请求共用一个连接池（原来每个请求新建一个，几十个请求就是几十次 HTTPS 握手）
+  static final _dio = Dio(
+    BaseOptions(connectTimeout: const Duration(seconds: 10), receiveTimeout: const Duration(seconds: 15)),
+  );
+
+  /// 同时进行的 TMDB 请求数（电视 4、电脑 8），其余排队。搜索结果、长列表一次出现几十张卡片时，
+  /// 每张都要补中文标题，不限制就是几十个请求同时发出、同时解析，电视上内存和 CPU 一下子顶满
+  static int maxRequests = 8;
+  static int _active = 0;
+  static final _waiting = <Completer<void>>[];
+
+  @visibleForTesting
+  static int get activeRequests => _active;
+
+  static Future<void> _acquire() async {
+    if (_active < maxRequests) {
+      _active++;
+      return;
+    }
+    final slot = Completer<void>();
+    _waiting.add(slot);
+    await slot.future; // 名额由 _release 直接转交，_active 不变
+  }
+
+  static void _release() {
+    if (_waiting.isNotEmpty) {
+      _waiting.removeAt(0).complete();
+    } else {
+      _active--;
     }
   }
 

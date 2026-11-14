@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart' show ScrollCacheExtent;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../ui/widgets/fill_grid.dart';
@@ -36,7 +37,7 @@ class SearchPage extends ConsumerStatefulWidget {
 }
 
 class _SearchPageState extends ConsumerState<SearchPage> {
-  /// 最多显示的作品数：结果网格不是懒加载，几百张海报一起构建、下载会拖垮电视
+  /// 最多显示的作品数（结果网格是懒加载的，这里只是不让一次合并、排序的数据太多）
   static const maxResults = 120;
 
   final _query = TextEditingController();
@@ -223,18 +224,28 @@ class _SearchPageState extends ConsumerState<SearchPage> {
             ),
             const SizedBox(width: 56),
             // 右：结果
+            // 懒加载：只建屏幕附近的几行。结果最多上百部，一次全建的话每张卡片都同时去下载海报、
+            // 向 TMDB 补中文标题，电视上内存和 CPU 一下子顶满（搜索后闪退）
             Expanded(
-              child: SingleChildScrollView(
-                padding: const EdgeInsets.only(right: VSpace.safeH, top: 110, bottom: 200),
-                child: hasQuery && _results.isEmpty && !_searchingRemote
-                    ? Text('没有找到相关内容', style: VText.label.copyWith(color: VColors.textTertiary))
-                    : FillGrid(
-                        itemWidth: PosterCard.width,
-                        children: [
-                          for (final g in _results)
-                            _ResultCard(key: ValueKey('${g.primary.serverId}/${g.primary.id}'), title: g),
-                        ],
-                      ),
+              child: CustomScrollView(
+                scrollCacheExtent: ScrollCacheExtent.pixels(PlatformProfile.isTv ? 800 : 400),
+                slivers: [
+                  SliverPadding(
+                    padding: const EdgeInsets.only(right: VSpace.safeH, top: 110, bottom: 200),
+                    sliver: hasQuery && _results.isEmpty && !_searchingRemote
+                        ? SliverToBoxAdapter(
+                            child: Text('没有找到相关内容', style: VText.label.copyWith(color: VColors.textTertiary)),
+                          )
+                        : SliverFillGrid(
+                            itemWidth: PosterCard.width,
+                            itemCount: _results.length,
+                            itemBuilder: (context, i) {
+                              final g = _results[i];
+                              return _ResultCard(key: ValueKey('${g.primary.serverId}/${g.primary.id}'), title: g);
+                            },
+                          ),
+                  ),
+                ],
               ),
             ),
           ],
