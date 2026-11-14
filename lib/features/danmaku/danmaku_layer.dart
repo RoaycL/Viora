@@ -1,7 +1,10 @@
+import 'dart:async';
+
 import 'package:flutter/foundation.dart';
 import 'package:flutter/scheduler.dart';
 import 'package:flutter/widgets.dart';
 
+import '../../app/platform_profile.dart';
 import '../../data/config/app_config.dart';
 import '../../data/danmaku/danmaku_models.dart';
 import '../../player/engine.dart';
@@ -30,6 +33,14 @@ class DanmakuLayer extends StatefulWidget {
   /// 顶部 / 底部固定弹幕停留的秒数
   static const fixedSeconds = 4.0;
 
+  /// 电视上弹幕每秒画 30 次（Windows 跟随屏幕刷新率）：安卓上界面每出一帧都要和原生视频画面合成一次，
+  /// 弱芯片上 60 帧的弹幕会和视频解码抢资源；位置按真实时间算，30 帧下移动速度不变
+  static const tvFrameInterval = Duration(milliseconds: 33);
+
+  /// 测试用：电视定时器模式的计时器（测试环境的假时钟不影响 [Stopwatch]）
+  @visibleForTesting
+  static Stopwatch Function() stopwatchFactory = Stopwatch.new;
+
   @override
   DanmakuLayerState createState() => DanmakuLayerState();
 }
@@ -57,6 +68,27 @@ class _Live {
 class DanmakuLayerState extends State<DanmakuLayer> with SingleTickerProviderStateMixin {
   late final Ticker _ticker = createTicker(_tick);
   final _repaint = _Repaint();
+
+  /// 电视：用定时器代替 Ticker（Ticker 每个屏幕刷新都会要一帧，即使这一帧什么都没变）
+  final bool _timed = PlatformProfile.isTv;
+  Timer? _timer;
+
+  bool get _running => _timed ? _timer != null : _ticker.isActive;
+
+  void _startClock() {
+    if (_timed) {
+      final clock = DanmakuLayer.stopwatchFactory()..start();
+      _timer = Timer.periodic(DanmakuLayer.tvFrameInterval, (_) => _tick(clock.elapsed));
+    } else {
+      _ticker.start();
+    }
+  }
+
+  void _stopClock() {
+    _timer?.cancel();
+    _timer = null;
+    if (_ticker.isActive) _ticker.stop();
+  }
 
   /// 帧时钟（Ticker 启动以来的时间）：和画面刷新同步
   Duration _elapsed = Duration.zero;
@@ -143,15 +175,15 @@ class DanmakuLayerState extends State<DanmakuLayer> with SingleTickerProviderSta
 
   void _syncTicker() {
     final want = widget.comments.isNotEmpty;
-    if (want && !_ticker.isActive) {
+    if (want && !_running) {
       // Ticker 重新从 0 计时：以当前位置为锚点重新开始
       _anchorPos = _moving ? _anchorPos + (_elapsed - _anchorAt).inMicroseconds / 1e6 * _rate : _anchorPos;
       _elapsed = _anchorAt = Duration.zero;
       _reset = true;
-      _ticker.start();
+      _startClock();
     }
-    if (!want && _ticker.isActive) {
-      _ticker.stop();
+    if (!want && _running) {
+      _stopClock();
       _clear();
       _repaint.tick();
     }
@@ -160,6 +192,7 @@ class DanmakuLayerState extends State<DanmakuLayer> with SingleTickerProviderSta
   @override
   void dispose() {
     widget.state.removeListener(_onState);
+    _stopClock();
     _ticker.dispose();
     _clear();
     _repaint.dispose();

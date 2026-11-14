@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 
 import 'package:dio/dio.dart';
+import 'package:flutter/foundation.dart';
 
 import '../config/app_config.dart';
 import 'danmaku_models.dart';
@@ -140,30 +141,38 @@ class DanmakuClient {
     final key = '$server#$episodeId';
     var raw = _commentCache[key];
     if (raw == null) {
-      final j = await _get(
+      final r = await _dio.get<String>(
         '$server/api/v2/comment/$episodeId',
-        query: {'withRelated': 'true', 'chConvert': '0', 'format': 'json'},
+        queryParameters: {'withRelated': 'true', 'chConvert': '0', 'format': 'json'},
       );
-      raw = parseComments(j);
+      // 一集热门剧的弹幕有一两万条、几 MB：JSON 解析放到后台线程，不卡界面（低配电视起播后几秒遥控器没反应）
+      final parsed = await compute(_parseBody, r.data);
+      raw = parsed;
       // 服务器偶尔抓取源站失败返回 0 条：不缓存，下次重新取
-      if (raw.isNotEmpty) {
+      if (parsed.isNotEmpty) {
         _commentCache.remove(key);
-        _commentCache[key] = raw;
+        _commentCache[key] = parsed;
         while (_commentCache.length > 4) {
           _commentCache.remove(_commentCache.keys.first);
         }
       }
     }
-    final comments = processComments(
+    // 繁简转换、屏蔽词、数量上限同样在后台线程做
+    final comments = await compute(_process, (
       raw,
-      convert: config.convert,
-      blockWords: splitKeywords(config.blockWords),
-      maxCount: config.maxCount,
-      colorMode: config.colorMode,
-    );
+      config.convert,
+      splitKeywords(config.blockWords),
+      config.maxCount,
+      config.colorMode,
+    ));
     return DanmakuTrack(comments: comments, source: source, server: server, episodeId: episodeId);
   }
 }
+
+List<DanmakuComment> _parseBody(String? body) => parseComments(DanmakuClient._decode(body));
+
+List<DanmakuComment> _process((List<DanmakuComment>, DanmakuConvert, List<String>, int, DanmakuColorMode) a) =>
+    processComments(a.$1, convert: a.$2, blockWords: a.$3, maxCount: a.$4, colorMode: a.$5);
 
 class DanmakuException implements Exception {
   const DanmakuException(this.message);

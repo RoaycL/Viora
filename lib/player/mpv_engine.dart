@@ -5,11 +5,15 @@ import 'package:flutter/material.dart';
 import 'package:media_kit/media_kit.dart';
 import 'package:media_kit_video/media_kit_video.dart';
 
+import '../app/platform_profile.dart';
 import 'engine.dart';
 import 'playback_cache.dart';
 
 /// mpv 内核（media_kit）。Windows 默认；Android 作为 ExoPlayer 的备用。
 class MpvEngine extends PlayerEngine {
+  /// 电视上 mpv 缓冲的上限（字节）
+  static const tvBufferLimit = 96 * 1024 * 1024;
+
   MpvEngine({this.options = const EngineOptions()}) {
     final s = _player.stream;
     _subs.addAll([
@@ -136,11 +140,14 @@ class MpvEngine extends PlayerEngine {
       await set('user-agent', media.userAgent);
       await set('network-timeout', '20');
       // 预读缓冲上限（设置 → 播放 → 播放缓冲上限）；超过内存上限时写到磁盘缓存，关闭播放器后清除
-      final buffer = options.bufferBytes;
+      // 电视（ExoPlayer 放不了的格式才会用到 mpv，多是高码率原盘）：缓冲全在内存里，封顶 96MB、回看 16MB，
+      // 不然 2GB 的盒子上 256MB + 64MB 足以把内存吃满被系统杀掉
+      final tv = PlatformProfile.isTv;
+      final buffer = tv ? options.bufferBytes.clamp(0, tvBufferLimit) : options.bufferBytes;
       final onDisk = buffer > PlaybackCache.memoryLimitBytes && options.cacheDir != null;
       await set('cache', 'yes');
       await set('demuxer-max-bytes', '$buffer');
-      await set('demuxer-max-back-bytes', '${(buffer ~/ 4).clamp(16 << 20, 128 << 20)}');
+      await set('demuxer-max-back-bytes', '${tv ? 16 << 20 : (buffer ~/ 4).clamp(16 << 20, 128 << 20)}');
       if (onDisk) await set('cache-dir', options.cacheDir!);
       await set('cache-on-disk', onDisk ? 'yes' : 'no');
     }

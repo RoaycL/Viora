@@ -110,7 +110,11 @@ class EmbyClient {
 
   RequestComposer get composer => composerFor(line);
 
-  Dio _dio() => Dio(
+  /// 接口请求共用一个连接池（按主机复用连接）：每个请求新建客户端的话，HTTPS / 反向代理下每次都要重新握手，
+  /// 详情页同时向多台服务器取播放信息时尤其慢。测速（[probe]）仍用新连接，延迟才准
+  static final Dio _shared = _dio();
+
+  static Dio _dio() => Dio(
     BaseOptions(
       connectTimeout: _timeout,
       receiveTimeout: _timeout,
@@ -150,7 +154,8 @@ class EmbyClient {
   }
 
   /// 并发测速全部线路，更新延迟，并把自动选线指向最快的一条。
-  Future<ServerConfig> probeAll() async {
+  /// [notify] 为 false 时不回调 [onServerChanged]（调用方把多台服务器的结果合并成一次保存）
+  Future<ServerConfig> probeAll({bool notify = true}) async {
     final results = await Future.wait(_server.lines.map(probe));
     final lines = [
       for (var i = 0; i < _server.lines.length; i++)
@@ -159,7 +164,7 @@ class EmbyClient {
     _server = _server.copyWith(lines: lines);
     final best = lines.where((l) => l.latencyMs != null).toList()..sort((a, b) => a.latencyMs!.compareTo(b.latencyMs!));
     if (best.isNotEmpty) _autoLine[_server.id] = best.first.id;
-    onServerChanged?.call(_server);
+    if (notify) onServerChanged?.call(_server);
     return _server;
   }
 
@@ -195,7 +200,7 @@ class EmbyClient {
     final r = await LoadTrace.request(
       'media_api',
       _metricsId,
-      () => _dio().postUri<dynamic>(
+      () => _shared.postUri<dynamic>(
         url,
         data: {'Username': _server.username, 'Pw': password},
         options: Options(headers: headers, contentType: Headers.jsonContentType),
@@ -241,7 +246,7 @@ class EmbyClient {
         final r = await LoadTrace.request(
           'media_api',
           _metricsId,
-          () => _dio().requestUri<dynamic>(
+          () => _shared.requestUri<dynamic>(
             url,
             data: body,
             options: Options(method: method, headers: c.headers(RequestKind.api), contentType: Headers.jsonContentType),

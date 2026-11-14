@@ -255,7 +255,7 @@ class PlaybackConfig {
   final int warmMb;
 
   /// 播放时的预读缓冲上限（MB）。Windows 超过 256MB 时缓存写到磁盘；
-  /// Android TV 受内存限制，实际最多使用可用内存的 40%
+  /// Android TV 受内存限制，实际最多使用应用可用内存的 25%、预读 10 分钟
   final int bufferMb;
 
   /// 关闭播放器后清除播放缓存（磁盘缓存文件与预加载的数据）

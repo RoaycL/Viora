@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -19,6 +20,7 @@ import '../../data/danmaku/danmaku_client.dart';
 import '../../data/danmaku/danmaku_models.dart';
 import '../../data/emby/emby_client.dart';
 import '../../data/history/play_history.dart';
+import '../../data/index/index_sync.dart';
 import '../../data/index/media_index.dart';
 import '../../data/media/media_models.dart';
 import '../../data/media/server_registry.dart';
@@ -164,9 +166,16 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
     });
     _start();
     _focus.addListener(_keepFocus);
+    // 电视：播放时暂停后台索引同步，不和播放抢带宽和 CPU
+    if (PlatformProfile.isTv) {
+      _holdsIndexSync = true;
+      IndexSyncGate.hold();
+    }
     // Windows 关闭到托盘时暂停（窗口看不见了，不在后台继续放）
     DesktopTray.instance.hiddenToTray.addListener(_onHiddenToTray);
   }
+
+  bool _holdsIndexSync = false;
 
   void _onHiddenToTray() {
     if (DesktopTray.instance.hiddenToTray.value && _state.playing) _engine?.pause();
@@ -356,8 +365,9 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
     final client = _client, source = _source;
     if (client == null || source == null || _stopped) return;
     final pos = _state.position;
-    // 本机也记一份上次播放时间（部分服务器的继续观看不带 LastPlayedDate）
-    PlayHistory.record(widget.serverId, widget.itemId, scope: accountScope(client.server));
+    // 本机也记一份上次播放时间（部分服务器的继续观看不带 LastPlayedDate）。只在开始和停止时记：
+    // 每次进度上报（10 秒一次）都记的话，安卓上每次都要把整个设置文件重写到闪存，低端盒子会卡一下
+    if (start) PlayHistory.record(widget.serverId, widget.itemId, scope: accountScope(client.server));
     if (start) {
       client.reportStart(source, pos, _playSessionId);
     } else {
@@ -370,6 +380,7 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
     _stopped = true;
     final client = _client, source = _source;
     if (client != null && source != null && _started) {
+      PlayHistory.record(widget.serverId, widget.itemId, scope: accountScope(client.server));
       // 页面销毁时不能再用 ref（Riverpod 会抛错并打断后续的关闭播放器），用提前保存的容器；
       // 等服务器记下进度后再刷新继续观看 / 详情
       final container = _container;
@@ -794,6 +805,7 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
   @override
   void dispose() {
     DesktopTray.instance.hiddenToTray.removeListener(_onHiddenToTray);
+    if (_holdsIndexSync) IndexSyncGate.release();
     // 最先关闭播放器：后面任何一步出错都不能让视频在后台继续播放
     final engine = _engine;
     _engine?.state.removeListener(_onEngineState);
@@ -1426,9 +1438,12 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
                           : null,
                     ),
                   if (engine != null)
-                    ValueListenableBuilder<EngineState>(
-                      valueListenable: engine.state,
-                      builder: (context, s, _) => mini
+                    // 控制层隐藏时不跟着进度（每秒 4 次）重建：看片时界面基本不出帧，
+                    // 安卓上每一帧都要和原生视频画面合成一次，弱芯片上会和解码抢资源
+                    EngineStateBuilder(
+                      state: engine.state,
+                      live: mini || _osd || _info || _pendingSeek != null,
+                      builder: (context, s) => mini
                           ? MiniPlayerOverlay(
                               state: s,
                               title: _title,
@@ -1553,6 +1568,51 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
       ),
     );
   }
+}
+
+/// 跟随播放状态重建。[live] 为 false（控制层隐藏）时只在缓冲状态变化时重建，进度变化不重建；
+/// 上层重建（显示控制层等）时总是拿最新状态
+class EngineStateBuilder extends StatefulWidget {
+  const EngineStateBuilder({super.key, required this.state, required this.live, required this.builder});
+
+  final ValueListenable<EngineState> state;
+  final bool live;
+  final Widget Function(BuildContext context, EngineState state) builder;
+
+  @override
+  State<EngineStateBuilder> createState() => _EngineStateBuilderState();
+}
+
+class _EngineStateBuilderState extends State<EngineStateBuilder> {
+  late EngineState _built = widget.state.value;
+
+  @override
+  void initState() {
+    super.initState();
+    widget.state.addListener(_onState);
+  }
+
+  @override
+  void didUpdateWidget(EngineStateBuilder oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (!identical(oldWidget.state, widget.state)) {
+      oldWidget.state.removeListener(_onState);
+      widget.state.addListener(_onState);
+    }
+  }
+
+  @override
+  void dispose() {
+    widget.state.removeListener(_onState);
+    super.dispose();
+  }
+
+  void _onState() {
+    if (widget.live || widget.state.value.buffering != _built.buffering) setState(() {});
+  }
+
+  @override
+  Widget build(BuildContext context) => widget.builder(context, _built = widget.state.value);
 }
 
 /// 媒体信息叠加层（I 键 / 菜单 → 媒体信息）

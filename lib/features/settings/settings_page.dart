@@ -371,7 +371,7 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
           const SizedBox(height: 20),
           VChoice<int>(
             label: PlatformProfile.isTv
-                ? '播放缓冲上限（边播边预读的最大数据量；电视内存有限，实际最多使用可用内存的 40%）'
+                ? '播放缓冲上限（边播边预读的最大数据量；电视内存有限，实际最多使用应用可用内存的 25%、预读 10 分钟）'
                 : '播放缓冲上限（边播边预读的最大数据量；超过 256 MB 时写入磁盘缓存，不占内存）',
             options: [for (final mb in PlaybackConfig.bufferChoices) (mb, mb >= 1024 ? '${mb ~/ 1024} GB' : '$mb MB')],
             value: config.playback.bufferMb,

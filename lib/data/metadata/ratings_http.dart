@@ -24,8 +24,24 @@ Uri ratingEndpoint(Uri base, String path, [Map<String, String> query = const {}]
 
 /// The complete request has an 8-second deadline and a bounded response body.
 /// Never follow redirects with credentials, or expose URLs/headers in errors.
+///
+/// 请求成功时连接留在池里复用（详情页的几个评分源、连续翻看多部作品时不用每次重新握手）；
+/// 失败 / 超时的请求可能留下没读完的响应：这个客户端不再给新请求用，等它上面其他进行中的请求结束后强制关闭。
+class _RatingClient {
+  final http = HttpClient()
+    ..connectionTimeout = const Duration(seconds: 8)
+    ..idleTimeout = const Duration(seconds: 30);
+  int inFlight = 0;
+  bool tainted = false;
+}
+
+_RatingClient? _ratingClient;
+
 Future<Object?> fetchRatingJson(Uri uri, Map<String, String> headers) async {
-  final client = HttpClient()..connectionTimeout = const Duration(seconds: 8);
+  final pooled = _ratingClient ??= _RatingClient();
+  final client = pooled.http;
+  pooled.inFlight++;
+  var reusable = false;
   Future<Object?> request() async {
     final req = await client.getUrl(uri);
     req.followRedirects = false;
@@ -33,7 +49,11 @@ Future<Object?> fetchRatingJson(Uri uri, Map<String, String> headers) async {
     req.headers.set(HttpHeaders.userAgentHeader, 'Viora (external ratings)');
     headers.forEach(req.headers.set);
     final response = await req.close();
-    if (response.statusCode == 404 || response.statusCode == 204) return null;
+    if (response.statusCode == 404 || response.statusCode == 204) {
+      await response.drain<void>();
+      reusable = true;
+      return null;
+    }
     if (response.statusCode == 429) {
       final raw = response.headers.value('retry-after');
       final seconds = int.tryParse(raw ?? '');
@@ -54,6 +74,7 @@ Future<Object?> fetchRatingJson(Uri uri, Map<String, String> headers) async {
       if (bytes.length + chunk.length > 1024 * 1024) throw const RatingsException('评分响应过大');
       bytes.addAll(chunk);
     }
+    reusable = true;
     return jsonDecode(utf8.decode(bytes));
   }
 
@@ -66,7 +87,12 @@ Future<Object?> fetchRatingJson(Uri uri, Map<String, String> headers) async {
   } on Object {
     throw const RatingsException('评分请求失败，请检查网络或 API 地址');
   } finally {
-    client.close(force: true);
+    pooled.inFlight--;
+    if (!reusable) {
+      pooled.tainted = true;
+      if (identical(_ratingClient, pooled)) _ratingClient = null;
+    }
+    if (pooled.tainted && pooled.inFlight == 0) client.close(force: true);
   }
 }
 

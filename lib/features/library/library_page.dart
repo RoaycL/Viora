@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
+import '../../app/platform_profile.dart';
 import '../../app/theme.dart';
 import '../../data/config/app_config.dart';
 import '../../data/config/config_store.dart';
@@ -304,17 +305,32 @@ class _ServerCard extends ConsumerWidget {
             Positioned(
               right: -66,
               top: -64,
-              child: Opacity(
-                opacity: 0.35,
-                child: ImageFiltered(
-                  imageFilter: ui.ImageFilter.blur(sigmaX: 50, sigmaY: 50),
-                  child: Container(
-                    width: 180,
-                    height: 180,
-                    decoration: BoxDecoration(shape: BoxShape.circle, gradient: icon),
-                  ),
-                ),
-              ),
+              // 电视：实时模糊是弱 GPU 上最贵的操作，用径向渐变画出差不多的光晕
+              child: PlatformProfile.isTv
+                  ? Transform.translate(
+                      offset: const Offset(60, -60),
+                      child: Container(
+                        width: 300,
+                        height: 300,
+                        decoration: BoxDecoration(
+                          shape: BoxShape.circle,
+                          gradient: RadialGradient(
+                            colors: [icon.colors.last.withValues(alpha: 0.3), icon.colors.last.withValues(alpha: 0)],
+                          ),
+                        ),
+                      ),
+                    )
+                  : Opacity(
+                      opacity: 0.35,
+                      child: ImageFiltered(
+                        imageFilter: ui.ImageFilter.blur(sigmaX: 50, sigmaY: 50),
+                        child: Container(
+                          width: 180,
+                          height: 180,
+                          decoration: BoxDecoration(shape: BoxShape.circle, gradient: icon),
+                        ),
+                      ),
+                    ),
             ),
             Column(
               crossAxisAlignment: CrossAxisAlignment.start,

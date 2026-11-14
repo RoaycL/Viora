@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -56,6 +58,30 @@ class SyncStatus {
 /// 索引同步（docs/04-aggregation.md §2）：
 /// 添加服务器 / 超过 30 天 → 全量；平时启动 → 按 MinDateLastSaved 增量。
 /// 服务器关掉「本地索引」时跳过（索引在绑定账号时已删除）。
+/// 电视播放视频时暂停索引同步（不和播放抢带宽、CPU），退出播放后从停下的那一页继续。
+/// 播放页进入时 [hold]、退出时 [release]；连播下一集时新旧两个播放页短暂重叠，所以计数
+abstract final class IndexSyncGate {
+  static int _holds = 0;
+  static Completer<void>? _resumed;
+
+  static bool get held => _holds > 0;
+
+  static void hold() {
+    if (_holds++ == 0) _resumed = Completer<void>();
+  }
+
+  static void release() {
+    if (_holds == 0) return;
+    if (--_holds == 0) {
+      _resumed?.complete();
+      _resumed = null;
+    }
+  }
+
+  /// 没有暂停时立即返回
+  static Future<void> wait() => _resumed?.future ?? Future<void>.value();
+}
+
 class IndexSyncController extends Notifier<Map<String, SyncStatus>> {
   final _runningScopes = <String, String>{};
   bool _active = true;
@@ -125,6 +151,11 @@ class IndexSyncController extends Notifier<Map<String, SyncStatus>> {
       int? total;
       final seen = <String>{};
       while (true) {
+        if (IndexSyncGate.held) {
+          AppLog.add('[index] ${client.server.name} 播放中，同步暂停在第 $start 条');
+          await IndexSyncGate.wait();
+          if (!current()) return;
+        }
         final PagedItems page;
         final limit = _pageSizes[serverId] ?? _pageSize;
         try {
