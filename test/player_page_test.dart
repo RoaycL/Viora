@@ -42,6 +42,11 @@ class FakeEngine extends PlayerEngine {
     playing: true,
     buffering: false,
   );
+
+  /// 内核报的下载状态
+  void report({int? speed, Duration? buffered}) =>
+      _state.value = _state.value.copyWith(speed: speed, buffered: buffered);
+
   @override
   Future<void> play() async => _state.value = _state.value.copyWith(playing: true);
   @override
@@ -61,7 +66,11 @@ class FakeEngine extends PlayerEngine {
   @override
   Future<void> addExternalSubtitle(Uri url, {String? title, String? language}) async {}
   @override
-  Widget buildView() => const ColoredBox(color: Colors.black);
+  // 和安卓上的原生视频画面（PlatformViewLink）一样：画面本身带一个铺满全屏、可以聚焦的节点
+  Widget buildView() => Focus(
+    debugLabel: 'video-view',
+    child: const ColoredBox(color: Colors.black),
+  );
   @override
   Future<void> dispose() async {
     await _completed.close();
@@ -357,5 +366,41 @@ void main() {
     state.value = state.value.copyWith(position: const Duration(seconds: 10));
     await tester.pump();
     expect(find.text('10'), findsOneWidget);
+  });
+
+  testWidgets('电视：底部每个按钮按 ↑ 都到顶部按钮，不会落到视频画面自带的焦点节点上', (tester) async {
+    await pumpPlayer(tester);
+    for (var rights = 0; rights < 5; rights++) {
+      await press(tester, LogicalKeyboardKey.arrowDown);
+      for (var i = 0; i < rights; i++) {
+        await press(tester, LogicalKeyboardKey.arrowRight);
+      }
+      expect(FocusManager.instance.primaryFocus!.rect.top, greaterThan(900));
+      await press(tester, LogicalKeyboardKey.arrowUp);
+      final top = FocusManager.instance.primaryFocus!;
+      expect(top.debugLabel, isNot('video-view'), reason: '第 ${rights + 1} 个按钮');
+      expect(top.rect.bottom, lessThan(200), reason: '第 ${rights + 1} 个按钮');
+      // 回到画面，下一轮重新从播放按钮开始
+      await press(tester, LogicalKeyboardKey.escape);
+    }
+    await unmountPlayer(tester);
+  });
+
+  testWidgets('右上角：时间在最右边，下载状态变长时时间和按钮的位置不变', (tester) async {
+    final h = await pumpPlayer(tester);
+    await press(tester, LogicalKeyboardKey.arrowDown);
+    Finder clock() => find.byKey(const ValueKey('osd-clock'));
+    h.engine.report(speed: 6400000);
+    await tester.pump();
+    final clockAt = tester.getTopLeft(clock());
+    final more = tester.getTopLeft(find.byIcon(Icons.more_horiz_rounded));
+    expect(clockAt.dx, greaterThan(more.dx), reason: '时间在按钮右边');
+    expect(find.text('6.1 MB/s'), findsOneWidget);
+    h.engine.report(speed: 0, buffered: const Duration(minutes: 12, seconds: 34));
+    await tester.pump();
+    expect(find.textContaining('已缓冲'), findsOneWidget);
+    expect(tester.getTopLeft(clock()), clockAt);
+    expect(tester.getTopLeft(find.byIcon(Icons.more_horiz_rounded)), more);
+    await unmountPlayer(tester);
   });
 }

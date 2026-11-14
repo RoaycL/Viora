@@ -1396,7 +1396,12 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
               builder: (context, mini, _) => Stack(
                 fit: StackFit.expand,
                 children: [
-                  if (engine != null) KeyedSubtree(key: ObjectKey(engine), child: engine.buildView()),
+                  // 画面不参与焦点：安卓上的原生视频画面自带一个铺满全屏、可聚焦的节点，
+                  // 从底部按钮按 ↑ 会落到它上面而不是顶部按钮，之后按键都到不了播放页
+                  if (engine != null)
+                    ExcludeFocus(
+                      child: KeyedSubtree(key: ObjectKey(engine), child: engine.buildView()),
+                    ),
                   if (engine != null && _danmaku != null && _danmakuVisible && _error == null && !mini)
                     DanmakuLayer(
                       comments: _danmaku!.comments,

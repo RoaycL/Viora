@@ -134,8 +134,11 @@ class PlayerOsd extends StatelessWidget {
                   ),
                 ),
                 const SizedBox(width: 24),
-                _Status(speed: state.speed, bufferedAhead: state.buffered - state.position),
-                const SizedBox(width: 24),
+                // 下载状态的长度一直在变（网速 / 已缓冲 x 分 x 秒）：放在按钮左边，变长变短只挤标题，不推动别的东西
+                if (downloadStatus(state.speed, state.buffered - state.position) case final status?) ...[
+                  Text(status, style: _statusStyle),
+                  const SizedBox(width: 24),
+                ],
                 // 右上角的按钮也按顺序左右移动，到两端停住（按位置找时最左边的「弹幕」按 ← 会跳到底部）
                 OrderedButtonRow(
                   mainAxisSize: MainAxisSize.min,
@@ -166,6 +169,9 @@ class PlayerOsd extends StatelessWidget {
                     OsdIconButton(icon: Icons.more_horiz_rounded, label: '更多', onPressed: onMore),
                   ],
                 ),
+                // 时间固定在最右边：位置不随下载状态变化
+                const SizedBox(width: 20),
+                const _Clock(),
               ],
             ),
           ),
@@ -256,7 +262,6 @@ String formatSpeed(int bytesPerSecond) {
   return '${(bytesPerSecond / 1024).round()} KB/s';
 }
 
-/// 右上角：时间 · 网速
 /// 右上角的下载状态。播放器是一阵一阵下载的：缓冲满了就停下、用掉一些再接着下，停下时速度就是 0
 /// （不是断网）。所以速度为 0 但前面还有缓冲时显示「已缓冲 x」，两样都没有时才显示 0
 String? downloadStatus(int? speed, Duration bufferedAhead) {
@@ -269,17 +274,22 @@ String? downloadStatus(int? speed, Duration bufferedAhead) {
   return formatSpeed(0);
 }
 
-class _Status extends StatefulWidget {
-  const _Status({required this.speed, required this.bufferedAhead});
+const _statusStyle = TextStyle(
+  fontSize: 22,
+  color: Color(0xD9FFFFFF),
+  fontFeatures: [FontFeature.tabularFigures()],
+  shadows: [Shadow(color: Color(0x99000000), blurRadius: 10)],
+);
 
-  final int? speed;
-  final Duration bufferedAhead;
+/// 右上角最右边的时间（时:分）
+class _Clock extends StatefulWidget {
+  const _Clock();
 
   @override
-  State<_Status> createState() => _StatusState();
+  State<_Clock> createState() => _ClockState();
 }
 
-class _StatusState extends State<_Status> {
+class _ClockState extends State<_Clock> {
   Timer? _timer;
 
   @override
@@ -297,15 +307,10 @@ class _StatusState extends State<_Status> {
   @override
   Widget build(BuildContext context) {
     final now = TimeOfDay.now();
-    final clock = '${now.hour.toString().padLeft(2, '0')}:${now.minute.toString().padLeft(2, '0')}';
     return Text(
-      [clock, ?downloadStatus(widget.speed, widget.bufferedAhead)].join('   '),
-      style: const TextStyle(
-        fontSize: 22,
-        color: Color(0xD9FFFFFF),
-        fontFeatures: [FontFeature.tabularFigures()],
-        shadows: [Shadow(color: Color(0x99000000), blurRadius: 10)],
-      ),
+      '${now.hour.toString().padLeft(2, '0')}:${now.minute.toString().padLeft(2, '0')}',
+      key: const ValueKey('osd-clock'),
+      style: _statusStyle,
     );
   }
 }
