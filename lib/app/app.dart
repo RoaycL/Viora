@@ -107,18 +107,14 @@ class _VioraAppState extends ConsumerState<VioraApp> with WidgetsBindingObserver
     // 上次异常退出时残留的播放缓存
     if (ref.read(configProvider).playback.clearCacheOnExit) PlaybackCache.clear();
     // WebDAV 同步：启动时同步一次，之后配置变化后自动同步（没填 WebDAV 时什么都不做）
-    _webdav = WebDavSync.instance = WebDavSync(ProviderScope.containerOf(context, listen: false));
+    final container = ProviderScope.containerOf(context, listen: false);
+    _webdav = WebDavSync.instance = WebDavSync(container);
     if (autoCheckUpdatesOnLaunch) _webdav!.start();
     if (autoCheckUpdatesOnLaunch) {
       // 稍后在后台：各服务器线路测速（选最快线路、更新在线状态），再同步聚合索引（docs/04-aggregation.md §2）
       Future<void>.delayed(const Duration(seconds: 1), () async {
-        await Future.wait(
-          ref.read(configProvider).servers.map((s) async {
-            try {
-              await ref.read(serverClientProvider(s.id))?.probeAll().timeout(const Duration(seconds: 10));
-            } catch (_) {}
-          }),
-        );
+        // 电视同时最多测 4 台，不和首页加载抢网络
+        await probeAllServers(container, concurrency: PlatformProfile.isTv ? 4 : 8);
         // 等首页加载完再在后台同步索引，不和首页抢服务器资源
         await Future<void>.delayed(const Duration(seconds: 8));
         await ref.read(indexSyncProvider.notifier).syncAll();

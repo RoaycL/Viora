@@ -154,7 +154,8 @@ class EmbyClient {
   }
 
   /// 并发测速全部线路，更新延迟，并把自动选线指向最快的一条。
-  Future<ServerConfig> probeAll() async {
+  /// [notify] 为 false 时不回调 [onServerChanged]（调用方把多台服务器的结果合并成一次保存）
+  Future<ServerConfig> probeAll({bool notify = true}) async {
     final results = await Future.wait(_server.lines.map(probe));
     final lines = [
       for (var i = 0; i < _server.lines.length; i++)
@@ -163,7 +164,7 @@ class EmbyClient {
     _server = _server.copyWith(lines: lines);
     final best = lines.where((l) => l.latencyMs != null).toList()..sort((a, b) => a.latencyMs!.compareTo(b.latencyMs!));
     if (best.isNotEmpty) _autoLine[_server.id] = best.first.id;
-    onServerChanged?.call(_server);
+    if (notify) onServerChanged?.call(_server);
     return _server;
   }
 

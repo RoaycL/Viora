@@ -47,6 +47,51 @@ final serverClientProvider = Provider.family<EmbyClient?, String>((ref, serverId
   );
 });
 
+/// 启动时给所有服务器测速：同时最多测 [concurrency] 台，全部测完后把延迟合并成一次配置保存。
+/// 每台测完各保存一次的话，十几台服务器就是首页加载期间十几次配置写入和界面刷新
+Future<void> probeAllServers(
+  ProviderContainer container, {
+  required int concurrency,
+  Duration timeout = const Duration(seconds: 10),
+}) async {
+  final read = container.read;
+  final pending = [...read(configProvider).servers];
+  final latency = <String, Map<String, int?>>{};
+  Future<void> worker() async {
+    while (pending.isNotEmpty) {
+      final s = pending.removeAt(0);
+      try {
+        final probed = await read(serverClientProvider(s.id))?.probeAll(notify: false).timeout(timeout);
+        if (probed != null) latency[s.id] = {for (final l in probed.lines) l.id: l.latencyMs};
+      } catch (_) {}
+    }
+  }
+
+  await Future.wait([for (var i = 0; i < concurrency; i++) worker()]);
+  if (latency.isEmpty) return;
+  await container
+      .read(configProvider.notifier)
+      .update(
+        (c) => c.copyWith(
+          servers: [
+            for (final s in c.allServers)
+              if (latency[s.id] case final probed?)
+                s.copyWith(
+                  lines: [
+                    for (final l in s.lines)
+                      // 测速期间新加的线路没有结果：保持原样
+                      probed.containsKey(l.id)
+                          ? l.copyWith(latencyMs: probed[l.id], clearLatency: probed[l.id] == null)
+                          : l,
+                  ],
+                )
+              else
+                s,
+          ],
+        ),
+      );
+}
+
 /// 为新服务器（还未保存）创建客户端，用于添加服务器时的连接测试与登录。
 EmbyClient clientForDraft(AppConfig config, ServerConfig server) =>
     EmbyClient(config: config, server: server, appVersion: appVersion);

@@ -365,8 +365,9 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
     final client = _client, source = _source;
     if (client == null || source == null || _stopped) return;
     final pos = _state.position;
-    // 本机也记一份上次播放时间（部分服务器的继续观看不带 LastPlayedDate）
-    PlayHistory.record(widget.serverId, widget.itemId, scope: accountScope(client.server));
+    // 本机也记一份上次播放时间（部分服务器的继续观看不带 LastPlayedDate）。只在开始和停止时记：
+    // 每次进度上报（10 秒一次）都记的话，安卓上每次都要把整个设置文件重写到闪存，低端盒子会卡一下
+    if (start) PlayHistory.record(widget.serverId, widget.itemId, scope: accountScope(client.server));
     if (start) {
       client.reportStart(source, pos, _playSessionId);
     } else {
@@ -379,6 +380,7 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
     _stopped = true;
     final client = _client, source = _source;
     if (client != null && source != null && _started) {
+      PlayHistory.record(widget.serverId, widget.itemId, scope: accountScope(client.server));
       // 页面销毁时不能再用 ref（Riverpod 会抛错并打断后续的关闭播放器），用提前保存的容器；
       // 等服务器记下进度后再刷新继续观看 / 详情
       final container = _container;
