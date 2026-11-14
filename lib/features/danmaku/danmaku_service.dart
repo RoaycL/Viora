@@ -129,14 +129,22 @@ Future<DanmakuTrack?> resolveDanmaku(DanmakuClient client, DanmakuTarget t, {Dan
   }
   if (t.title.trim().isEmpty) return null;
   final m = await client.match(t.fileName);
-  if (m != null) {
+  if (m != null && matchFits(m.animeTitle, t.title, season: t.season)) {
     final track = await client.load(m.server, m.episodeId, source: _source(m.animeTitle, m.episodeTitle));
+    debugPrint('danmaku: ${t.fileName} → 自动匹配 ${track.source}（${track.comments.length} 条）');
     if (track.comments.isNotEmpty) return track;
+  } else if (m != null) {
+    debugPrint('danmaku: ${t.fileName} → 自动匹配到的「${m.animeTitle} ${m.episodeTitle}」不是这部剧 / 这一季，改为搜索');
   }
   final animes = await client.search(t.title, season: t.season, movie: t.movie);
-  final best = animes.where((a) => _baseTitle(a.title).startsWith(t.title)).firstOrNull;
-  if (best == null) return null;
-  return loadEpisodeOf(client, best, t);
+  final best = pickAnime(animes, t.title, season: t.season, movie: t.movie);
+  if (best == null) {
+    debugPrint('danmaku: ${t.fileName} → 搜索没有对得上的作品（${animes.length} 个结果）');
+    return null;
+  }
+  final track = await loadEpisodeOf(client, best, t);
+  debugPrint('danmaku: ${t.fileName} → 搜索 ${track?.source ?? '${best.title} 没有这一集'}');
+  return track;
 }
 
 /// 选定作品后，按本地集数（加偏移）取对应的一集；电影取第一个
@@ -146,7 +154,5 @@ Future<DanmakuTrack?> loadEpisodeOf(DanmakuClient client, DanmakuAnime anime, Da
   if (ep == null) return null;
   return client.load(anime.server, ep.episodeId, source: _source(anime.title, ep.title));
 }
-
-String _baseTitle(String s) => s.split(RegExp(r'[(（【]')).first.trim();
 
 String _source(String anime, String episode) => [anime, episode].where((s) => s.trim().isNotEmpty).join(' · ');

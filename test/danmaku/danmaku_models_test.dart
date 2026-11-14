@@ -108,6 +108,46 @@ void main() {
       expect(pickEpisode(eps, 0), isNull);
     });
 
+    test('集标题里的集数（服务器没给 episodeNumber 时）', () {
+      expect(episodeNumberIn('第10集'), 10);
+      expect(episodeNumberIn('【qq】 第 3 话 重逢'), 3);
+      expect(episodeNumberIn('EP07'), 7);
+      expect(episodeNumberIn('e12 结局'), 12);
+      expect(episodeNumberIn('12'), 12);
+      expect(episodeNumberIn('凡人修仙传(2025)'), isNull);
+      expect(episodeNumberIn('预告片'), isNull);
+      final ep = DanmakuEpisode.fromJson('s', {'episodeId': 1, 'episodeTitle': '第10集', 'episodeNumber': ''});
+      expect(ep.number, 10);
+      // 服务器给的集数优先
+      expect(DanmakuEpisode.fromJson('s', {'episodeId': 1, 'episodeTitle': '第10集', 'episodeNumber': '3'}).number, 3);
+    });
+
+    test('搜索结果只选这部剧本身，不选名字以它开头的别的作品', () {
+      DanmakuAnime a(int id, String title, [String type = '电视剧']) =>
+          DanmakuAnime(server: 's', animeId: id, title: title, type: type);
+      // 以前取第一个「以剧名开头」的：会选到续作
+      expect(pickAnime([a(1, '斗罗大陆2绝世唐门(2023)'), a(2, '斗罗大陆(2018)')], '斗罗大陆', season: 1)?.animeId, 2);
+      expect(pickAnime([a(1, '斗罗大陆2绝世唐门(2023)')], '斗罗大陆', season: 1), isNull);
+      // 第二季：排序后明确是第二季的在前
+      final ranked = rankAnimes([a(1, '庆余年(2019)'), a(2, '庆余年 第二季(2024)')], '庆余年', season: 2);
+      expect(pickAnime(ranked, '庆余年', season: 2)?.animeId, 2);
+      // 只有同名作品（多季连续编号）时仍然用它
+      expect(pickAnime([a(1, '凡人修仙传(2020)')], '凡人修仙传', season: 2)?.animeId, 1);
+      expect(pickAnime([a(1, '沙丘 2(2024)', '电影')], '沙丘', movie: true), isNull);
+    });
+
+    test('自动匹配结果是不是这部剧这一季', () {
+      expect(matchFits('凡人修仙传(2025)【国产剧】', '凡人修仙传', season: 1), isTrue);
+      expect(matchFits('完全不相关的剧', '凡人修仙传', season: 1), isFalse);
+      expect(matchFits('庆余年 第二季(2024)', '庆余年', season: 1), isFalse);
+      expect(matchFits('庆余年 第二季(2024)', '庆余年', season: 2), isTrue);
+      expect(matchFits('庆余年(2019)', '庆余年', season: 2), isTrue); // 多季连续编号：服务器自己换算过
+      expect(matchFits('庆余年 解说版', '庆余年', season: 2), isTrue); // 看不出季数：交给服务器
+      expect(seasonOfTitle('庆余年2', '庆余年'), 2);
+      expect(seasonOfTitle('庆余年 第三季', '庆余年'), 3);
+      expect(seasonOfTitle('鬼灭之刃 S4', '鬼灭之刃'), 4);
+    });
+
     test('自动匹配用的文件名', () {
       const t = DanmakuTarget(title: '凡人修仙传', key: 'k', season: 1, episode: 2);
       expect(t.fileName, '凡人修仙传 S01E02');

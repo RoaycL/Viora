@@ -59,7 +59,11 @@ class DanmakuEpisode {
     server: server,
     episodeId: _int(j['episodeId']) ?? 0,
     title: j['episodeTitle'] as String? ?? '',
-    number: _int(j['episodeNumber']),
+    // 有的弹幕服务器不给 episodeNumber（或给 0）：从标题「第10集」「EP10」里取
+    number: switch (_int(j['episodeNumber'])) {
+      final n? when n > 0 => n,
+      _ => episodeNumberIn(j['episodeTitle'] as String? ?? ''),
+    },
   );
 }
 
@@ -236,6 +240,55 @@ bool matchSeason(String animeTitle, String query, int season) {
   if (n != null && int.parse(n[0]!) == season) return true;
   final zh = RegExp('[零一二两三四五六七八九十壹贰貳叁參肆伍陆陸柒捌玖拾]+').firstMatch(after);
   return zh != null && convertChineseNumber(zh[0]!) == season;
+}
+
+/// 集标题里的集数：「第10集」「第 10 话」「EP10」「E10」「10」；认不出返回 null（年份等数字不算）
+int? episodeNumberIn(String title) {
+  final t = title.trim();
+  final m =
+      RegExp(r'第\s*(\d+)\s*[集话話期回]').firstMatch(t) ??
+      RegExp(r'(?:^|[^A-Za-z])EP?\s*(\d{1,4})(?!\d)', caseSensitive: false).firstMatch(t) ??
+      RegExp(r'^(\d{1,4})$').firstMatch(t);
+  final n = m == null ? null : int.tryParse(m[1]!);
+  return n != null && n > 0 ? n : null;
+}
+
+/// 作品标题（去掉括号里的年份、来源）在关键词之后是第几季：「庆余年」→ 1，「庆余年 第二季」「庆余年2」→ 2；
+/// 标题不以关键词开头，或后面的内容看不出季数（如「解说版」）时返回 null
+int? seasonOfTitle(String animeTitle, String query) {
+  final title = animeTitle.split(RegExp(r'[(（【]')).first.trim();
+  if (!title.startsWith(query)) return null;
+  final after = title.substring(query.length).trim();
+  if (after.isEmpty) return 1;
+  final n = RegExp(r'^(?:第\s*)?(\d+)\s*[季部]?$|^S(\d+)$', caseSensitive: false).firstMatch(after);
+  if (n != null) return int.parse(n[1] ?? n[2]!);
+  final zh = RegExp('^第?([零一二两三四五六七八九十壹贰貳叁參肆伍陆陸柒捌玖拾]+)[季部]\$').firstMatch(after);
+  return zh == null ? null : convertChineseNumber(zh[1]!);
+}
+
+/// 从排好序的搜索结果里选作品：只要标题就是这部剧（或明确是这一季）的，
+/// 不拿名字以它开头的别的作品凑数（「斗罗大陆」不会选到「斗罗大陆2绝世唐门」，看第二季不会选到第一季）
+DanmakuAnime? pickAnime(List<DanmakuAnime> ranked, String query, {int? season, bool movie = false}) {
+  for (final a in ranked) {
+    final title = a.title.split(RegExp(r'[(（【]')).first.trim();
+    if (title == query) {
+      // 第二季以后：有明确是那一季的结果时 rankAnimes 已经排在前面；只有同名作品时才用它（多季连续编号）
+      return a;
+    }
+    if (movie) continue;
+    if (season != null && matchSeason(a.title, query, season)) return a;
+  }
+  return null;
+}
+
+/// 自动匹配的结果是不是要找的这部剧这一季：作品名对不上，或者标题写明了是另一季，就不用
+bool matchFits(String animeTitle, String query, {int? season}) {
+  final title = animeTitle.split(RegExp(r'[(（【]')).first.trim();
+  if (title.isEmpty || query.isEmpty) return true;
+  if (!title.contains(query) && !query.contains(title)) return false;
+  if (season == null) return true;
+  final s = seasonOfTitle(animeTitle, query);
+  return s == null || s == season || (s == 1 && title == query);
 }
 
 /// 搜索结果排序：要找的那一季排前面；屏蔽词命中的去掉
