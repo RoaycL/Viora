@@ -41,6 +41,7 @@ class ExoController(
     bufferBytes: Long,
     private val emit: (Map<String, Any?>) -> Unit,
     private val onVideoFrameRate: (Float) -> Unit,
+    private val onPlayingChanged: () -> Unit,
 ) {
     private val handler = Handler(Looper.getMainLooper())
     private val trackSelector = DefaultTrackSelector(context)
@@ -239,6 +240,7 @@ class ExoController(
 
         override fun onIsPlayingChanged(isPlaying: Boolean) {
             emit(mapOf("event" to "playing", "playing" to isPlaying))
+            onPlayingChanged()
         }
 
         override fun onPlaybackParametersChanged(params: PlaybackParameters) {

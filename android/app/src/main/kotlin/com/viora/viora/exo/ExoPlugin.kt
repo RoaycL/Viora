@@ -9,6 +9,7 @@ import android.os.Build
 import android.view.Display
 import android.view.View
 import android.view.ViewGroup
+import android.view.WindowManager
 import androidx.annotation.OptIn
 import androidx.media3.common.C
 import androidx.media3.common.util.UnstableApi
@@ -61,6 +62,7 @@ class ExoPlugin(private val activity: Activity, engine: FlutterEngine) {
                             bufferBytes = bufferBytes,
                             emit = { e -> sink?.success(e + ("id" to newId)) },
                             onVideoFrameRate = { fps -> if (frameRateSwitch) switchDisplayMode(fps) },
+                            onPlayingChanged = ::updateKeepScreenOn,
                         )
                         result.success(newId)
                     }
@@ -92,6 +94,7 @@ class ExoPlugin(private val activity: Activity, engine: FlutterEngine) {
                     "dispose" -> {
                         p?.release()
                         players.remove(id)
+                        updateKeepScreenOn()
                         if (players.isEmpty()) restoreDisplayMode()
                         result.success(null)
                     }
@@ -107,7 +110,25 @@ class ExoPlugin(private val activity: Activity, engine: FlutterEngine) {
     fun releaseAll() {
         players.values.forEach { it.release() }
         players.clear()
+        updateKeepScreenOn()
         restoreDisplayMode()
+    }
+
+    // ───────────────────────── 屏幕常亮 ─────────────────────────
+
+    /**
+     * 播放中保持屏幕常亮，暂停 / 退出播放后恢复。ExoPlayer 和 PlayerView 都不会自己做这件事：
+     * 不设的话长时间不按遥控器，电视会进屏保或休眠，应用被切到后台，内存紧张时被系统杀掉（看起来像闪退）
+     */
+    private fun updateKeepScreenOn() {
+        val playing = players.values.any { it.player.isPlaying }
+        activity.runOnUiThread {
+            if (playing) {
+                activity.window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+            } else {
+                activity.window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+            }
+        }
     }
 
     // ───────────────────────── 自动帧率（切换显示模式） ─────────────────────────

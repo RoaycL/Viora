@@ -1,5 +1,6 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:media_kit/media_kit.dart';
 import 'package:package_info_plus/package_info_plus.dart';
@@ -69,4 +70,16 @@ Future<void> _logStartup(int beforeUi, int firstFrame) async {
     prefs = ' prefs=${p.getKeys().length} keys ~${bytes ~/ 1024}KB';
   } catch (_) {}
   AppLog.add('[startup] before_ui=${beforeUi}ms first_frame=${firstFrame}ms$prefs');
+  await _logLastExits();
+}
+
+/// 安卓：上几次进程结束的原因（系统记录，Android 11+）。闪退后导出日志能看出是内存不足被杀、原生崩溃还是 ANR
+Future<void> _logLastExits() async {
+  if (kIsWeb || defaultTargetPlatform != TargetPlatform.android) return;
+  try {
+    final exits = await const MethodChannel('viora/diag').invokeListMethod<String>('lastExits');
+    for (final e in exits ?? const <String>[]) {
+      AppLog.add('[exit] $e');
+    }
+  } catch (_) {}
 }
