@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:viora/app/platform_profile.dart';
 import 'package:viora/data/config/app_config.dart';
 import 'package:viora/data/danmaku/danmaku_models.dart';
 import 'package:viora/features/danmaku/danmaku_layer.dart';
@@ -139,5 +140,38 @@ void main() {
     for (final r in rects) {
       expect(r.$2.bottom, lessThanOrEqualTo(1080 * 0.25 + 16 + 1));
     }
+  });
+
+  testWidgets('电视：定时器驱动（约 30 帧），弹幕照常出现并向左移动，暂停时不再要新的一帧', (tester) async {
+    PlatformProfile.debugOverride = PlatformProfile.tv;
+    DanmakuLayer.stopwatchFactory = () => tester.binding.clock.stopwatch();
+    addTearDown(() {
+      PlatformProfile.debugOverride = PlatformProfile.desktop;
+      DanmakuLayer.stopwatchFactory = Stopwatch.new;
+    });
+    final (state, layer) = await pump(tester, [const DanmakuComment(time: 0.2, text: '电视弹幕')]);
+    Future<void> advance(Duration d) async {
+      state.value = state.value.copyWith(position: state.value.position + d);
+      await tester.pump(d);
+    }
+
+    for (var i = 0; i < 4; i++) {
+      await advance(const Duration(milliseconds: 250));
+    }
+    expect(layer.debugRects.single.$1, '电视弹幕');
+    final x1 = layer.debugRects.single.$2.left;
+    for (var i = 0; i < 4; i++) {
+      await advance(const Duration(milliseconds: 250));
+    }
+    expect(layer.debugRects.single.$2.left, lessThan(x1 - 100));
+
+    // 暂停：位置不变，定时器不再触发重绘（没有新的一帧）
+    state.value = state.value.copyWith(playing: false);
+    await tester.pump(const Duration(milliseconds: 100));
+    final x2 = layer.debugRects.single.$2.left;
+    await tester.pump(const Duration(milliseconds: 500));
+    expect(layer.debugRects.single.$2.left, x2);
+    expect(tester.binding.hasScheduledFrame, isFalse);
+    await tester.pumpWidget(const SizedBox());
   });
 }

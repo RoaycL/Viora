@@ -324,4 +324,38 @@ void main() {
     expect(h.engine.state.value.playing, isFalse);
     await unmountPlayer(tester);
   });
+
+  testWidgets('控制层隐藏时进度变化不重建，缓冲变化、重新显示时拿到最新状态', (tester) async {
+    final state = ValueNotifier(const EngineState());
+    var builds = 0;
+    Widget host(bool live) => Directionality(
+      textDirection: TextDirection.ltr,
+      child: EngineStateBuilder(
+        state: state,
+        live: live,
+        builder: (context, s) {
+          builds++;
+          return Text('${s.position.inSeconds}');
+        },
+      ),
+    );
+    await tester.pumpWidget(host(false));
+    expect(builds, 1);
+    state.value = state.value.copyWith(position: const Duration(seconds: 5));
+    await tester.pump();
+    expect(builds, 1);
+    state.value = state.value.copyWith(buffering: false);
+    await tester.pump();
+    expect(builds, 2);
+    expect(find.text('5'), findsOneWidget);
+    state.value = state.value.copyWith(position: const Duration(seconds: 9));
+    await tester.pump();
+    expect(builds, 2);
+    // 控制层显示：上层重建，拿到最新进度；之后跟着进度走
+    await tester.pumpWidget(host(true));
+    expect(find.text('9'), findsOneWidget);
+    state.value = state.value.copyWith(position: const Duration(seconds: 10));
+    await tester.pump();
+    expect(find.text('10'), findsOneWidget);
+  });
 }

@@ -110,7 +110,11 @@ class EmbyClient {
 
   RequestComposer get composer => composerFor(line);
 
-  Dio _dio() => Dio(
+  /// 接口请求共用一个连接池（按主机复用连接）：每个请求新建客户端的话，HTTPS / 反向代理下每次都要重新握手，
+  /// 详情页同时向多台服务器取播放信息时尤其慢。测速（[probe]）仍用新连接，延迟才准
+  static final Dio _shared = _dio();
+
+  static Dio _dio() => Dio(
     BaseOptions(
       connectTimeout: _timeout,
       receiveTimeout: _timeout,
@@ -195,7 +199,7 @@ class EmbyClient {
     final r = await LoadTrace.request(
       'media_api',
       _metricsId,
-      () => _dio().postUri<dynamic>(
+      () => _shared.postUri<dynamic>(
         url,
         data: {'Username': _server.username, 'Pw': password},
         options: Options(headers: headers, contentType: Headers.jsonContentType),
@@ -241,7 +245,7 @@ class EmbyClient {
         final r = await LoadTrace.request(
           'media_api',
           _metricsId,
-          () => _dio().requestUri<dynamic>(
+          () => _shared.requestUri<dynamic>(
             url,
             data: body,
             options: Options(method: method, headers: c.headers(RequestKind.api), contentType: Headers.jsonContentType),
