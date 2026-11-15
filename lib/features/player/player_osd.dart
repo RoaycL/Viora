@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart' show ScrollCacheExtent;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../app/platform_profile.dart';
@@ -597,7 +598,7 @@ class _SeekPainter extends CustomPainter {
 
 /// 横向滚动的卡片列表：遥控器移动焦点时自动滚到可见；鼠标滚轮横向滚动
 class _HorizontalList extends StatefulWidget {
-  const _HorizontalList({super.key, required this.height, required this.children});
+  const _HorizontalList({required this.height, required this.children});
 
   final double height;
   final List<Widget> children;
@@ -648,6 +649,83 @@ class _HorizontalListState extends State<_HorizontalList> {
   }
 }
 
+/// 横向懒加载列表（集列表）：只构建屏幕上和附近的卡片。一季几十上百集全部构建的话，每张卡片一张图，
+/// 低配电视打开面板要卡几秒。打开时直接定位到 [initialIndex]（正在看的那一集）
+class _LazyHorizontalList extends StatefulWidget {
+  const _LazyHorizontalList({
+    super.key,
+    required this.height,
+    required this.itemWidth,
+    required this.itemCount,
+    required this.itemBuilder,
+    this.initialIndex = 0,
+  });
+
+  final double height;
+  final double itemWidth;
+  final int itemCount;
+  final Widget Function(BuildContext context, int index) itemBuilder;
+  final int initialIndex;
+
+  static const gap = 20.0;
+
+  @override
+  State<_LazyHorizontalList> createState() => _LazyHorizontalListState();
+}
+
+class _LazyHorizontalListState extends State<_LazyHorizontalList> {
+  ScrollController? _controller;
+
+  @override
+  void dispose() {
+    _controller?.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final extent = widget.itemWidth + _LazyHorizontalList.gap;
+    return SizedBox(
+      height: widget.height,
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          // 正在看的那一集放在中间（和按方向键移动时的对齐方式一样）
+          final controller = _controller ??= ScrollController(
+            initialScrollOffset: (widget.initialIndex * extent - (constraints.maxWidth - widget.itemWidth) / 2).clamp(
+              0.0,
+              (widget.itemCount * extent - _LazyHorizontalList.gap - constraints.maxWidth).clamp(0.0, double.infinity),
+            ),
+          );
+          return Listener(
+            onPointerSignal: (e) {
+              if (e is PointerScrollEvent && controller.hasClients) {
+                final p = controller.position;
+                controller.jumpTo((p.pixels + e.scrollDelta.dy + e.scrollDelta.dx).clamp(0.0, p.maxScrollExtent));
+              }
+            },
+            child: FocusAutoScroll(
+              alignment: 0.5,
+              child: ListView.builder(
+                controller: controller,
+                scrollDirection: Axis.horizontal,
+                clipBehavior: Clip.none,
+                itemExtent: extent,
+                // 左右各多构建约两张：按方向键时下一张已经在，焦点能移过去
+                scrollCacheExtent: ScrollCacheExtent.pixels(extent * 2),
+                itemCount: widget.itemCount,
+                itemBuilder: (context, i) => Align(
+                  alignment: Alignment.topLeft,
+                  child: SizedBox(width: widget.itemWidth, child: widget.itemBuilder(context, i)),
+                ),
+              ),
+            ),
+          );
+        },
+      ),
+    );
+  }
+}
+
 /// 「播放资源」面板：所有服务器上的版本，按 4K / 1080P / 其他分组
 class SourcesPanel extends ConsumerStatefulWidget {
   const SourcesPanel({
@@ -656,12 +734,16 @@ class SourcesPanel extends ConsumerStatefulWidget {
     required this.itemId,
     required this.currentSourceId,
     required this.onPick,
+    this.known = const [],
   });
 
   final String serverId;
   final String itemId;
   final String? currentSourceId;
   final ValueChanged<SourceOption> onPick;
+
+  /// 已经知道的版本（正在播放的这台服务器上的）：查找其他服务器期间先显示它们，不让面板空着等
+  final List<SourceOption> known;
 
   @override
   ConsumerState<SourcesPanel> createState() => _SourcesPanelState();
@@ -675,7 +757,7 @@ class _SourcesPanelState extends ConsumerState<SourcesPanel> with _PanelEntry {
   @override
   Widget build(BuildContext context) {
     final async = ref.watch(sourceOptionsProvider((serverId: widget.serverId, itemId: widget.itemId)));
-    final options = visibleSourceOptions(ref.read(configProvider), async.value ?? const <SourceOption>[]);
+    final options = visibleSourceOptions(ref.read(configProvider), async.value ?? widget.known);
     final groups = [
       for (final g in const ['4K', '1080P', '其他'])
         if (options.any((o) => o.group == g)) g,
@@ -876,19 +958,23 @@ class _EpisodesPanelState extends State<EpisodesPanel> with _PanelEntry {
                 ],
               ),
               const SizedBox(height: 16),
-              _HorizontalList(
-                key: ValueKey(season),
-                height: 230,
-                children: [
-                  for (final (i, e) in eps.indexed)
-                    _EpisodeCard(
+              if (eps.isNotEmpty)
+                _LazyHorizontalList(
+                  key: ValueKey(season),
+                  height: 230,
+                  itemWidth: _EpisodeCard.width,
+                  itemCount: eps.length,
+                  initialIndex: hasCurrent ? eps.indexWhere((e) => e.id == widget.currentId) : 0,
+                  itemBuilder: (context, i) {
+                    final e = eps[i];
+                    return _EpisodeCard(
                       episode: e,
                       current: e.id == widget.currentId,
                       focusNode: e.id == widget.currentId || (!hasCurrent && i == 0) ? entryNode : null,
                       onPick: () => widget.onPick(e),
-                    ),
-                ],
-              ),
+                    );
+                  },
+                ),
             ],
           );
         },

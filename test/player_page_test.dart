@@ -4,12 +4,14 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:flutter_riverpod/misc.dart' show Override;
 import 'package:flutter_test/flutter_test.dart';
 import 'package:go_router/go_router.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:viora/app/input/back_handler.dart';
 import 'package:viora/app/input/intents.dart';
 import 'package:viora/app/platform_profile.dart';
+import 'package:viora/data/aggregate/sources.dart';
 import 'package:viora/data/config/app_config.dart';
 import 'package:viora/data/config/config_store.dart';
 import 'package:viora/data/emby/emby_client.dart';
@@ -17,6 +19,7 @@ import 'package:viora/data/media/media_models.dart';
 import 'package:viora/data/media/server_registry.dart';
 import 'package:viora/features/player/player_page.dart';
 import 'package:viora/player/engine.dart';
+import 'package:viora/ui/widgets/server_image.dart';
 import 'package:viora/player/preload.dart';
 
 /// 假的播放内核：打开即开始播放，记录快进 / 快退
@@ -109,7 +112,10 @@ class PlayerClient extends EmbyClient {
         appVersion: 'test',
       );
 
-  final all = [episode(1, 1), episode(1, 2), episode(1, 3), episode(2, 1)];
+  /// 第 1 季的集数（测试长剧时调大）
+  static int seasonOne = 3;
+
+  final all = [for (var i = 1; i <= seasonOne; i++) episode(1, i), episode(2, 1)];
 
   @override
   Future<MediaItem> item(String id) async => all.firstWhere((e) => e.id == id);
@@ -170,11 +176,12 @@ class Harness {
   FakeEngine get engine => engines.last;
 }
 
-Future<Harness> pumpPlayer(WidgetTester tester, {String itemId = 's1e2'}) async {
+Future<Harness> pumpPlayer(WidgetTester tester, {String itemId = 's1e2', List<Override> overrides = const []}) async {
   PlatformProfile.debugOverride = PlatformProfile.tv;
   SharedPreferences.setMockInitialValues({});
   ConfigStore.vault = MemoryVault();
   PlaybackPreloader.reset();
+  PlayerPage.debugClearEpisodeCache();
   tester.view.physicalSize = const Size(1920, 1080);
   tester.view.devicePixelRatio = 1;
   addTearDown(tester.view.reset);
@@ -199,7 +206,11 @@ Future<Harness> pumpPlayer(WidgetTester tester, {String itemId = 's1e2'}) async 
   addTearDown(router.dispose);
   await tester.pumpWidget(
     ProviderScope(
-      overrides: [configProvider.overrideWith(OneServer.new), serverClientProvider.overrideWith((ref, id) => client)],
+      overrides: [
+        configProvider.overrideWith(OneServer.new),
+        serverClientProvider.overrideWith((ref, id) => client),
+        ...overrides,
+      ],
       child: MaterialApp.router(
         routerConfig: router,
         shortcuts: {...WidgetsApp.defaultShortcuts, ...appShortcuts},
@@ -401,6 +412,48 @@ void main() {
     expect(find.textContaining('已缓冲'), findsOneWidget);
     expect(tester.getTopLeft(clock()), clockAt);
     expect(tester.getTopLeft(find.byIcon(Icons.more_horiz_rounded)), more);
+    await unmountPlayer(tester);
+  });
+
+  testWidgets('电视：80 集的季只构建屏幕附近的几张卡片，打开时焦点在正在看的第 40 集上', (tester) async {
+    PlayerClient.seasonOne = 80;
+    addTearDown(() => PlayerClient.seasonOne = 3);
+    await pumpPlayer(tester, itemId: 's1e40');
+    await press(tester, LogicalKeyboardKey.arrowDown);
+    for (var i = 0; i < 3; i++) {
+      await press(tester, LogicalKeyboardKey.arrowRight);
+    }
+    await press(tester, LogicalKeyboardKey.enter);
+    expect(find.text('选集 · 共 80 集：'), findsOneWidget);
+    expect(focused, 'panel-entry');
+    // 正在看的那一集在屏幕中间
+    final rect = FocusManager.instance.primaryFocus!.rect;
+    expect(rect.center.dx, closeTo(960, 200));
+    expect(find.text('正在播放'), findsOneWidget);
+    // 只有屏幕上和两侧缓存的卡片（1920 宽，每张 340）
+    expect(find.byType(ServerImage).evaluate().length, lessThan(14));
+    // ←→ 照常逐集移动
+    await press(tester, LogicalKeyboardKey.arrowRight);
+    expect(find.text('第 41 集'), findsOneWidget);
+    expect(FocusManager.instance.primaryFocus!.rect.center.dx, closeTo(960, 200));
+    await press(tester, LogicalKeyboardKey.arrowLeft);
+    expect(focused, 'panel-entry');
+    await unmountPlayer(tester);
+  });
+
+  testWidgets('电视：其他服务器还在查找时，「播放资源」面板先显示当前这台的版本，焦点能进去', (tester) async {
+    final never = Completer<List<SourceOption>>();
+    await pumpPlayer(tester, overrides: [sourceOptionsProvider.overrideWith((ref, key) => never.future)]);
+    await press(tester, LogicalKeyboardKey.arrowDown);
+    for (var i = 0; i < 2; i++) {
+      await press(tester, LogicalKeyboardKey.arrowRight);
+    }
+    await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+    await tester.pump(const Duration(milliseconds: 50));
+    await tester.pump(const Duration(milliseconds: 300));
+    expect(find.text('正在查找各服务器上的资源…'), findsOneWidget);
+    expect(find.text('fixture'), findsWidgets, reason: '当前服务器的版本卡片已经显示');
+    expect(focused, 'panel-entry');
     await unmountPlayer(tester);
   });
 }
