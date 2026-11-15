@@ -108,6 +108,7 @@ class UpdateController extends Notifier<UpdateState> {
   PackageInfo? _package;
   UpdateSettings settings = const UpdateSettings();
   File? _downloaded;
+  Uri? _downloadedUrl;
 
   @override
   UpdateState build() => const UpdateIdle();
@@ -190,8 +191,11 @@ class UpdateController extends Notifier<UpdateState> {
   /// 下载并安装。Windows 会启动安装程序并退出当前应用；Android 会打开系统安装界面。
   Future<void> downloadAndInstall(UpdateInfo info) async {
     try {
-      final file = _downloaded != null && await _downloaded!.exists() ? _downloaded! : await _download(info);
+      // 只复用同一个安装包：下载过旧版本没装、之后又出了新版本时，不能把旧的那个拿来装
+      final reuse = _downloaded != null && _downloadedUrl == info.downloadUrl && await _downloaded!.exists();
+      final file = reuse ? _downloaded! : await _download(info);
       _downloaded = file;
+      _downloadedUrl = info.downloadUrl;
       await _install(info, file);
     } catch (e) {
       state = UpdateFailed(_describe(e), info: info);
