@@ -30,7 +30,7 @@ Uri ratingEndpoint(Uri base, String path, [Map<String, String> query = const {}]
 class _RatingClient {
   final http = HttpClient()
     ..connectionTimeout = const Duration(seconds: 8)
-    ..idleTimeout = const Duration(seconds: 30);
+    ..idleTimeout = const Duration(seconds: 10);
   int inFlight = 0;
   bool tainted = false;
 }

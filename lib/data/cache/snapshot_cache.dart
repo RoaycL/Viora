@@ -173,7 +173,7 @@ final _ready = <String, Object>{};
 final _owners = <String, Object>{};
 final _sourceOwners = <String, Object>{};
 
-/// 首次加载先读各来源快照；完整成功才替换该来源，失败和不完整响应保留它的旧快照。
+/// 每次加载先读各来源快照（有就立刻返回，后台刷新）；完整成功才替换该来源，失败和不完整响应保留它的旧快照。
 Future<SnapshotBatch<T>> sourceSnapshotsFirst<T>(
   Ref ref,
   String groupKey, {
@@ -196,7 +196,7 @@ Future<SnapshotBatch<T>> sourceSnapshotsFirst<T>(
     }
   });
   final trace = LoadTrace(operation);
-  final firstLoad = SnapshotCache._used.add(groupKey);
+  SnapshotCache._used.add(groupKey);
   final cached = await Future.wait(
     sources.map((s) async {
       final json = await SnapshotCache.read(s.key);
@@ -271,7 +271,9 @@ Future<SnapshotBatch<T>> sourceSnapshotsFirst<T>(
   }
 
   final latest = refresh();
-  if (firstLoad && cached.any((s) => s.value != null)) {
+  // 有快照就先给快照、后台刷新，不只是启动后第一次：回到页面重新加载时（数据在离开期间已释放）
+  // 如果等所有服务器返回，慢的 / 离线的服务器要等到超时，这期间页面一直是占位符
+  if (cached.any((s) => s.value != null)) {
     latest.then((result) {
       if (!current()) return;
       _ready[groupKey] = result;

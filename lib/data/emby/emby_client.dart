@@ -1,3 +1,4 @@
+import 'dart:io' show HttpException;
 import 'dart:async';
 import 'dart:math';
 
@@ -235,6 +236,7 @@ class EmbyClient {
     Object? body,
     bool auth = true,
     bool retried = false,
+    bool staleRetried = false,
   }) async {
     if (auth && !_server.loggedIn) await login();
     final candidates = [line, ..._server.lines.where((l) => l.id != line.id)];
@@ -260,7 +262,15 @@ class EmbyClient {
         if (r.statusCode == 401 && auth && !retried && _server.password.isNotEmpty) {
           _server = _server.copyWith(clearSession: true);
           await login();
-          return await _request(method, path, query: query, body: body, auth: auth, retried: true);
+          return await _request(
+            method,
+            path,
+            query: query,
+            body: body,
+            auth: auth,
+            retried: true,
+            staleRetried: staleRetried,
+          );
         }
         if (r.statusCode == 401) throw const MediaServerException('登录已失效，请重新登录', statusCode: 401);
         if (r.statusCode != null && r.statusCode! >= 400) {
@@ -270,6 +280,11 @@ class EmbyClient {
       } on DioException catch (e) {
         lastError = e;
         if (e.type == DioExceptionType.badResponse) break;
+        // 连接池里的空闲连接可能刚好被服务器 / 反代关掉（请求发出去才发现）：GET 在同一条线路上用新连接重试一次，
+        // 不然只有一条线路时会偶尔报「网络错误」
+        if (method == 'GET' && !staleRetried && e.error is HttpException) {
+          return _request(method, path, query: query, body: body, auth: auth, retried: retried, staleRetried: true);
+        }
         continue; // 连接失败 / 超时：换下一条线路
       }
     }

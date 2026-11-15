@@ -47,6 +47,9 @@ import '../segments/segment_service.dart';
 import 'mini_player.dart';
 import 'player_osd.dart';
 
+/// 整部剧的集列表缓存（按服务器 + 剧，3 分钟）：连播时每一集都是新的播放页，不用每次打开「选集」都重新取
+final _episodeCache = <String, (DateTime, Future<List<MediaItem>>)>{};
+
 /// 播放页（docs/08-player.md、docs/07-input-control.md §3）。
 ///
 /// 内核：Windows 用 mpv；Android 默认 ExoPlayer（HDR / 音频直通、自动帧率），
@@ -72,6 +75,9 @@ class PlayerPage extends ConsumerStatefulWidget {
   /// 测试用：换成假的播放内核（测试环境里 mpv / ExoPlayer 都跑不起来），用来测遥控器操作、面板、返回键
   @visibleForTesting
   static PlayerEngine Function(EngineOptions options)? debugEngineFactory;
+
+  @visibleForTesting
+  static void debugClearEpisodeCache() => _episodeCache.clear();
 
   @override
   ConsumerState<PlayerPage> createState() => _PlayerPageState();
@@ -144,6 +150,47 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
   /// 控制层底部的面板（播放资源 / 选集）
   OsdPanel _panel = OsdPanel.none;
   Future<List<MediaItem>>? _episodes;
+
+  Future<List<MediaItem>> _loadEpisodes(EmbyClient client, String seriesId) {
+    final key = '${accountScope(client.server)}/$seriesId';
+    final hit = _episodeCache[key];
+    if (hit != null && DateTime.now().difference(hit.$1) < const Duration(minutes: 3)) return hit.$2;
+    final future = client.episodes(seriesId);
+    _episodeCache
+      ..remove(key)
+      ..[key] = (DateTime.now(), future);
+    while (_episodeCache.length > 4) {
+      _episodeCache.remove(_episodeCache.keys.first);
+    }
+    // 失败的不留着
+    future.then(
+      (_) {},
+      onError: (_) {
+        if (identical(_episodeCache[key]?.$2, future)) _episodeCache.remove(key);
+      },
+    );
+    return future;
+  }
+
+  /// 这一集在当前服务器上的所有版本（起播时已经拿到）：「播放资源」面板先显示它们
+  List<MediaSourceInfo> _knownSources = const [];
+
+  List<SourceOption> get _knownOptions {
+    final item = _item, client = _client;
+    if (item == null || client == null) return const [];
+    final config = ref.read(configProvider);
+    return [
+      for (final s in _knownSources)
+        SourceOption(
+          item: item,
+          source: s,
+          serverName: client.server.displayName,
+          latencyMs: client.server.lines.isEmpty ? null : client.line.latencyMs,
+          account: accountScope(client.server),
+          view: mediaViewScope(config),
+        ),
+    ];
+  }
 
   /// 鼠标停在控制栏上（Windows）
   bool _hoverControls = false;
@@ -337,6 +384,7 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
       final wanted = sourceId ?? widget.sourceId;
       final source = info.sources.where((s) => s.id == wanted).firstOrNull ?? info.sources.first;
       _source = source;
+      _knownSources = info.sources;
       _request = client.stream(source, playSessionId: info.playSessionId);
       if (!mounted) return;
       setState(() {
@@ -467,6 +515,13 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
               setState(() => _skipPrompt = action);
             },
             onResolution: (r) {
+              // 写进日志：没跳过时能看出是没查到数据、来源出错，还是查到了但模式是「显示按钮」
+              debugPrint(
+                'segments: ${item.name} tmdb=${query.tmdbId} imdb=${query.imdbId} '
+                's${query.season}e${query.episode} ${duration.inSeconds}s → '
+                '${r.segments.isEmpty ? '没有片段' : r.segments.map((s) => '${s.type.name}@${s.provider} ${s.start.inSeconds}-${s.end.inSeconds}s').join(', ')}'
+                '${r.fromCache ? '（缓存）' : ''}${r.failures.isEmpty ? '' : ' 失败：${r.failures.map((k, v) => MapEntry(k, v.name))}'}',
+              );
               if (mounted) setState(() => _segmentList = r.segments);
             },
             onAutoSkip: (action) => showToast(_autoSkipText(action)),
@@ -1323,7 +1378,7 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
       final client = _client;
       if (item == null || client == null || item.seriesId == null) return;
       // 整部剧的所有季：面板里可以切换季
-      _episodes ??= client.episodes(item.seriesId!);
+      _episodes ??= _loadEpisodes(client, item.seriesId!);
     }
     setState(() => _panel = panel);
     _showOsd(sticky: true);
@@ -1380,6 +1435,23 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
   Widget build(BuildContext context) {
     final engine = _engine;
     final isEpisode = _item?.kind == MediaKind.episode;
+    // 面板在这里建好（页面状态变化时才重建），下面随进度每秒重建 4 次的控制层只是把同一个对象传下去：
+    // 不然面板里几十张集卡片每秒跟着重建 4 次，电视上选集 / 选资源时卡得动不了
+    final Widget? panelChild = switch (_panel) {
+      OsdPanel.sources => SourcesPanel(
+        serverId: widget.serverId,
+        itemId: widget.itemId,
+        currentSourceId: _source?.id,
+        known: _knownOptions,
+        onPick: _switchToOption,
+      ),
+      OsdPanel.episodes when _episodes != null => EpisodesPanel(
+        episodes: _episodes!,
+        currentId: widget.itemId,
+        onPick: _pickEpisode,
+      ),
+      _ => null,
+    };
 
     return BackHandler(
       onBack: _handleBack,
@@ -1497,20 +1569,7 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
                                           isEpisode: isEpisode,
                                           hasNext: _nextEpisode != null,
                                           panel: _panel,
-                                          panelChild: switch (_panel) {
-                                            OsdPanel.sources => SourcesPanel(
-                                              serverId: widget.serverId,
-                                              itemId: widget.itemId,
-                                              currentSourceId: _source?.id,
-                                              onPick: _switchToOption,
-                                            ),
-                                            OsdPanel.episodes when _episodes != null => EpisodesPanel(
-                                              episodes: _episodes!,
-                                              currentId: widget.itemId,
-                                              onPick: _pickEpisode,
-                                            ),
-                                            _ => null,
-                                          },
+                                          panelChild: panelChild,
                                           playNode: _playNode,
                                           onBack: () => context.pop(),
                                           onPlayPause: _togglePlay,
