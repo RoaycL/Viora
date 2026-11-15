@@ -138,6 +138,46 @@ void main() {
     expect((await SnapshotCache.read('b') as Map)['data'], [2]);
   });
 
+  test('回到页面重新加载（不是启动后第一次）：先给快照，不等最慢的服务器', () async {
+    // 看完视频回首页：播放期间首页的数据已释放，这次加载不是「第一次」。
+    // 以前只有第一次才先给快照，之后要等所有服务器返回（慢的 / 离线的要等到 10 秒超时），继续观看一直是占位符
+    var slow = Completer<void>()..complete();
+    final p = FutureProvider.autoDispose<SnapshotBatch<List<int>>>(
+      (ref) => sourceSnapshotsFirst(
+        ref,
+        'again',
+        operation: 'test',
+        sources: [
+          source('fast', () async => const SnapshotFetch([1])),
+          source('slow', () async {
+            await slow.future;
+            return const SnapshotFetch([2]);
+          }),
+        ],
+      ),
+    );
+    final container = ProviderContainer();
+    addTearDown(container.dispose);
+    final first = container.listen(p, (_, _) {});
+    await until(() => first.read().value?.refreshing == false && first.read().value?.sources.last.value != null);
+    first.close();
+    await container.pump();
+
+    // 第二次：慢的服务器一直不返回
+    slow = Completer<void>();
+    final again = container.listen(p, (_, _) {});
+    final batch = await container.read(p.future).timeout(const Duration(seconds: 2));
+    expect(batch.sources.map((s) => s.value), [
+      [1],
+      [2],
+    ]);
+    expect(batch.refreshing, isTrue);
+    // 慢的返回后换成最新数据
+    slow.complete();
+    await until(() => again.read().value?.refreshing == false);
+    expect(again.read().value!.sources.every((s) => s.status == SnapshotStatus.fresh), isTrue);
+  });
+
   test('incomplete response preserves old disk and UI; no cache remains distinguishable', () async {
     await seed('a', [1, 2]);
     final p = FutureProvider<SnapshotBatch<List<int>>>(
