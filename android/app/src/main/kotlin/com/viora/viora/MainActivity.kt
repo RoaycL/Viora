@@ -87,6 +87,11 @@ class MainActivity : FlutterActivity() {
         }
     }
 
+    override fun onStop() {
+        exo?.pauseAll()
+        super.onStop()
+    }
+
     override fun cleanUpFlutterEngine(flutterEngine: FlutterEngine) {
         exo?.releaseAll()
         exo = null
