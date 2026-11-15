@@ -83,7 +83,17 @@ class PlayerPage extends ConsumerStatefulWidget {
   ConsumerState<PlayerPage> createState() => _PlayerPageState();
 }
 
-class _PlayerPageState extends ConsumerState<PlayerPage> {
+class _PlayerPageState extends ConsumerState<PlayerPage> with WidgetsBindingObserver {
+  /// 电视：应用退到后台（按主页键、切换信号源、进屏保）时暂停。不暂停的话画面看不见了声音还在放，
+  /// 进度也在继续走。回到应用后保持暂停，由用户按 OK 继续。Windows 最小化后照常播放（后台听声音）
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (!PlatformProfile.isTv) return;
+    if (state == AppLifecycleState.paused || state == AppLifecycleState.hidden) {
+      if (_state.playing) _engine?.pause();
+    }
+  }
+
   /// 画面本身（不在按钮上时接收快进 / 暂停等按键）。不参与方向导航：它铺满整个屏幕，
   /// 按位置找下一个控件时会被当成「最近的」，焦点从按钮跳到它上面就看不见了（电视上「丢失指针」）
   final _focus = FocusNode(debugLabel: 'player', skipTraversal: true);
@@ -218,6 +228,7 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
       _holdsIndexSync = true;
       IndexSyncGate.hold();
     }
+    WidgetsBinding.instance.addObserver(this);
     // Windows 关闭到托盘时暂停（窗口看不见了，不在后台继续放）
     DesktopTray.instance.hiddenToTray.addListener(_onHiddenToTray);
   }
@@ -860,6 +871,7 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
   @override
   void dispose() {
     DesktopTray.instance.hiddenToTray.removeListener(_onHiddenToTray);
+    WidgetsBinding.instance.removeObserver(this);
     if (_holdsIndexSync) IndexSyncGate.release();
     // 最先关闭播放器：后面任何一步出错都不能让视频在后台继续播放
     final engine = _engine;

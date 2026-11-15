@@ -456,4 +456,33 @@ void main() {
     expect(focused, 'panel-entry');
     await unmountPlayer(tester);
   });
+
+  testWidgets('电视：应用退到后台时暂停，回到前台保持暂停；Windows 最小化后继续播放', (tester) async {
+    final h = await pumpPlayer(tester);
+    expect(h.engine.state.value.playing, isTrue);
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
+    await tester.pump();
+    expect(h.engine.state.value.playing, isTrue, reason: '只是失去焦点（弹出系统对话框等）不暂停');
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.hidden);
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.paused);
+    await tester.pump();
+    expect(h.engine.state.value.playing, isFalse);
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.hidden);
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+    await tester.pump();
+    expect(h.engine.state.value.playing, isFalse);
+
+    // Windows：同样的生命周期变化不暂停
+    await press(tester, LogicalKeyboardKey.enter);
+    expect(h.engine.state.value.playing, isTrue);
+    PlatformProfile.debugOverride = PlatformProfile.desktop;
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.hidden);
+    await tester.pump();
+    expect(h.engine.state.value.playing, isTrue);
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+    await unmountPlayer(tester);
+  });
 }

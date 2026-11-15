@@ -107,6 +107,14 @@ class ExoPlugin(private val activity: Activity, engine: FlutterEngine) {
         engine.platformViewsController.registry.registerViewFactory("viora/exo-view", ViewFactory())
     }
 
+    /**
+     * 应用不可见了（按主页键、切换信号源、进屏保）：暂停所有播放器。
+     * Dart 端也会在生命周期变化时暂停；这里是兜底——系统不给 Flutter 发生命周期事件、或 Dart 端来不及处理时也不会在后台出声
+     */
+    fun pauseAll() {
+        players.values.forEach { if (it.player.isPlaying) it.pause() }
+    }
+
     fun releaseAll() {
         players.values.forEach { it.release() }
         players.clear()
