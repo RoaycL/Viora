@@ -24,6 +24,8 @@ Future<void> main() async {
   final launch = Stopwatch()..start();
   WidgetsFlutterBinding.ensureInitialized();
   AppLog.install();
+  // 电视低配模式：界面开始构建前读好
+  await PerfMode.load();
   // 日志实时写文件、记录内存：闪退后重新打开导出日志，能看到闪退前的情况
   if (!kIsWeb) {
     try {

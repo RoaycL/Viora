@@ -126,17 +126,20 @@ class _FocusRowState extends State<FocusRow> implements RevealableFocusRow {
       initialScrollOffset: _remembered * (widget.itemExtent + widget.gap),
       keepScrollOffset: widget.itemKeys == null,
     );
-    if (PlatformProfile.isDesktop) {
+    if (_reveal) {
       _scroll.addListener(_revealVisible);
       WidgetsBinding.instance.addPostFrameCallback((_) => _revealVisible(initial: true));
     }
   }
 
-  // ───────── Windows 浏览动画：横向滚动时，新进入画面的卡片从下往上依次浮现 ─────────
+  // ───────── 浏览动画：横向滚动时，新进入画面的卡片从下往上依次浮现 ─────────
+  // Windows 和关掉低配模式的电视做；电视低配模式不做
+
+  late final bool _reveal = !PerfMode.lite;
 
   /// 第一次布局前先按屏幕宽度估计哪些卡片在画面里（它们直接显示，不闪一下），布局后再按实际宽度校正
   void _estimateRevealed() {
-    if (!PlatformProfile.isDesktop || _revealed.value >= 0 || widget.itemCount == 0) return;
+    if (!_reveal || _revealed.value >= 0 || widget.itemCount == 0) return;
     final stride = widget.itemExtent + widget.gap;
     final offset = _remembered * stride;
     _revealed.value = ((offset + MediaQuery.sizeOf(context).width - widget.leading) / stride).floor().clamp(
@@ -320,7 +323,7 @@ class _FocusRowState extends State<FocusRow> implements RevealableFocusRow {
                 itemBuilder: (context, index) => SizedBox(
                   key: widget.itemKeys == null ? null : ValueKey(widget.itemKeys![index]),
                   width: widget.itemExtent,
-                  child: PlatformProfile.isDesktop
+                  child: _reveal
                       ? _RiseIn(
                           index: index,
                           revealed: _revealed,

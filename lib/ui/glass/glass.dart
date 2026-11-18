@@ -21,8 +21,13 @@ enum GlassQuality {
 class GlassQualityNotifier extends Notifier<GlassQuality> {
   @override
   // 电视盒子 GPU 弱：实时模糊（BackdropFilter）每帧都要重新模糊整块背景，是首页卡顿的主要来源，
-  // 电视默认不做实时模糊，用更不透明的深色面板；Windows 保持磨砂效果
-  GlassQuality build() => PlatformProfile.isTv ? GlassQuality.low : GlassQuality.medium;
+  // 电视低配模式（默认开）不做实时模糊，用更不透明的深色面板；关掉低配模式、Windows 保持磨砂效果
+  GlassQuality build() {
+    void changed() => state = PerfMode.lite ? GlassQuality.low : GlassQuality.medium;
+    PerfMode.liteSetting.addListener(changed);
+    ref.onDispose(() => PerfMode.liteSetting.removeListener(changed));
+    return PerfMode.lite ? GlassQuality.low : GlassQuality.medium;
+  }
 
   void set(GlassQuality q) => state = q;
 }

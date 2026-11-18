@@ -306,7 +306,7 @@ class _ServerCard extends ConsumerWidget {
               right: -66,
               top: -64,
               // 电视：实时模糊是弱 GPU 上最贵的操作，用径向渐变画出差不多的光晕
-              child: PlatformProfile.isTv
+              child: PerfMode.lite
                   ? Transform.translate(
                       offset: const Offset(60, -60),
                       child: Container(

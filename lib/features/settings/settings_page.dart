@@ -645,6 +645,24 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
       _Section(
         title: '通用与关于',
         children: [
+          // 仅电视：低配模式（默认开，只存在本机）
+          if (PlatformProfile.isTv) ...[
+            ValueListenableBuilder<bool>(
+              valueListenable: PerfMode.liteSetting,
+              builder: (context, lite, _) => VToggle(
+                label: '低配模式',
+                subtitle: lite
+                    ? '已开启：关掉毛玻璃模糊、加载动画、卡片浮现动画，弹幕每秒 30 帧，2GB 内存的电视盒子也流畅'
+                    : '已关闭：显示完整的动画和毛玻璃效果。电视盒子卡顿或闪退时请重新打开（重新进入页面后生效）',
+                value: lite,
+                onChanged: (v) async {
+                  await PerfMode.set(v);
+                  if (mounted) setState(() {});
+                },
+              ),
+            ),
+            const SizedBox(height: 24),
+          ],
           // 仅 Windows：关闭窗口时退出还是隐藏到托盘（默认隐藏到托盘）
           if (isDesktopWindow) ...[
             ValueListenableBuilder<bool>(

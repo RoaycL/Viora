@@ -1170,7 +1170,7 @@ class _HomeRowStatus extends StatelessWidget {
                   title: title,
                   landscape: landscape,
                   circle: circle,
-                  animate: !PlatformProfile.isTv && !VMotion.reduced(context),
+                  animate: !PerfMode.lite && !VMotion.reduced(context),
                   wrapFirst: (b) => _anchor(b, circle ? 999 : VRadius.card),
                 ),
         )
@@ -1358,7 +1358,7 @@ class _ShimmerState extends State<_Shimmer> with SingleTickerProviderStateMixin 
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
-    if (PlatformProfile.isTv || VMotion.reduced(context)) {
+    if (PerfMode.lite || VMotion.reduced(context)) {
       _c.stop();
       _c.value = 0.6;
     } else if (!_c.isAnimating) {

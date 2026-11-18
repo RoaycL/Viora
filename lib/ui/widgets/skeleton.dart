@@ -123,7 +123,7 @@ class _SkeletonShimmerState extends State<SkeletonShimmer> with SingleTickerProv
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
-    if (PlatformProfile.isTv || VMotion.reduced(context)) {
+    if (PerfMode.lite || VMotion.reduced(context)) {
       _c.stop();
       _c.value = 0.6;
     } else if (!_c.isAnimating) {

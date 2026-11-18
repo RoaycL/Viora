@@ -70,7 +70,7 @@ class DanmakuLayerState extends State<DanmakuLayer> with SingleTickerProviderSta
   final _repaint = _Repaint();
 
   /// 电视：用定时器代替 Ticker（Ticker 每个屏幕刷新都会要一帧，即使这一帧什么都没变）
-  final bool _timed = PlatformProfile.isTv;
+  final bool _timed = PerfMode.lite;
   Timer? _timer;
 
   bool get _running => _timed ? _timer != null : _ticker.isActive;
