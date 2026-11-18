@@ -37,6 +37,7 @@ import '../../player/playback_cache.dart';
 import '../../player/preload.dart';
 import '../../player/segment_playback_session.dart';
 import '../../player/segment_skip_controller.dart';
+import '../../player/subtitle_pick.dart';
 import '../../ui/focus/input_mode.dart';
 import '../../ui/glass/glass.dart';
 import '../../ui/panels/context_menu.dart';
@@ -422,8 +423,21 @@ class _PlayerPageState extends ConsumerState<PlayerPage> with WidgetsBindingObse
   /// 上报给服务器的位置：内核报 0 时用 [_lastPosition]（真的拖回开头时 [_lastPosition] 也是 0）
   Duration get _reportPosition => _state.position > Duration.zero ? _state.position : _lastPosition;
 
+  /// 这次打开的媒体是否已经按「默认字幕」设置挑过字幕（每次打开 / 换源只挑一次，之后用户手动切换为准）
+  bool _subtitlePicked = false;
+
+  void _pickDefaultSubtitle(EngineState s) {
+    if (_subtitlePicked) return;
+    // 轨道列表出来了，或者已经开始播放（没有字幕轨的片子）
+    if (s.subtitleTracks.isEmpty && !s.playing) return;
+    _subtitlePicked = true;
+    final (change, track) = pickSubtitle(s.subtitleTracks, ref.read(configProvider).playback.subtitlePreference);
+    if (change && track != s.subtitle) unawaited(_engine?.selectSubtitle(track));
+  }
+
   void _onEngineState() {
     final s = _state;
+    _pickDefaultSubtitle(s);
     if (s.position > Duration.zero && (s.duration <= Duration.zero || s.position <= s.duration)) {
       _lastPosition = s.position;
     }
@@ -513,6 +527,7 @@ class _PlayerPageState extends ConsumerState<PlayerPage> with WidgetsBindingObse
     if (req == null || engine == null) return;
     final headers = {...req.headers}..remove('User-Agent');
     _lastPosition = at;
+    _subtitlePicked = false;
     await engine.open(EngineMedia(url: req.url, headers: headers, userAgent: req.userAgent, start: at));
     if (PlatformProfile.isDesktop) await engine.setVolume(_muted ? 0 : _volume);
     await _applyDisplay(engine);

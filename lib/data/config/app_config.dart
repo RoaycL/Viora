@@ -247,6 +247,7 @@ class PlaybackConfig {
     this.muted = false,
     this.subtitleScale = 1.0,
     this.subtitlePosition = 100,
+    this.subtitlePreference = SubtitlePreference.auto,
     this.askStillWatching = true,
   });
 
@@ -257,6 +258,9 @@ class PlaybackConfig {
 
   /// 字幕上下位置（播放页「字幕 → 字幕位置」，100 = 默认的底部，越小越靠上；只对 mpv 生效）
   final int subtitlePosition;
+
+  /// 起播时默认选哪种字幕（设置 → 播放 → 默认字幕）
+  final SubtitlePreference subtitlePreference;
 
   /// 连续自动播放 3 集没有任何操作时问「还在观看吗？」
   final bool askStillWatching;
@@ -329,6 +333,7 @@ class PlaybackConfig {
     bool? muted,
     double? subtitleScale,
     int? subtitlePosition,
+    SubtitlePreference? subtitlePreference,
     bool? askStillWatching,
   }) => PlaybackConfig(
     userAgent: userAgent ?? this.userAgent,
@@ -349,6 +354,7 @@ class PlaybackConfig {
     muted: muted ?? this.muted,
     subtitleScale: subtitleScale ?? this.subtitleScale,
     subtitlePosition: subtitlePosition ?? this.subtitlePosition,
+    subtitlePreference: subtitlePreference ?? this.subtitlePreference,
     askStillWatching: askStillWatching ?? this.askStillWatching,
   );
 
@@ -371,6 +377,7 @@ class PlaybackConfig {
     'muted': muted,
     'subtitleScale': subtitleScale,
     'subtitlePosition': subtitlePosition,
+    'subtitlePreference': subtitlePreference.name,
     'askStillWatching': askStillWatching,
   };
 
@@ -393,11 +400,25 @@ class PlaybackConfig {
     muted: j['muted'] as bool? ?? false,
     subtitleScale: ((j['subtitleScale'] as num?)?.toDouble() ?? 1.0).clamp(0.5, 2.0),
     subtitlePosition: ((j['subtitlePosition'] as num?)?.toInt() ?? 100).clamp(0, 150),
+    subtitlePreference: SubtitlePreference.values.asNameMap()[j['subtitlePreference']] ?? SubtitlePreference.auto,
     askStillWatching: j['askStillWatching'] as bool? ?? true,
   );
 }
 
 /// 资源排序规则。每种规则下，这部剧上次用的服务器都排在最前（追剧时不跳服务器）
+/// 起播时默认选的字幕。只在片子里有对应语言的轨道时生效，找不到就沿用片源自带的默认轨；
+/// 同样匹配时内封字幕优先于外挂。
+enum SubtitlePreference {
+  /// 跟随片源（不改）
+  auto,
+  zhHans,
+  zhHant,
+  en,
+
+  /// 默认不显示字幕
+  off,
+}
+
 enum SourceOrder {
   /// 分辨率 → 线路延迟 → 码率
   quality,

@@ -409,6 +409,19 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
             ),
           ],
           const SizedBox(height: 20),
+          VChoice<SubtitlePreference>(
+            label: '默认字幕（片子里有这种语言时起播自动选上，内封字幕优先；没有就沿用片源默认的字幕）',
+            options: const [
+              (SubtitlePreference.auto, '跟随片源'),
+              (SubtitlePreference.zhHans, '简体中文'),
+              (SubtitlePreference.zhHant, '繁体中文'),
+              (SubtitlePreference.en, '英文'),
+              (SubtitlePreference.off, '不显示'),
+            ],
+            value: config.playback.subtitlePreference,
+            onChanged: (v) => _updatePlayback((p) => p.copyWith(subtitlePreference: v)),
+          ),
+          const SizedBox(height: 20),
           VToggle(
             label: '关闭播放器后清除播放缓存',
             subtitle: '退出播放时删除磁盘缓存文件和预加载的数据（连播下一集时保留）',
