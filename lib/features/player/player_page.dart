@@ -612,6 +612,20 @@ class _PlayerPageState extends ConsumerState<PlayerPage> with WidgetsBindingObse
         '[play] 停止上报 ${widget.itemId} 位置 ${formatClock(position)} / ${formatClock(duration)}${completed ? '（播完）' : ''}',
       );
       PlayHistory.record(widget.serverId, widget.itemId, scope: accountScope(client.server));
+      // 继续观看先按本机的进度显示（不等服务器刷新回来）；看到 90% 以上服务器会标为已看，这里也移出。
+      // 这里常在页面销毁过程中，不能马上改 provider：放到下一轮再写
+      final item = _item;
+      if (item != null && (item.kind == MediaKind.movie || item.kind == MediaKind.episode)) {
+        final watched =
+            completed || (duration > Duration.zero && position.inMilliseconds >= duration.inMilliseconds * 0.9);
+        final local = item.withPlayState(position: position, played: watched, lastPlayed: DateTime.now());
+        final container = _container;
+        Future(() {
+          try {
+            container?.read(localPlaysProvider.notifier).record(local);
+          } on StateError catch (_) {}
+        });
+      }
       // 页面销毁时不能再用 ref（Riverpod 会抛错并打断后续的关闭播放器），用提前保存的容器；
       // 等服务器记下进度后再刷新继续观看 / 详情
       final container = _container;

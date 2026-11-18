@@ -136,6 +136,45 @@ class MediaItem {
   bool get playable => kind == MediaKind.movie || kind == MediaKind.episode || kind == MediaKind.other;
 
   /// 进度 0~1；没有进度时为 null
+  /// 换成新的播放状态（刚在本机播放过：继续观看先按本机的进度显示，不等服务器）
+  MediaItem withPlayState({required Duration position, required bool played, required DateTime lastPlayed}) =>
+      MediaItem(
+        serverId: serverId,
+        id: id,
+        kind: kind,
+        name: name,
+        originalTitle: originalTitle,
+        overview: overview,
+        year: year,
+        premiereDate: premiereDate,
+        rating: rating,
+        officialRating: officialRating,
+        criticRating: criticRating,
+        genres: genres,
+        runtime: runtime,
+        tmdbId: tmdbId,
+        imdbId: imdbId,
+        tvdbId: tvdbId,
+        primary: primary,
+        backdrop: backdrop,
+        thumb: thumb,
+        logo: logo,
+        seriesId: seriesId,
+        seriesName: seriesName,
+        seasonId: seasonId,
+        seasonNumber: seasonNumber,
+        episodeNumber: episodeNumber,
+        childCount: childCount,
+        played: played,
+        favorite: favorite,
+        position: position,
+        // 百分比按新位置算（旧的百分比是上次的进度）
+        playedPercentage: null,
+        dateCreated: dateCreated,
+        lastMediaAdded: lastMediaAdded,
+        lastPlayed: lastPlayed,
+      );
+
   double? get progress {
     if (playedPercentage != null && playedPercentage! > 0) return (playedPercentage! / 100).clamp(0, 1);
     final total = runtime?.inMilliseconds ?? 0;

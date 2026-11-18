@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import '../../player/preload.dart';
 import '../history/play_history.dart';
 
@@ -124,10 +126,65 @@ final mediaFeedStateProvider = Provider.family<AsyncValue<MediaFeedResult>, Medi
   return ref.watch(mediaFeedProvider((kind: kind, scope: scope)));
 });
 
+/// 刚在本机播放过的条目：退出播放后继续观看马上按本机的进度显示（排到最前、进度更新，看完的移出），
+/// 不用等所有服务器刷新回来（慢的服务器要等到超时）。只保留 [ttl]，之后以服务器的数据为准
+class LocalPlays extends Notifier<Map<String, (MediaItem, DateTime)>> {
+  static const ttl = Duration(minutes: 2);
+  Timer? _expiry;
+
+  @override
+  Map<String, (MediaItem, DateTime)> build() {
+    ref.onDispose(() => _expiry?.cancel());
+    return const {};
+  }
+
+  void record(MediaItem item) {
+    final now = DateTime.now();
+    state = {
+      for (final e in state.entries)
+        if (now.difference(e.value.$2) < ttl) e.key: e.value,
+      '${item.serverId}/${item.id}': (item, now),
+    };
+    _expiry?.cancel();
+    _expiry = Timer(ttl, () {
+      final now = DateTime.now();
+      state = {
+        for (final e in state.entries)
+          if (now.difference(e.value.$2) < ttl) e.key: e.value,
+      };
+    });
+  }
+}
+
+final localPlaysProvider = NotifierProvider<LocalPlays, Map<String, (MediaItem, DateTime)>>(LocalPlays.new);
+
+/// 服务器的继续观看 + 本机刚播放过的（本机的覆盖同一条目；看完的移出；新开始看的加进来）
+List<MediaItem> mergeLocalPlays(List<MediaItem> server, Map<String, (MediaItem, DateTime)> local) {
+  if (local.isEmpty) return server;
+  final out = <MediaItem>[];
+  final seen = <String>{};
+  for (final it in server) {
+    final key = '${it.serverId}/${it.id}';
+    seen.add(key);
+    final mine = local[key]?.$1;
+    if (mine == null) {
+      out.add(it);
+    } else if (!mine.played && mine.position > Duration.zero) {
+      out.add(mine);
+    }
+  }
+  for (final e in local.entries) {
+    final mine = e.value.$1;
+    if (!seen.contains(e.key) && !mine.played && mine.position > Duration.zero) out.add(mine);
+  }
+  return out;
+}
+
 final resumeProvider = Provider<AsyncValue<List<MediaItem>>>((ref) {
   final config = ref.read(configProvider);
+  final local = ref.watch(localPlaysProvider);
   return ref.watch(mediaFeedStateProvider(MediaFeedKind.resume)).whenData((snapshot) {
-    final all = snapshot.items.where((it) => itemVisible(config, it)).toList();
+    final all = mergeLocalPlays(snapshot.items, local).where((it) => itemVisible(config, it)).toList();
     final epoch = DateTime(1970);
     all.sort((a, b) => (PlayHistory.lastPlayed(b) ?? epoch).compareTo(PlayHistory.lastPlayed(a) ?? epoch));
     return all;

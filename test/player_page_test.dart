@@ -692,4 +692,19 @@ void main() {
     expect(h2.engine.opened.single, const Duration(minutes: 5));
     await unmountPlayer(tester);
   });
+
+  testWidgets('退出播放后继续观看马上按本机的进度显示（不等服务器刷新）', (tester) async {
+    final h = await pumpPlayer(tester);
+    await h.engine.seek(const Duration(minutes: 7));
+    await tester.pump();
+    final container = ProviderScope.containerOf(tester.element(find.byType(PlayerPage)));
+    // 退出播放回到上一页（应用还在）
+    h.router.pop();
+    await tester.pumpAndSettle();
+    expect(find.byType(PlayerPage), findsNothing);
+    final local = container.read(localPlaysProvider)['s/s1e2']?.$1;
+    expect(local?.position, const Duration(minutes: 7));
+    expect(local?.played, isFalse);
+    await unmountPlayer(tester);
+  });
 }

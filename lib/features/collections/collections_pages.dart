@@ -78,18 +78,18 @@ class HistoryPage extends ConsumerWidget {
     final played = ref.watch(recentlyPlayedProvider).value ?? const <MediaItem>[];
     final resumeState = ref.watch(mediaFeedStateProvider(MediaFeedKind.resume));
     final playedState = ref.watch(mediaFeedStateProvider(MediaFeedKind.recentlyPlayed));
-    final failures = (resumeState.value?.failures ?? 0) + (playedState.value?.failures ?? 0);
     final loading = resumeState.isLoading || playedState.isLoading;
+    final syncing = loading || (resumeState.value?.refreshing ?? false) || (playedState.value?.refreshing ?? false);
     final names = {for (final s in ref.watch(configProvider).servers) s.id: s.displayName};
     final all = [...resume, ...played];
     return _CollectionScaffold(
       title: '观看记录',
       itemWidth: LandscapeCard.width,
       subtitle: all.isEmpty && loading
-          ? '加载中…'
-          : '继续观看 ${resume.length} · 最近看过 ${played.length}${failures > 0 ? ' · 部分记录暂未刷新' : ''}',
+          ? '同步中…'
+          : '继续观看 ${resume.length} · 最近看过 ${played.length}${syncing ? ' · 同步中' : ''}',
       loading: all.isEmpty && loading,
-      empty: all.isEmpty && !loading ? (failures > 0 ? '暂时无法获取完整记录，请稍后刷新' : '还没有观看记录') : null,
+      empty: all.isEmpty && !loading ? '还没有观看记录' : null,
       itemCount: all.length,
       itemBuilder: (context, i) {
         final it = all[i];
