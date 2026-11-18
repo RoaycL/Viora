@@ -237,6 +237,7 @@ class EmbyClient {
     bool auth = true,
     bool retried = false,
     bool staleRetried = false,
+    bool idempotent = false,
   }) async {
     if (auth && !_server.loggedIn) await login();
     final candidates = [line, ..._server.lines.where((l) => l.id != line.id)];
@@ -270,6 +271,7 @@ class EmbyClient {
             auth: auth,
             retried: true,
             staleRetried: staleRetried,
+            idempotent: idempotent,
           );
         }
         if (r.statusCode == 401) throw const MediaServerException('登录已失效，请重新登录', statusCode: 401);
@@ -282,8 +284,18 @@ class EmbyClient {
         if (e.type == DioExceptionType.badResponse) break;
         // 连接池里的空闲连接可能刚好被服务器 / 反代关掉（请求发出去才发现）：GET 在同一条线路上用新连接重试一次，
         // 不然只有一条线路时会偶尔报「网络错误」
-        if (method == 'GET' && !staleRetried && e.error is HttpException) {
-          return _request(method, path, query: query, body: body, auth: auth, retried: retried, staleRetried: true);
+        // 播放上报重复发一次也没关系（服务器按最后一次记），同样重试
+        if ((method == 'GET' || idempotent) && !staleRetried && e.error is HttpException) {
+          return _request(
+            method,
+            path,
+            query: query,
+            body: body,
+            auth: auth,
+            retried: retried,
+            staleRetried: true,
+            idempotent: idempotent,
+          );
         }
         continue; // 连接失败 / 超时：换下一条线路
       }
@@ -626,6 +638,7 @@ class EmbyClient {
       await _request(
         'POST',
         path,
+        idempotent: true,
         body: {
           'ItemId': s.itemId,
           'MediaSourceId': s.id,
@@ -637,6 +650,8 @@ class EmbyClient {
           'EventName': ?event,
         },
       );
+      // 开始 / 停止写进日志（进度上报每 10 秒一次，只记失败）：服务器上进度不对时能看出有没有报上去
+      if (!path.endsWith('/Progress')) debugPrint('report $path ok ${s.itemId} @${position.inSeconds}s');
     } catch (e) {
       debugPrint('report $path failed: $e');
     }

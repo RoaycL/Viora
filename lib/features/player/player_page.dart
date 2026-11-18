@@ -13,6 +13,7 @@ import '../../app/input/intents.dart';
 import '../../app/platform_profile.dart';
 import '../../app/theme.dart';
 import '../../app/window_frame.dart';
+import '../../core/log/app_log.dart';
 import '../../data/aggregate/sources.dart';
 import '../../data/cache/account_scope.dart';
 import '../../data/config/app_config.dart';
@@ -381,8 +382,15 @@ class _PlayerPageState extends ConsumerState<PlayerPage> with WidgetsBindingObse
     if (mounted) setState(() {});
   }
 
+  /// 最后一次有效的播放位置：关闭播放器 / 播完时内核可能已经停了、报 0，停止上报不能用 0
+  /// （用 0 上报会把服务器上这一集的进度清掉，继续观看里就没有了）
+  Duration _lastPosition = Duration.zero;
+
   void _onEngineState() {
     final s = _state;
+    if (s.position > Duration.zero && (s.duration <= Duration.zero || s.position <= s.duration)) {
+      _lastPosition = s.position;
+    }
     // 开始播放前内核报的位置可能还是 0（续播时还没跳到上次的位置），不能拿来判断片头
     if (_started || s.playing) _segments?.onPosition(s.position);
     if (!_nextPreloading &&
@@ -563,20 +571,31 @@ class _PlayerPageState extends ConsumerState<PlayerPage> with WidgetsBindingObse
     }
   }
 
-  void _reportStopped() {
+  /// [completed]：播到了结尾（按片长上报，服务器据此标记为已看）
+  void _reportStopped({bool completed = false}) {
     if (_stopped) return;
     _stopped = true;
     final client = _client, source = _source;
     if (client != null && source != null && _started) {
+      // 位置在这里取好：后面是异步的，那时播放器可能已经关了，读到的是 0
+      final now = _state.position;
+      final duration = _state.duration > Duration.zero ? _state.duration : (source.duration ?? Duration.zero);
+      final position = completed && duration > Duration.zero ? duration : (now > Duration.zero ? now : _lastPosition);
+      AppLog.add(
+        '[play] 停止上报 ${widget.itemId} 位置 ${formatClock(position)} / ${formatClock(duration)}${completed ? '（播完）' : ''}',
+      );
       PlayHistory.record(widget.serverId, widget.itemId, scope: accountScope(client.server));
       // 页面销毁时不能再用 ref（Riverpod 会抛错并打断后续的关闭播放器），用提前保存的容器；
       // 等服务器记下进度后再刷新继续观看 / 详情
       final container = _container;
       final key = (serverId: widget.serverId, itemId: widget.itemId);
-      Future(() => client.reportStopped(source, _state.position, _playSessionId)).catchError((_) {}).whenComplete(() {
+      Future(() => client.reportStopped(source, position, _playSessionId)).catchError((_) {}).whenComplete(() {
         // 应用正在关闭（容器已销毁）时不再刷新
         try {
-          container?.read(mediaFeedRefreshProvider.notifier).refresh(MediaFeedKind.resume);
+          final refresh = container?.read(mediaFeedRefreshProvider.notifier);
+          refresh?.refresh(MediaFeedKind.resume);
+          // 播完的集会从继续观看移到观看记录：两边都刷新
+          refresh?.refresh(MediaFeedKind.recentlyPlayed);
           container?.invalidate(itemProvider(key));
         } on StateError catch (_) {}
       });
@@ -995,7 +1014,7 @@ class _PlayerPageState extends ConsumerState<PlayerPage> with WidgetsBindingObse
   }
 
   Future<void> _onCompleted() async {
-    _reportStopped();
+    _reportStopped(completed: true);
     final item = _item, client = _client;
     if (item == null || client == null || !mounted) return;
     // 剧集自动播放下一集（季末接着播下一季第一集）

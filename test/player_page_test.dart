@@ -167,8 +167,12 @@ class PlayerClient extends EmbyClient {
     bool paused = false,
     String event = 'TimeUpdate',
   }) async {}
+
+  /// 停止上报的位置
+  final stopped = <Duration>[];
   @override
-  Future<void> reportStopped(MediaSourceInfo s, Duration position, String? playSessionId) async {}
+  Future<void> reportStopped(MediaSourceInfo s, Duration position, String? playSessionId) async =>
+      stopped.add(position);
 }
 
 class OneServer extends ConfigStore {
@@ -184,9 +188,10 @@ void appBack(GoRouter router) {
 }
 
 class Harness {
-  Harness(this.router, this.engines);
+  Harness(this.router, this.engines, this.client);
   final GoRouter router;
   final List<FakeEngine> engines;
+  final PlayerClient client;
   FakeEngine get engine => engines.last;
 }
 
@@ -239,7 +244,7 @@ Future<Harness> pumpPlayer(WidgetTester tester, {String itemId = 's1e2', List<Ov
   await tester.pumpAndSettle();
   await tester.runAsync(() => Future<void>.delayed(const Duration(milliseconds: 200)));
   await tester.pumpAndSettle();
-  return Harness(router, engines);
+  return Harness(router, engines, client);
 }
 
 Future<void> press(WidgetTester tester, LogicalKeyboardKey key) async {
@@ -613,5 +618,17 @@ void main() {
     // 头 1.5 秒每秒约 1 分钟、到 4 秒每秒约 4 分钟、之后每秒约 16 分钟：5 秒到片尾（20 分钟）附近
     expect(h.engine.seeks.last, greaterThan(const Duration(minutes: 15)));
     await unmountPlayer(tester);
+  });
+
+  testWidgets('关闭播放器时内核已经停了（位置报 0）：停止上报仍用最后的播放位置，不把服务器进度清掉', (tester) async {
+    final h = await pumpPlayer(tester);
+    await h.engine.seek(const Duration(minutes: 7));
+    await tester.pump();
+    // 内核关闭 / 停下时位置变成 0
+    h.engine.report(speed: 0);
+    await h.engine.seek(Duration.zero);
+    await tester.pump();
+    await unmountPlayer(tester);
+    expect(h.client.stopped, [const Duration(minutes: 7)]);
   });
 }

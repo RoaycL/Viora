@@ -4,6 +4,7 @@ import 'dart:io';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:viora/data/config/app_config.dart';
 import 'package:viora/data/emby/emby_client.dart';
+import 'package:viora/data/media/media_models.dart';
 import 'package:viora/data/media/server_registry.dart';
 
 void main() {
@@ -53,5 +54,16 @@ void main() {
     final client = await start(99);
     await expectLater(client.publicInfo(), throwsA(isA<MediaServerException>()));
     expect(connections, 2);
+  });
+
+  test('播放停止上报（POST）遇到断开的连接也重试一次：进度不会因为没报上去而丢', () async {
+    final draft = await start(1);
+    final client = clientForDraft(const AppConfig(deviceId: 'dev'), draft.server.copyWith(token: 'tok', userId: 'uid'));
+    await client.reportStopped(
+      const MediaSourceInfo(serverId: 's', itemId: 'ep', id: 'src', container: 'mkv'),
+      const Duration(minutes: 41),
+      'session',
+    );
+    expect(connections, 2, reason: '第一次连接被断开后用新连接重发了');
   });
 }
