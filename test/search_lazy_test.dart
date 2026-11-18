@@ -64,7 +64,7 @@ void main() {
     await tester.testTextInput.receiveAction(TextInputAction.search);
     await tester.pump(const Duration(seconds: 1));
     await tester.pumpAndSettle();
-    expect(find.text('共 60 部作品'), findsOneWidget);
+    expect(find.text('60 部作品'), findsOneWidget);
     final built = find.byType(PosterCard).evaluate().length;
     expect(built, greaterThan(0));
     expect(built, lessThan(60));

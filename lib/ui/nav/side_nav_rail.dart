@@ -1,13 +1,10 @@
 import 'package:flutter/material.dart';
-import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../app/desktop_prefs.dart';
 import '../../app/theme.dart';
-import '../../data/config/config_store.dart';
 import '../focus/focusable.dart';
 import '../focus/input_mode.dart';
 import '../glass/glass.dart';
-import '../widgets/status_bar.dart';
 
 enum NavItem {
   search('/search', '搜索', Icons.search_rounded),
@@ -33,7 +30,7 @@ enum NavItem {
 
 /// 左侧磨砂玻璃导航栏：收起时 88 宽只显示图标（始终显示），展开到 280 并显示文字。
 /// 两种样式（设置 → 通用与关于 → 导航栏）：默认是撑满高度的一长条、设置在最下面；
-/// 紧凑是高度随项目多少、整体上下居中。顶部 Logo 下面是时钟，「资源库」图标上的小点是服务器在线状态。
+/// 紧凑是高度随项目多少、整体上下居中。搜索、服务器在线状态和时间在右上角（[TopRightBar]）。
 /// - Windows：鼠标移到上面展开，移开立即收起（键盘操作时随焦点展开）。
 /// - Android TV：焦点进入时展开，离开时收起。
 class SideNavRail extends StatefulWidget {
@@ -102,7 +99,8 @@ class _SideNavRailState extends State<SideNavRail> {
 
   Widget _build(BuildContext context, bool compact) {
     final width = _expanded ? VSpace.navRailExpandedWidth : VSpace.navRailWidth;
-    final main = NavItem.values.where((i) => i != NavItem.settings);
+    // 搜索在右上角（和电视一样），不占导航栏
+    final main = NavItem.values.where((i) => i != NavItem.settings && i != NavItem.search);
     return Stack(
       children: [
         // 展开时压暗内容（遮盖而不推挤）
@@ -141,9 +139,7 @@ class _SideNavRailState extends State<SideNavRail> {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       _Logo(expanded: _expanded),
-                      const SizedBox(height: 10),
-                      const _NavClock(),
-                      const SizedBox(height: 24),
+                      const SizedBox(height: 32),
                       for (final item in main) ...[
                         _RailItem(
                           item: item,
@@ -151,7 +147,6 @@ class _SideNavRailState extends State<SideNavRail> {
                           active: item == widget.active,
                           expanded: _expanded,
                           onSelect: widget.onSelect,
-                          serverStatus: item == NavItem.library,
                         ),
                         const SizedBox(height: 14),
                       ],
@@ -184,26 +179,6 @@ class _SideNavRailState extends State<SideNavRail> {
   }
 }
 
-/// 导航栏顶部的时钟（原来在首页右上角）
-class _NavClock extends StatelessWidget {
-  const _NavClock();
-
-  @override
-  Widget build(BuildContext context) => const SizedBox(
-    width: 56,
-    child: Center(
-      child: ClockText(
-        style: TextStyle(
-          fontSize: 17,
-          fontWeight: FontWeight.w600,
-          color: Color(0xCCFFFFFF),
-          fontFeatures: [FontFeature.tabularFigures()],
-        ),
-      ),
-    ),
-  );
-}
-
 class _RailItem extends StatelessWidget {
   const _RailItem({
     required this.item,
@@ -211,7 +186,6 @@ class _RailItem extends StatelessWidget {
     required this.active,
     required this.expanded,
     required this.onSelect,
-    this.serverStatus = false,
   });
 
   final NavItem item;
@@ -220,23 +194,8 @@ class _RailItem extends StatelessWidget {
   final bool expanded;
   final ValueChanged<NavItem> onSelect;
 
-  /// 图标右上角显示服务器在线状态的小点（资源库）
-  final bool serverStatus;
-
   @override
   Widget build(BuildContext context) {
-    if (serverStatus) {
-      return Consumer(
-        builder: (context, ref, _) {
-          final st = serverStatusOf(ref.watch(configProvider.select((c) => c.servers)));
-          return Tooltip(
-            message: st.total == 0 ? '' : '${st.online} / ${st.total} 台服务器在线',
-            waitDuration: const Duration(milliseconds: 400),
-            child: _build(context, st.total == 0 ? null : st),
-          );
-        },
-      );
-    }
     return _build(context, null);
   }
 

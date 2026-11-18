@@ -19,40 +19,8 @@ import '../glass/glass.dart';
   return (online: online, total: servers.length, color: color);
 }
 
-/// 时钟文字（时:分），每 15 秒刷新
-class ClockText extends StatefulWidget {
-  const ClockText({super.key, required this.style});
-
-  final TextStyle style;
-
-  @override
-  State<ClockText> createState() => _ClockTextState();
-}
-
-class _ClockTextState extends State<ClockText> {
-  Timer? _timer;
-
-  @override
-  void initState() {
-    super.initState();
-    _timer = Timer.periodic(const Duration(seconds: 15), (_) => setState(() {}));
-  }
-
-  @override
-  void dispose() {
-    _timer?.cancel();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final now = DateTime.now();
-    return Text('${now.hour.toString().padLeft(2, '0')}:${now.minute.toString().padLeft(2, '0')}', style: widget.style);
-  }
-}
-
 /// 右上角：服务器在线状态（最近一次测速有线路可达即算在线）+ 时钟。
-/// 电视用紧凑样式放在顶部标签栏；Windows 的状态和时钟在左侧导航栏里，不再用这个
+/// 紧凑样式（状态点 + 时间）：电视放在顶部标签栏右侧，Windows 放在页面右上角（[TopRightBar]）
 class StatusBar extends ConsumerStatefulWidget {
   const StatusBar({super.key, this.compact = false});
 
