@@ -1640,21 +1640,26 @@ class _PlayerPageState extends ConsumerState<PlayerPage> with WidgetsBindingObse
     final duration = query.duration;
     final m = _manualMark;
     String clock(Duration d) => formatClock(d);
+    // 现在实际生效的片段（手动标记优先，否则来自媒体服务器 / 片头片尾数据库），写在每一项下面的灰字里
+    String from(Segment x) => x.provider == 'manual' ? '手动标记' : '来自${segmentProviderName(x.provider)}';
+    final intro = _segmentList.where((x) => x.type == SegmentType.intro).firstOrNull;
+    final credits = _segmentList.where((x) => x.type == SegmentType.credits).firstOrNull;
+    final introNow = intro == null ? '现在：没有片头' : '现在：片头 ${clock(intro.start)}–${clock(intro.end)}（${from(intro)}）';
+    final creditsNow = credits == null
+        ? '现在：没有片尾'
+        : '现在：片尾从 ${clock(credits.start)} 开始，结尾前 ${clock(duration - credits.start)}（${from(credits)}）';
     return [
+      MenuAction('片头到这里结束（${clock(pos)}）', Icons.first_page_rounded, detail: introNow, () {
+        if (pos <= (m.introStart ?? Duration.zero)) {
+          showToast('片头结束要在片头开始之后');
+          return;
+        }
+        _saveMark(m.copyWith(introEnd: pos), '片头 ${clock(m.introStart ?? Duration.zero)}–${clock(pos)}');
+      }),
       MenuAction(
-        '片头到这里结束（${clock(pos)}）${m.introEnd == null ? '' : '  · 现为 ${clock(m.introEnd!)}'}',
-        Icons.first_page_rounded,
-        () {
-          if (pos <= (m.introStart ?? Duration.zero)) {
-            showToast('片头结束要在片头开始之后');
-            return;
-          }
-          _saveMark(m.copyWith(introEnd: pos), '片头 ${clock(m.introStart ?? Duration.zero)}–${clock(pos)}');
-        },
-      ),
-      MenuAction(
-        '片头从这里开始（${clock(pos)}）${m.introStart == null ? '  · 默认从 00:00' : '  · 现为 ${clock(m.introStart!)}'}',
+        '片头从这里开始（${clock(pos)}）',
         Icons.start_rounded,
+        detail: m.introStart == null ? '手动标记的片头默认从 00:00 开始' : '手动标记的片头现在从 ${clock(m.introStart!)} 开始',
         () {
           // 有些剧先放一段正片再进片头：片头开始后移；已有的结束点在它之前就作废
           final end = m.introEnd;
@@ -1664,28 +1669,32 @@ class _PlayerPageState extends ConsumerState<PlayerPage> with WidgetsBindingObse
           _saveMark(next, '片头从 ${clock(pos)} 开始${next.introEnd == null ? '，请再标记片头结束' : ''}');
         },
       ),
-      MenuAction(
-        '片尾从这里开始（${clock(pos)}）${m.creditsFromEnd == null ? '' : '  · 现为结尾前 ${clock(m.creditsFromEnd!)}'}',
-        Icons.last_page_rounded,
-        () {
-          if (pos >= duration || (m.introEnd != null && pos <= m.introEnd!)) {
-            showToast('片尾开始要在片头之后、结尾之前');
-            return;
-          }
-          _saveMark(m.copyWith(creditsFromEnd: duration - pos), '片尾从结尾前 ${clock(duration - pos)} 开始');
-        },
-      ),
+      MenuAction('片尾从这里开始（${clock(pos)}）', Icons.last_page_rounded, detail: creditsNow, () {
+        if (pos >= duration || (m.introEnd != null && pos <= m.introEnd!)) {
+          showToast('片尾开始要在片头之后、结尾之前');
+          return;
+        }
+        _saveMark(m.copyWith(creditsFromEnd: duration - pos), '片尾从结尾前 ${clock(duration - pos)} 开始');
+      }),
       if (m.introEnd != null || m.introStart != null)
-        MenuAction('清除片头标记', Icons.backspace_outlined, () => _saveMark(m.copyWith(clearIntro: true), '已清除片头标记')),
+        MenuAction(
+          '清除片头标记',
+          Icons.backspace_outlined,
+          () => _saveMark(m.copyWith(clearIntro: true), '已清除片头标记'),
+          detail: '手动标记：${clock(m.introStart ?? Duration.zero)}–${m.introEnd == null ? '未标结束' : clock(m.introEnd!)}',
+        ),
       // 片头片尾时长固定的剧（多数国产剧）：直接选秒数，不用播放到那个位置再标
       MenuAction.submenu(
-        '片头固定为开头 N 秒${m.introEnd == null || (m.introStart ?? Duration.zero) > Duration.zero ? '' : '  · 现为 ${m.introEnd!.inSeconds} 秒'}',
+        '片头固定为开头 N 秒',
         Icons.first_page_rounded,
+        detail: m.introEnd == null || (m.introStart ?? Duration.zero) > Duration.zero
+            ? '不用播放到那里，直接选秒数'
+            : '现在：开头 ${m.introEnd!.inSeconds} 秒',
         title: '片头固定为开头多少秒',
         items: () => [
           for (final sec in const [30, 45, 60, 75, 90, 105, 120, 150, 180])
             MenuAction(
-              '$sec 秒（跳到 ${clock(Duration(seconds: sec))}）',
+              '$sec 秒（跳到 ${clock(Duration(seconds: sec))}）${m.introEnd == Duration(seconds: sec) && (m.introStart ?? Duration.zero) == Duration.zero ? '  ✓' : ''}',
               Icons.timer_outlined,
               () => _saveMark(
                 ManualMark(
@@ -1698,13 +1707,14 @@ class _PlayerPageState extends ConsumerState<PlayerPage> with WidgetsBindingObse
         ],
       ),
       MenuAction.submenu(
-        '片尾固定为结尾 N 秒${m.creditsFromEnd == null ? '' : '  · 现为 ${m.creditsFromEnd!.inSeconds} 秒'}',
+        '片尾固定为结尾 N 秒',
         Icons.last_page_rounded,
+        detail: m.creditsFromEnd == null ? '不用播放到那里，直接选秒数' : '现在：结尾 ${m.creditsFromEnd!.inSeconds} 秒',
         title: '片尾固定为结尾多少秒',
         items: () => [
           for (final sec in const [30, 60, 90, 120, 150, 180, 240, 300])
             MenuAction(
-              '$sec 秒',
+              '$sec 秒${m.creditsFromEnd == Duration(seconds: sec) ? '  ✓' : ''}',
               Icons.timer_outlined,
               () => _saveMark(
                 _manualMark.copyWith(creditsFromEnd: Duration(seconds: sec)),
@@ -1714,7 +1724,12 @@ class _PlayerPageState extends ConsumerState<PlayerPage> with WidgetsBindingObse
         ],
       ),
       if (m.creditsFromEnd != null)
-        MenuAction('清除片尾标记', Icons.backspace_outlined, () => _saveMark(m.copyWith(clearCredits: true), '已清除片尾标记')),
+        MenuAction(
+          '清除片尾标记',
+          Icons.backspace_outlined,
+          () => _saveMark(m.copyWith(clearCredits: true), '已清除片尾标记'),
+          detail: '手动标记：结尾前 ${clock(m.creditsFromEnd!)}',
+        ),
     ];
   }
 

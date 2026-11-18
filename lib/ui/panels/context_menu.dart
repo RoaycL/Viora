@@ -8,15 +8,23 @@ import '../focus/focusable.dart';
 import '../glass/glass.dart';
 
 class MenuAction {
-  const MenuAction(this.label, this.icon, this.onSelected) : submenuTitle = null, submenu = null;
+  const MenuAction(this.label, this.icon, this.onSelected, {this.detail}) : submenuTitle = null, submenu = null;
 
   /// 打开二级菜单：二级菜单出现在这一级旁边，这一级保持显示；二级菜单里选完回到这一级（显示更新后的值）
-  const MenuAction.submenu(this.label, this.icon, {required String title, required List<MenuAction> Function() items})
-    : submenuTitle = title,
-      submenu = items,
-      onSelected = _noop;
+  const MenuAction.submenu(
+    this.label,
+    this.icon, {
+    required String title,
+    required List<MenuAction> Function() items,
+    this.detail,
+  }) : submenuTitle = title,
+       submenu = items,
+       onSelected = _noop;
 
   final String label;
+
+  /// 第二行的灰色说明（如当前生效的值），菜单窄时也完整显示，不和标题挤在一行被截掉
+  final String? detail;
   final IconData icon;
   final VoidCallback onSelected;
   final String? submenuTitle;
@@ -137,7 +145,7 @@ class _ContextMenuPanelState extends State<_ContextMenuPanel> {
                                 _select(context, actions[i], widget.depth, () => mounted ? setState(() {}) : null),
                             builder: (context, focused) => AnimatedContainer(
                               duration: VMotion.focus,
-                              height: 68,
+                              height: actions[i].detail == null ? 68 : 88,
                               padding: const EdgeInsets.symmetric(horizontal: 20),
                               decoration: BoxDecoration(
                                 color: focused ? Colors.white : const Color(0x0DFFFFFF),
@@ -152,14 +160,12 @@ class _ContextMenuPanelState extends State<_ContextMenuPanel> {
                                   ),
                                   const SizedBox(width: 16),
                                   Expanded(
-                                    child: Text(
-                                      actions[i].label,
-                                      maxLines: 1,
-                                      overflow: TextOverflow.ellipsis,
-                                      style: TextStyle(
-                                        fontSize: 22,
-                                        color: focused ? const Color(0xFF0B0C10) : Colors.white,
-                                      ),
+                                    child: _ItemText(
+                                      label: actions[i].label,
+                                      detail: actions[i].detail,
+                                      size: 22,
+                                      color: focused ? const Color(0xFF0B0C10) : Colors.white,
+                                      detailColor: focused ? const Color(0x990B0C10) : const Color(0x99FFFFFF),
                                     ),
                                   ),
                                   if (actions[i].submenu != null)
@@ -316,7 +322,7 @@ class _PopupMenuState extends State<_PopupMenu> {
                           builder: (context, focused) => AnimatedContainer(
                             key: _itemKey(i),
                             duration: VMotion.focus,
-                            height: 50,
+                            height: actions[i].detail == null ? 50 : 64,
                             padding: const EdgeInsets.symmetric(horizontal: 14),
                             decoration: BoxDecoration(
                               color: focused ? const Color(0x24FFFFFF) : const Color(0x00FFFFFF),
@@ -327,11 +333,12 @@ class _PopupMenuState extends State<_PopupMenu> {
                                 Icon(actions[i].icon, size: 22, color: Colors.white),
                                 const SizedBox(width: 14),
                                 Expanded(
-                                  child: Text(
-                                    actions[i].label,
-                                    maxLines: 1,
-                                    overflow: TextOverflow.ellipsis,
-                                    style: const TextStyle(fontSize: 20, color: Colors.white),
+                                  child: _ItemText(
+                                    label: actions[i].label,
+                                    detail: actions[i].detail,
+                                    size: 20,
+                                    color: Colors.white,
+                                    detailColor: const Color(0x99FFFFFF),
                                   ),
                                 ),
                                 if (actions[i].submenu != null)
@@ -348,6 +355,48 @@ class _PopupMenuState extends State<_PopupMenu> {
           ],
         ),
       ),
+    );
+  }
+}
+
+/// 菜单项文字：标题一行，有说明时下面一行小一号的灰字
+class _ItemText extends StatelessWidget {
+  const _ItemText({
+    required this.label,
+    required this.detail,
+    required this.size,
+    required this.color,
+    required this.detailColor,
+  });
+
+  final String label;
+  final String? detail;
+  final double size;
+  final Color color;
+  final Color detailColor;
+
+  @override
+  Widget build(BuildContext context) {
+    final title = Text(
+      label,
+      maxLines: 1,
+      overflow: TextOverflow.ellipsis,
+      style: TextStyle(fontSize: size, color: color),
+    );
+    if (detail == null) return title;
+    return Column(
+      mainAxisAlignment: MainAxisAlignment.center,
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        title,
+        const SizedBox(height: 2),
+        Text(
+          detail!,
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+          style: TextStyle(fontSize: size * 0.75, color: detailColor),
+        ),
+      ],
     );
   }
 }

@@ -33,7 +33,7 @@ void main() {
                             MenuAction('$v%${v == opacity ? ' ✓' : ''}', Icons.chat, () => opacity = v),
                         ],
                       ),
-                      MenuAction('关闭弹幕', Icons.close, () {}),
+                      MenuAction('关闭弹幕', Icons.close, () {}, detail: '现在：片头 00:00–01:30（手动标记）'),
                     ],
                   ),
                   child: const Text('打开'),
@@ -45,6 +45,12 @@ void main() {
       );
       await tester.tap(find.text('打开'));
       await tester.pumpAndSettle();
+      // 说明文字在第二行完整显示
+      expect(find.text('现在：片头 00:00–01:30（手动标记）'), findsOneWidget);
+      expect(
+        tester.getTopLeft(find.text('现在：片头 00:00–01:30（手动标记）')).dy,
+        greaterThan(tester.getTopLeft(find.text('关闭弹幕')).dy),
+      );
       await tester.tap(find.text('不透明度 · 85%'));
       await tester.pumpAndSettle();
       // 两级同时显示，二级不盖住一级
