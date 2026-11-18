@@ -72,11 +72,17 @@ class PlayerPage extends ConsumerStatefulWidget {
     this.startMs = 0,
     this.sourceId,
     this.triedSources = const [],
+    this.resume = false,
   });
 
   final String serverId;
   final String itemId;
   final int startMs;
+
+  /// 继续播放：起播前向服务器取这一集最新的进度，从那里开始（[startMs] 只在取不到时用）。
+  /// 卡片 / 详情页上的进度可能是缓存的旧数据，别的设备看到了更后面时，从旧位置播放、上报会把服务器进度覆盖回去。
+  /// 「从头播放」、切换资源时接着当前位置等明确指定了位置的不设
+  final bool resume;
   final String? sourceId;
 
   /// 自动换源时已经试过、打不开的版本（「服务器/版本 ID」），换到其他服务器时带过去，避免来回切
@@ -298,7 +304,7 @@ class _PlayerPageState extends ConsumerState<PlayerPage> with WidgetsBindingObse
     final next = _nextEpisode;
     if (next == null || !mounted) return;
     if (auto) _arrivingByAutoPlay = true;
-    _handoffTo('/play/${widget.serverId}/${next.id}?pos=0');
+    _handoffTo('/play/${widget.serverId}/${next.id}?pos=0&resume=1');
   }
 
   /// 连续自动播放 3 集没人操作：暂停，问还在不在看
@@ -483,6 +489,23 @@ class _PlayerPageState extends ConsumerState<PlayerPage> with WidgetsBindingObse
     await _applyDisplay(engine);
   }
 
+  /// 起播位置。继续播放（[PlayerPage.resume]）时用服务器上这一集最新的进度：
+  /// 卡片上的进度可能是缓存的旧数据，别的设备看得更靠后时以服务器为准；已经看完的（服务器进度为 0）从头播。
+  /// 取不到最新数据（服务器慢、出错）时用卡片带来的位置，最多等 3 秒，不拖慢起播
+  Future<Duration> _resumeFrom(Future<MediaItem> fresh) async {
+    final fallback = Duration(milliseconds: widget.startMs);
+    if (!widget.resume) return fallback;
+    try {
+      final item = await fresh.timeout(const Duration(seconds: 3));
+      if (item.position != fallback) {
+        AppLog.add('[play] 续播位置以服务器为准：${formatClock(item.position)}（卡片上是 ${formatClock(fallback)}）');
+      }
+      return item.position;
+    } catch (_) {
+      return fallback;
+    }
+  }
+
   // ───────────────────────── 音量（Windows） ─────────────────────────
 
   /// 当前音量与静音（Windows；电视用遥控器调系统音量）。改动后稍等再存进设置，滚轮连续调时不反复写盘
@@ -546,7 +569,7 @@ class _PlayerPageState extends ConsumerState<PlayerPage> with WidgetsBindingObse
         _error = null;
       });
       await engineReady;
-      await _openCurrent(at ?? Duration(milliseconds: widget.startMs));
+      await _openCurrent(at ?? await _resumeFrom(itemFuture));
       _item = await itemFuture;
       if (mounted) setState(() {});
       unawaited(_beginSegments());
@@ -1027,7 +1050,7 @@ class _PlayerPageState extends ConsumerState<PlayerPage> with WidgetsBindingObse
     if (next != null) {
       _arrivingByAutoPlay = true;
       _countdownTimer?.cancel();
-      _handoffTo('/play/${widget.serverId}/${next.id}?pos=0');
+      _handoffTo('/play/${widget.serverId}/${next.id}?pos=0&resume=1');
       return;
     }
     context.pop();
@@ -1249,7 +1272,7 @@ class _PlayerPageState extends ConsumerState<PlayerPage> with WidgetsBindingObse
         showToast('已经是第一集');
         return;
       }
-      _handoffTo('/play/${widget.serverId}/${prev.id}?pos=0');
+      _handoffTo('/play/${widget.serverId}/${prev.id}?pos=0&resume=1');
     } catch (e) {
       if (mounted) showToast('获取集列表失败');
     }
@@ -1461,7 +1484,7 @@ class _PlayerPageState extends ConsumerState<PlayerPage> with WidgetsBindingObse
       if (_item?.kind == MediaKind.episode) showToast('已经是最后一集');
       return;
     }
-    _handoffTo('/play/${widget.serverId}/${next.id}?pos=0');
+    _handoffTo('/play/${widget.serverId}/${next.id}?pos=0&resume=1');
   }
 
   void _cycleAudio() {
@@ -1879,7 +1902,7 @@ class _PlayerPageState extends ConsumerState<PlayerPage> with WidgetsBindingObse
       _armOsdTimer();
       return;
     }
-    _handoffTo('/play/${widget.serverId}/${e.id}?pos=${e.position.inMilliseconds}');
+    _handoffTo('/play/${widget.serverId}/${e.id}?pos=${e.position.inMilliseconds}&resume=1');
   }
 
   // ───────────────────────── 界面 ─────────────────────────

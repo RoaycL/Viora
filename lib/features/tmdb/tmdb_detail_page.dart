@@ -98,7 +98,7 @@ class _TmdbDetailState extends ConsumerState<_TmdbDetail> {
     // 记住这部作品用的服务器（剧集按剧记，下次默认还用这台）
     final copies = ref.read(tmdbLibrarySearchProvider(searchKeyOf(widget.t))).value ?? const <MediaItem>[];
     rememberSource(copies.where((c) => c.serverId == o.serverId).firstOrNull ?? o.item, o.serverId);
-    context.push(o.playRoute(position: fromStart ? Duration.zero : o.item.position));
+    context.push(o.playRoute(position: fromStart ? Duration.zero : o.item.position, resume: !fromStart));
   }
 
   @override

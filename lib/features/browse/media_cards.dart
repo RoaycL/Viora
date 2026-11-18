@@ -27,7 +27,7 @@ void openWatchedItem(BuildContext context, MediaItem item) {
 /// 播放条目（继续观看等）
 void playMediaItem(BuildContext context, MediaItem item, {bool fromStart = false}) {
   final pos = fromStart ? 0 : item.position.inMilliseconds;
-  context.push('/play/${item.serverId}/${item.id}?pos=$pos');
+  context.push('/play/${item.serverId}/${item.id}?pos=$pos${fromStart ? '' : '&resume=1'}');
 }
 
 String mediaSubtitle(MediaItem item) {

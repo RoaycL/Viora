@@ -13,7 +13,7 @@ void openTmdbTitle(BuildContext context, TmdbTitle t) => context.push('/tmdb/${t
 /// 播放 TMDB 条目：电影直接播放（默认资源），剧集进详情选集
 void playTmdbTitle(BuildContext context, MediaItem copy) {
   if (copy.kind == MediaKind.movie) {
-    context.push('/play/${copy.serverId}/${copy.id}?pos=0');
+    context.push('/play/${copy.serverId}/${copy.id}?pos=0&resume=1');
   } else {
     context.push('/item/${copy.serverId}/${copy.id}');
   }

@@ -49,8 +49,9 @@ class SourceOption {
     _ => 0,
   };
 
-  String playRoute({Duration position = Duration.zero}) =>
-      '/play/${item.serverId}/${item.id}?pos=${position.inMilliseconds}&source=${source.id}';
+  /// [resume]：继续播放（播放页起播前取服务器上最新的进度），见 PlayerPage.resume
+  String playRoute({Duration position = Duration.zero, bool resume = false}) =>
+      '/play/${item.serverId}/${item.id}?pos=${position.inMilliseconds}&source=${source.id}${resume ? '&resume=1' : ''}';
 }
 
 /// 同一账号刷新时保留可用资源；账号 / 家长限制变化时不能复用旧 AsyncValue 中的资源。

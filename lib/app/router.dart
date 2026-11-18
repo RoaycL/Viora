@@ -92,6 +92,7 @@ GoRouter buildRouter({List<NavigatorObserver>? observers}) {
             itemId: state.pathParameters['id']!,
             startMs: int.tryParse(state.uri.queryParameters['pos'] ?? '') ?? 0,
             sourceId: state.uri.queryParameters['source'],
+            resume: state.uri.queryParameters['resume'] == '1',
             triedSources: [
               for (final t in (state.uri.queryParameters['tried'] ?? '').split(','))
                 if (t.isNotEmpty) t,
