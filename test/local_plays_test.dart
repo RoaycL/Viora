@@ -16,7 +16,7 @@ void main() {
     for (final it in items) '${it.serverId}/${it.id}': (it, DateTime.now()),
   };
 
-  test('本机刚播放过的覆盖服务器的旧进度；看完的移出；新开始看的加进来', () {
+  test('本机刚播放过的覆盖服务器的旧进度；看完的保留；新开始看的加进来', () {
     final server = [ep('a', minutes: 5), ep('b', minutes: 10), ep('c', minutes: 3)];
     final merged = mergeLocalPlays(
       server,
@@ -26,7 +26,10 @@ void main() {
         ep('d', minutes: 2), // 刚开始看，服务器还没刷新回来
       ]),
     );
-    expect([for (final it in merged) (it.id, it.position.inMinutes)], [('a', 25), ('c', 3), ('d', 2)]);
+    expect(
+      [for (final it in merged) (it.id, it.position.inMinutes, it.played)],
+      [('a', 25, false), ('b', 44, true), ('c', 3, false), ('d', 2, false)],
+    );
   });
 
   test('没有本机记录时原样返回', () {

@@ -21,6 +21,7 @@ import '../../data/config/config_store.dart';
 import '../../data/danmaku/danmaku_client.dart';
 import '../../data/danmaku/danmaku_models.dart';
 import '../../data/emby/emby_client.dart';
+import '../../data/history/pending_reports.dart';
 import '../../data/history/play_history.dart';
 import '../../data/index/index_sync.dart';
 import '../../data/index/media_index.dart';
@@ -630,7 +631,21 @@ class _PlayerPageState extends ConsumerState<PlayerPage> with WidgetsBindingObse
       // 等服务器记下进度后再刷新继续观看 / 详情
       final container = _container;
       final key = (serverId: widget.serverId, itemId: widget.itemId);
-      Future(() => client.reportStopped(source, position, _playSessionId)).catchError((_) {}).whenComplete(() {
+      // 先在本机存一份，服务器收到后删掉：上报发完之前应用就被关掉（退出后马上关应用、更新）时，下次启动补发
+      final pending = PendingPlayReport(
+        serverId: widget.serverId,
+        account: accountScope(client.server),
+        itemId: widget.itemId,
+        sourceId: source.id,
+        position: position,
+        at: DateTime.now(),
+        playSessionId: _playSessionId,
+      );
+      final session = _playSessionId;
+      Future(() async {
+        await PendingPlayReports.add(pending);
+        if (await client.reportStopped(source, position, session)) await PendingPlayReports.done(pending);
+      }).catchError((Object _) {}).whenComplete(() {
         // 应用正在关闭（容器已销毁）时不再刷新
         try {
           final refresh = container?.read(mediaFeedRefreshProvider.notifier);

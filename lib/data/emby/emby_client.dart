@@ -630,11 +630,12 @@ class EmbyClient {
     String event = 'TimeUpdate',
   }) => _report('/Sessions/Playing/Progress', s, position, playSessionId, paused: paused, event: event);
 
-  Future<void> reportStopped(MediaSourceInfo s, Duration position, String? playSessionId) =>
+  /// 返回服务器有没有收到（没收到的停止上报由 PendingPlayReports 存下来，下次启动补发）
+  Future<bool> reportStopped(MediaSourceInfo s, Duration position, String? playSessionId) =>
       _report('/Sessions/Playing/Stopped', s, position, playSessionId);
 
   /// 还没发完的播放上报（应用内更新重启前先等它们发完，不然这次播放的进度可能没报上去）
-  static final _pendingReports = <Future<void>>{};
+  static final _pendingReports = <Future<bool>>{};
 
   /// 等还没发完的播放上报，最多等 [timeout]
   static Future<void> flushReports({Duration timeout = const Duration(seconds: 5)}) async {
@@ -644,7 +645,7 @@ class EmbyClient {
     } catch (_) {}
   }
 
-  Future<void> _report(
+  Future<bool> _report(
     String path,
     MediaSourceInfo s,
     Duration position,
@@ -657,7 +658,7 @@ class EmbyClient {
     return f.whenComplete(() => _pendingReports.remove(f));
   }
 
-  Future<void> _sendReport(
+  Future<bool> _sendReport(
     String path,
     MediaSourceInfo s,
     Duration position,
@@ -683,8 +684,10 @@ class EmbyClient {
       );
       // 开始 / 停止写进日志（进度上报每 10 秒一次，只记失败）：服务器上进度不对时能看出有没有报上去
       if (!path.endsWith('/Progress')) debugPrint('report $path ok ${s.itemId} @${position.inSeconds}s');
+      return true;
     } catch (e) {
       debugPrint('report $path failed: $e');
+      return false;
     }
   }
 

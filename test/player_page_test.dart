@@ -16,6 +16,7 @@ import 'package:viora/data/aggregate/sources.dart';
 import 'package:viora/data/config/app_config.dart';
 import 'package:viora/data/config/config_store.dart';
 import 'package:viora/data/emby/emby_client.dart';
+import 'package:viora/data/history/pending_reports.dart';
 import 'package:viora/data/media/media_models.dart';
 import 'package:viora/data/media/server_registry.dart';
 import 'package:viora/features/player/player_page.dart';
@@ -186,9 +187,15 @@ class PlayerClient extends EmbyClient {
 
   /// 停止上报的位置
   final stopped = <Duration>[];
+
+  /// 停止上报失败（服务器连不上 / 应用被关掉）
+  bool stopFails = false;
+
   @override
-  Future<void> reportStopped(MediaSourceInfo s, Duration position, String? playSessionId) async =>
-      stopped.add(position);
+  Future<bool> reportStopped(MediaSourceInfo s, Duration position, String? playSessionId) async {
+    stopped.add(position);
+    return !stopFails;
+  }
 }
 
 class OneServer extends ConfigStore {
@@ -705,6 +712,19 @@ void main() {
     final local = container.read(localPlaysProvider)['s/s1e2']?.$1;
     expect(local?.position, const Duration(minutes: 7));
     expect(local?.played, isFalse);
+    await unmountPlayer(tester);
+  });
+
+  testWidgets('停止上报没报上去：存在本机等下次启动补发；报上去了就删掉', (tester) async {
+    final h = await pumpPlayer(tester);
+    await h.engine.seek(const Duration(minutes: 9));
+    await tester.pump();
+    h.client.stopFails = true;
+    h.router.pop();
+    await tester.pumpAndSettle();
+    await tester.runAsync(() => Future<void>.delayed(const Duration(milliseconds: 100)));
+    final left = await tester.runAsync(PendingPlayReports.list);
+    expect([for (final r in left!) (r.itemId, r.position)], [('s1e2', const Duration(minutes: 9))]);
     await unmountPlayer(tester);
   });
 }

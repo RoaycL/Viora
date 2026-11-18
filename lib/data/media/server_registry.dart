@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:math' as math;
 
 import '../../player/preload.dart';
 import '../history/play_history.dart';
@@ -158,24 +159,17 @@ class LocalPlays extends Notifier<Map<String, (MediaItem, DateTime)>> {
 
 final localPlaysProvider = NotifierProvider<LocalPlays, Map<String, (MediaItem, DateTime)>>(LocalPlays.new);
 
-/// 服务器的继续观看 + 本机刚播放过的（本机的覆盖同一条目；看完的移出；新开始看的加进来）
+/// 服务器的记录 + 本机刚播放过的（本机的覆盖同一条目，新看的加进来；看完的也保留，继续观看就是观看记录）
 List<MediaItem> mergeLocalPlays(List<MediaItem> server, Map<String, (MediaItem, DateTime)> local) {
   if (local.isEmpty) return server;
-  final out = <MediaItem>[];
   final seen = <String>{};
-  for (final it in server) {
-    final key = '${it.serverId}/${it.id}';
-    seen.add(key);
-    final mine = local[key]?.$1;
-    if (mine == null) {
-      out.add(it);
-    } else if (!mine.played && mine.position > Duration.zero) {
-      out.add(mine);
-    }
-  }
+  final out = [
+    for (final it in server)
+      if (seen.add('${it.serverId}/${it.id}')) local['${it.serverId}/${it.id}']?.$1 ?? it,
+  ];
   for (final e in local.entries) {
     final mine = e.value.$1;
-    if (!seen.contains(e.key) && !mine.played && mine.position > Duration.zero) out.add(mine);
+    if (!seen.contains(e.key) && (mine.played || mine.position > Duration.zero)) out.add(mine);
   }
   return out;
 }
@@ -188,6 +182,27 @@ final resumeProvider = Provider<AsyncValue<List<MediaItem>>>((ref) {
     final epoch = DateTime(1970);
     all.sort((a, b) => (PlayHistory.lastPlayed(b) ?? epoch).compareTo(PlayHistory.lastPlayed(a) ?? epoch));
     return all;
+  });
+});
+
+/// 首页「继续观看」：没看完的 + 最近看完的（看完了也保留，相当于观看记录），按上次播放时间排，最多 [limit] 条。
+/// 剧集只留最近的一集（由首页去重）
+final continueWatchingProvider = Provider<AsyncValue<List<MediaItem>>>((ref) {
+  const limit = 40;
+  final config = ref.read(configProvider);
+  final resume = ref.watch(resumeProvider);
+  final played = ref.watch(mediaFeedStateProvider(MediaFeedKind.recentlyPlayed));
+  final local = ref.watch(localPlaysProvider);
+  return resume.whenData((inProgress) {
+    final seen = {for (final it in inProgress) '${it.serverId}/${it.id}'};
+    final finished = mergeLocalPlays(
+      played.value?.items ?? const <MediaItem>[],
+      local,
+    ).where((it) => seen.add('${it.serverId}/${it.id}') && itemVisible(config, it)).toList();
+    final epoch = DateTime(1970);
+    return [...inProgress, ...finished]
+      ..sort((a, b) => (PlayHistory.lastPlayed(b) ?? epoch).compareTo(PlayHistory.lastPlayed(a) ?? epoch))
+      ..length = math.min(limit, inProgress.length + finished.length);
   });
 });
 

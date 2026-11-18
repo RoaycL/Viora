@@ -550,7 +550,7 @@ class _HomeBodyState extends ConsumerState<_HomeBody> {
     final tmdbOn = tmdbClient != null;
     _configurePrefetch(tmdbClient);
     final serverNames = {for (final s in servers) s.id: s.displayName};
-    final resumeAsync = ref.watch(resumeProvider);
+    final resumeAsync = ref.watch(continueWatchingProvider);
     final resume = servers.isEmpty ? const <MediaItem>[] : dedupeWatched(resumeAsync.value ?? const <MediaItem>[]);
     final resumeState = ref.watch(mediaFeedStateProvider(MediaFeedKind.resume)).value;
     final recent = ref.watch(recentlyAddedProvider);
@@ -599,7 +599,10 @@ class _HomeBodyState extends ConsumerState<_HomeBody> {
     final header = math.max(48.0, textScale.scale(28) * 1.5);
     double extent(double cards) => header + cards + FocusRow.focusBleed * 2 + 24;
     // 同步中：首次加载，或先显示了上次的数据、后台正在向服务器取最新的。同步完了标题后面什么都不显示
-    final resumeSyncing = resumeAsync.isLoading || (resumeState?.refreshing ?? false);
+    final resumeSyncing =
+        resumeAsync.isLoading ||
+        (resumeState?.refreshing ?? false) ||
+        (ref.watch(mediaFeedStateProvider(MediaFeedKind.recentlyPlayed)).value?.refreshing ?? false);
     // 没有继续观看的内容、也不在同步时整行不显示（服务器暂时连不上也不再提示）
     final showResume = servers.isNotEmpty && (resume.isNotEmpty || resumeAsync.isLoading);
     // 首屏给继续观看留的高度：刷新期间（已有结果、正在重新加载）沿用已有结果，不让 Hero 一缩一放、焦点按钮跳动
@@ -717,6 +720,8 @@ class _HomeBodyState extends ConsumerState<_HomeBody> {
                   resume[i],
                   node,
                   watchedOn: serverNames[resume[i].serverId] ?? '未知服务器',
+                  // 看完的：剧集打开整部剧并选中下一集，电影打开详情（不从头重播）
+                  onActivate: resume[i].played ? () => openWatchedItem(context, resume[i], next: true) : null,
                   onMenu: () => openWatchedItem(context, resume[i]),
                 ),
               ),
