@@ -316,7 +316,7 @@ Future<void> _connect(ProviderContainer ref, String id, void Function(String) lo
     server = await clientForDraft(config, server).probeAll();
     if (server.lines.every((l) => l.latencyMs == null)) {
       log('「${server.displayName}」连不上，请检查地址或代理');
-      await store.upsertServer(server);
+      await store.replaceServerIfUnchanged(initial, server);
       return;
     }
     if (server.name.trim().isEmpty) {
@@ -327,14 +327,14 @@ Future<void> _connect(ProviderContainer ref, String id, void Function(String) lo
       } catch (_) {}
     }
     if (!server.loggedIn) server = await clientForDraft(config, server).login();
-    await store.upsertServer(server.copyWith(lastAccessAt: DateTime.now()));
+    if (!await store.replaceServerIfUnchanged(initial, server.copyWith(lastAccessAt: DateTime.now()))) return;
     log('「${server.displayName}」已连接');
     Future<void>.delayed(
       const Duration(seconds: 1),
       () => ref.read(indexSyncProvider.notifier).syncServer(id, forceFull: true),
     );
   } catch (e) {
-    await store.upsertServer(server);
+    await store.replaceServerIfUnchanged(initial, server);
     log('「${server.displayName}」登录失败：$e');
   }
 }

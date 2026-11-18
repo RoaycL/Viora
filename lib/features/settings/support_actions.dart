@@ -16,6 +16,7 @@ import '../../domain/models/segment_settings.dart';
 import '../../ui/glass/glass.dart';
 import '../../ui/widgets/buttons.dart';
 import '../../ui/widgets/toast.dart';
+import '../metadata/ratings_service.dart';
 import '../segments/segment_service.dart';
 import '../sync/sync_settings_section.dart';
 
@@ -148,17 +149,30 @@ class _LogShareDialogState extends State<_LogShareDialog> {
 // ───────────────────────── 配置备份 ─────────────────────────
 
 /// 导出全部配置（与局域网同步同一格式，含密码和 Key，请妥善保存）
-Future<void> exportBackup(WidgetRef ref) async {
+Future<Map<String, dynamic>> buildBackupPayload(ProviderContainer container) async {
   SegmentSettings? segments;
   try {
-    segments = await ref.read(segmentSettingsProvider.future);
+    segments = await container.read(segmentSettingsProvider.future);
   } catch (_) {}
-  final payload = buildSyncPayload(
-    ref.read(configProvider),
+  // 直接读取持久化记录，等待尚未完成的保存；读取失败立即报告，避免 provider 自动重试让导出一直等待。
+  final ratings = await container.read(ratingsSettingsStoreProvider).load();
+  return buildSyncPayload(
+    container.read(configProvider),
     sections: {...SyncSection.values},
     segments: segments,
+    ratings: ratings,
     from: '备份文件',
   );
+}
+
+Future<void> exportBackup(WidgetRef ref) async {
+  final Map<String, dynamic> payload;
+  try {
+    payload = await buildBackupPayload(ProviderScope.containerOf(ref.context, listen: false));
+  } catch (_) {
+    showToast('备份失败：无法读取评分设置，请检查系统安全存储后重试');
+    return;
+  }
   final loc = await getSaveLocation(
     suggestedName: 'viora-backup-${_stamp()}.json',
     acceptedTypeGroups: const [

@@ -55,6 +55,9 @@ class ConfigStore extends Notifier<AppConfig> {
   /// 已写入密钥库的值，避免每次改配置都重写
   final _written = <String, String?>{};
 
+  // 配置与密钥库必须按同一顺序落盘，避免较慢的旧保存覆盖新配置。
+  Future<void> _writes = Future<void>.value();
+
   static String _secretKey(String serverId, String field) => 'viora.server.$serverId.$field';
 
   static String _webdavKey(String field) => 'viora.webdav.$field';
@@ -152,13 +155,21 @@ class ConfigStore extends Notifier<AppConfig> {
     await prefs.setString(_key, jsonEncode(json));
   }
 
-  Future<void> update(AppConfig Function(AppConfig) change) async {
+  Future<void> update(AppConfig Function(AppConfig) change) {
     state = change(state);
-    try {
-      await _write(state);
-    } catch (e) {
+    final snapshot = state;
+    final task = _writes.then((_) => _write(snapshot));
+    _writes = task.catchError((Object e) {
       debugPrint('save config failed: $e');
-    }
+    });
+    return _writes;
+  }
+
+  /// 后台连接只可更新启动时的那份服务器；已删除或修改的服务器不再回写。
+  Future<bool> replaceServerIfUnchanged(ServerConfig expected, ServerConfig replacement) async {
+    if (!identical(state.server(expected.id), expected)) return false;
+    await updateServer(expected.id, (_) => replacement);
+    return true;
   }
 
   Future<void> upsertServer(ServerConfig server) => update((c) {

@@ -210,6 +210,17 @@ class WebDavSync {
   }
 
   Future<String> _sync(WebDavSyncMode mode) async {
+    for (var attempt = 0; attempt < 3; attempt++) {
+      try {
+        return await _syncOnce(mode);
+      } on WebDavConflict {
+        if (attempt == 2) rethrow;
+      }
+    }
+    throw const WebDavConflict();
+  }
+
+  Future<String> _syncOnce(WebDavSyncMode mode) async {
     final config = _container.read(configProvider).webdav;
     if (!config.configured) throw const WebDavException('还没有填写 WebDAV 地址');
     if (!config.enabled) throw const WebDavException('WebDAV 同步已关闭');
@@ -223,15 +234,15 @@ class WebDavSync {
       return '已用本机配置覆盖云端';
     }
 
-    final text = await client.read();
-    if (text == null) {
+    final remoteFile = await client.readFile();
+    if (remoteFile == null) {
       if (mode == WebDavSyncMode.download) throw const WebDavException('云端还没有配置文件');
-      await _upload(client, config, local, localHash);
+      await _upload(client, config, local, localHash, createOnly: true);
       return '云端还没有配置，已上传本机配置';
     }
     Map<String, dynamic> remote;
     try {
-      remote = jsonDecode(text) as Map<String, dynamic>;
+      remote = jsonDecode(remoteFile.content) as Map<String, dynamic>;
     } catch (_) {
       throw const WebDavException('云端文件不是 Viora 的配置');
     }
@@ -248,15 +259,22 @@ class WebDavSync {
       await _saveState(await _localHash(), rev);
       return '已从$source下载：$message';
     }
+    // 没有强 ETag 就无法安全覆盖已存在的文件；仍允许下载和显式「覆盖云端」。
+    final etag = remoteFile.etag;
+    if (localChanged) {
+      if (etag == null || !etag.startsWith('"') || !etag.endsWith('"')) {
+        throw const WebDavException('WebDAV 未提供强 ETag，无法安全自动上传；请更换服务或手动选择「用本机覆盖云端」');
+      }
+    }
     if (remoteChanged && localChanged) {
       // 两边都改过：合并（不删除任何一边的服务器），再把合并结果传上去
       final message = await _apply(remote, replaceServers: false);
       final merged = await _payload();
-      await _upload(client, config, merged, hashOf(merged));
+      await _upload(client, config, merged, hashOf(merged), etag: etag);
       return '已合并$source的配置并上传：$message';
     }
     if (localChanged) {
-      await _upload(client, config, local, localHash);
+      await _upload(client, config, local, localHash, etag: etag);
       return '已上传本机的修改';
     }
     await _saveState(localHash, rev);
@@ -273,11 +291,18 @@ class WebDavSync {
     return message.replaceFirst('已导入：', '');
   }
 
-  Future<void> _upload(WebDavClient client, WebDavConfig config, Map<String, dynamic> payload, String hash) async {
+  Future<void> _upload(
+    WebDavClient client,
+    WebDavConfig config,
+    Map<String, dynamic> payload,
+    String hash, {
+    String? etag,
+    bool createOnly = false,
+  }) async {
     final rev = newId();
     var file = {...payload, 'rev': rev, 'updatedAt': DateTime.now().toUtc().toIso8601String()};
     if (config.passphrase.isNotEmpty) file = await WebDavCrypto.encrypt(file, config.passphrase);
-    await client.write(const JsonEncoder.withIndent('  ').convert(file));
+    await client.write(const JsonEncoder.withIndent('  ').convert(file), ifMatch: etag, ifNoneMatch: createOnly);
     await _saveState(hash, rev);
   }
 }

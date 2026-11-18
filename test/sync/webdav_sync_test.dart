@@ -15,6 +15,12 @@ class _FakeDav {
   final files = <String, String>{};
   final dirs = <String>{'/dav'};
   int puts = 0;
+  final createConditions = <String?>[];
+  bool sendEtag = true;
+  bool sendWeakEtag = false;
+  Future<void> Function()? beforePut;
+
+  String etag(String content) => '"${base64.encode(utf8.encode(content))}"';
 
   /// 父目录不存在时回的状态码（有的服务器回 405 而不是 409）
   int missingParent = 409;
@@ -44,10 +50,21 @@ class _FakeDav {
           if (f == null) {
             res.statusCode = 404;
           } else {
+            if (sendEtag) res.headers.set('etag', '${sendWeakEtag ? 'W/' : ''}${etag(f)}');
             res.write(f);
           }
         case 'PUT':
-          if (readOnly) {
+          createConditions.add(req.headers.value('if-none-match'));
+          final hook = beforePut;
+          beforePut = null;
+          await hook?.call();
+          final current = files[path];
+          final match = req.headers.value('if-match');
+          final createOnly = req.headers.value('if-none-match') == '*';
+          if ((createOnly && current != null) || (match != null && (current == null || match != etag(current)))) {
+            await req.drain<void>();
+            res.statusCode = 412;
+          } else if (readOnly) {
             res.statusCode = 405;
           } else if (!dirs.contains(parent.replaceAll(RegExp(r'/$'), ''))) {
             res.statusCode = missingParent;
@@ -129,6 +146,86 @@ void main() {
     expect(await syncA.sync(), contains('上传本机的修改'));
     expect(await syncB.sync(), contains('删除服务器 1 台'));
     expect(names(b), ['home']);
+  });
+
+  test('同时创建云端文件：失败的一方重读合并，不丢服务器', () async {
+    final webdav = WebDavConfig(url: dav.url, username: 'me', password: 'pw');
+    final (a, syncA) = await device('a', AppConfig(servers: [_server('1', 'home')], webdav: webdav));
+    final (_, syncB) = await device('b', AppConfig(servers: [_server('2', 'friend')], webdav: webdav));
+    dav.beforePut = () async {
+      await syncB.sync();
+    };
+    expect(await syncA.sync(), contains('合并'));
+    expect(names(a), ['friend', 'home']);
+    final remote = jsonDecode(dav.files['/dav/Viora/viora-config.json']!) as Map;
+    expect((remote['servers'] as List).map((s) => s['name']), containsAll(['friend', 'home']));
+  });
+
+  test('读取后发生远端修改：条件写入冲突后重新合并', () async {
+    final webdav = WebDavConfig(url: dav.url, username: 'me', password: 'pw');
+    final (a, syncA) = await device('a', AppConfig(servers: [_server('1', 'home')], webdav: webdav));
+    await syncA.sync();
+    final (b, syncB) = await device('b', AppConfig(webdav: webdav));
+    await syncB.sync();
+    await syncA.sync();
+    await a.read(configProvider.notifier).upsertServer(_server('3', 'local'));
+    await b.read(configProvider.notifier).upsertServer(_server('2', 'friend'));
+    dav.beforePut = () async {
+      await syncB.sync();
+    };
+    expect(await syncA.sync(), contains('合并'));
+    expect(names(a), ['friend', 'home', 'local']);
+    final remote = jsonDecode(dav.files['/dav/Viora/viora-config.json']!) as Map;
+    expect((remote['servers'] as List).map((s) => s['name']), containsAll(['friend', 'home', 'local']));
+  });
+
+  test('没有强 ETag 时自动上传失败，仍可明确覆盖云端', () async {
+    final webdav = WebDavConfig(url: dav.url, username: 'me', password: 'pw');
+    final (a, syncA) = await device('a', AppConfig(servers: [_server('1', 'home')], webdav: webdav));
+    await syncA.sync();
+    await a.read(configProvider.notifier).upsertServer(_server('2', 'friend'));
+    final original = dav.files['/dav/Viora/viora-config.json'];
+    for (final weak in [false, true]) {
+      dav.sendEtag = weak;
+      dav.sendWeakEtag = weak;
+      await expectLater(
+        syncA.sync(),
+        throwsA(isA<WebDavException>().having((e) => e.message, 'message', contains('强 ETag'))),
+      );
+      expect(dav.files['/dav/Viora/viora-config.json'], original);
+    }
+    expect(await syncA.sync(mode: WebDavSyncMode.upload), contains('覆盖云端'));
+  });
+
+  test('连续冲突最多重试三次，不覆盖云端的新版本', () async {
+    final webdav = WebDavConfig(url: dav.url, username: 'me', password: 'pw');
+    final (a, syncA) = await device('a', AppConfig(servers: [_server('1', 'home')], webdav: webdav));
+    await syncA.sync();
+    await a.read(configProvider.notifier).upsertServer(_server('2', 'local'));
+    var conflicts = 0;
+    Future<void> changeRemote() async {
+      conflicts++;
+      final remote = jsonDecode(dav.files['/dav/Viora/viora-config.json']!) as Map<String, dynamic>;
+      remote['rev'] = 'other-device-$conflicts';
+      dav.files['/dav/Viora/viora-config.json'] = jsonEncode(remote);
+      dav.beforePut = changeRemote;
+    }
+
+    dav.beforePut = changeRemote;
+    await expectLater(syncA.sync(), throwsA(isA<WebDavConflict>()));
+    expect(conflicts, 3);
+    final remote = jsonDecode(dav.files['/dav/Viora/viora-config.json']!) as Map;
+    expect(remote['rev'], 'other-device-3');
+    expect((remote['servers'] as List).length, 1);
+    expect(names(a), ['home', 'local']);
+  });
+
+  test('创建目录后的 PUT 重试仍携带首次创建条件', () async {
+    final client = WebDavClient(WebDavConfig(url: dav.url, username: 'me', password: 'pw'));
+    await client.write('{"viora":1}', ifNoneMatch: true);
+    expect(dav.createConditions, ['*', '*']);
+    await expectLater(client.write('{"viora":2}', ifNoneMatch: true), throwsA(isA<WebDavConflict>()));
+    expect(dav.files['/dav/Viora/viora-config.json'], '{"viora":1}');
   });
 
   test('口令不对、账号不对时给出原因', () async {
