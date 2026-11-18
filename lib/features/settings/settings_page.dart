@@ -650,10 +650,10 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
             ValueListenableBuilder<bool>(
               valueListenable: PerfMode.liteSetting,
               builder: (context, lite, _) => VToggle(
-                label: '低配模式',
+                label: '流畅优先',
                 subtitle: lite
                     ? '已开启：关掉毛玻璃模糊、加载动画、卡片浮现动画，弹幕每秒 30 帧，2GB 内存的电视盒子也流畅'
-                    : '已关闭：显示完整的动画和毛玻璃效果。电视盒子卡顿或闪退时请重新打开（重新进入页面后生效）',
+                    : '已关闭：显示完整的动画和毛玻璃效果（适合性能好的电视盒子）。卡顿时请重新打开（重新进入页面后生效）',
                 value: lite,
                 onChanged: (v) async {
                   await PerfMode.set(v);
@@ -684,10 +684,20 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
             ValueListenableBuilder<AppIconStyle>(
               valueListenable: DesktopPrefs.instance.iconStyle,
               builder: (context, v, _) => VChoice<AppIconStyle>(
-                label: '应用图标（左上角和任务栏）',
+                label: '桌面图标（任务栏、桌面和开始菜单的快捷方式；应用里的图标不变）',
                 options: [for (final s in AppIconStyle.values) (s, s.label)],
                 value: v,
                 onChanged: DesktopPrefs.instance.setIconStyle,
+              ),
+            ),
+            const SizedBox(height: 24),
+            ValueListenableBuilder<bool>(
+              valueListenable: DesktopPrefs.instance.navCompact,
+              builder: (context, compact, _) => VChoice<bool>(
+                label: '左侧导航栏',
+                options: const [(false, '默认（一长条）'), (true, '紧凑（上下居中）')],
+                value: compact,
+                onChanged: DesktopPrefs.instance.setNavCompact,
               ),
             ),
             const SizedBox(height: 24),

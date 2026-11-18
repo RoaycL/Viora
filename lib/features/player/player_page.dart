@@ -294,12 +294,15 @@ class _PlayerPageState extends ConsumerState<PlayerPage> with WidgetsBindingObse
   int? _nextCountdown;
   bool _autoNextPending = false;
   Timer? _countdownTimer;
-  static const nextCountdownSeconds = 5;
+
+  /// 片尾自动下一集：先显示 3 秒「下一集」按钮，再倒计时 3 秒，然后播放下一集
+  static const nextButtonSeconds = 3;
+  static const nextCountdownSeconds = 3;
 
   /// 片尾自动模式：先倒计时，OK / 回车立即播放，返回取消（docs/07 §3.3）
   void _startNextCountdown() {
     if (_nextEpisode == null || _nextCountdown != null) return;
-    setState(() => _nextCountdown = nextCountdownSeconds);
+    setState(() => _nextCountdown = nextButtonSeconds + nextCountdownSeconds);
     _countdownTimer?.cancel();
     _skipFadeTimer?.cancel();
     if (_autoFullScreenPending && windowFullScreen.value) unawaited(toggleFullScreen());
@@ -429,9 +432,12 @@ class _PlayerPageState extends ConsumerState<PlayerPage> with WidgetsBindingObse
     }
     // 开始播放前内核报的位置可能还是 0（续播时还没跳到上次的位置），不能拿来判断片头
     if (_started || s.playing) _segments?.onPosition(s.position);
+    // 预加载下一集：看到 85%，或离片尾开始不到 1 分钟（片尾比较长的剧 85% 时可能已经在片尾里）
+    final credits = _segmentList.where((x) => x.type == SegmentType.credits).firstOrNull;
     if (!_nextPreloading &&
         s.duration > Duration.zero &&
-        s.position.inMilliseconds > s.duration.inMilliseconds * 0.85) {
+        (s.position.inMilliseconds > s.duration.inMilliseconds * 0.85 ||
+            (credits != null && s.position >= credits.start - const Duration(minutes: 1)))) {
       _preloadNext();
     }
     if (s.playing != _wasPlaying) {
@@ -783,7 +789,7 @@ class _PlayerPageState extends ConsumerState<PlayerPage> with WidgetsBindingObse
               if (action.kind == SegmentSkipActionKind.nextEpisode) {
                 _autoNextPending = true;
               } else {
-                showToast(_autoSkipText(action));
+                showToast(_autoSkipText(action), duration: const Duration(seconds: 4));
               }
             },
             onActionError: (e) => debugPrint('segments: $e'),
@@ -1077,9 +1083,9 @@ class _PlayerPageState extends ConsumerState<PlayerPage> with WidgetsBindingObse
 
   static String _autoSkipText(SegmentSkipAction a) => switch (a.segment.type) {
     _ when a.kind == SegmentSkipActionKind.nextEpisode => '片尾：已自动播放下一集',
-    SegmentType.intro => '已自动跳过片头',
-    SegmentType.recap => '已自动跳过前情提要',
-    SegmentType.credits => '已自动跳过片尾',
+    SegmentType.intro => '已为您跳过片头，如需调整请到「设置 → 片头片尾」',
+    SegmentType.recap => '已为您跳过前情提要，如需调整请到「设置 → 片头片尾」',
+    SegmentType.credits => '已为您跳过片尾，如需调整请到「设置 → 片头片尾」',
     SegmentType.preview => '已自动跳过预告',
   };
 
@@ -2175,7 +2181,10 @@ class _PlayerPageState extends ConsumerState<PlayerPage> with WidgetsBindingObse
                                   bottom: _osd ? (_panel == OsdPanel.none ? 250 : 420) : 110,
                                   child: AnimatedSwitcher(
                                     duration: VMotion.focus,
-                                    child: _nextCountdown != null
+                                    child: _nextCountdown != null && _nextCountdown! > nextCountdownSeconds
+                                        // 先是「下一集」按钮（OK / 回车 / 点击立即播放）
+                                        ? _NextButton(key: const ValueKey('next-button'), onPressed: _playNextNow)
+                                        : _nextCountdown != null
                                         ? _NextCountdownCard(
                                             key: const ValueKey('next-countdown'),
                                             seconds: _nextCountdown!,
@@ -2391,6 +2400,44 @@ class _ErrorPanel extends StatelessWidget {
 }
 
 /// 跳过片头 / 前情提要 / 片尾、下一集（电视上按 OK，电脑上点击或按回车）
+/// 片尾自动下一集的第一步：白色「下一集」按钮（和「跳过片头」一样），3 秒后变成倒计时卡片
+class _NextButton extends StatelessWidget {
+  const _NextButton({super.key, required this.onPressed});
+
+  final VoidCallback onPressed;
+
+  @override
+  Widget build(BuildContext context) {
+    return ExcludeFocus(
+      child: GestureDetector(
+        onTap: onPressed,
+        child: MouseRegion(
+          cursor: SystemMouseCursors.click,
+          child: Container(
+            padding: const EdgeInsets.fromLTRB(30, 16, 24, 16),
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(999),
+              boxShadow: const [BoxShadow(color: Color(0x66000000), blurRadius: 30, offset: Offset(0, 8))],
+            ),
+            child: const Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(
+                  '下一集',
+                  style: TextStyle(fontSize: 26, fontWeight: FontWeight.w700, color: Color(0xFF0B0C10)),
+                ),
+                SizedBox(width: 8),
+                Icon(Icons.skip_next_rounded, size: 30, color: Color(0xFF0B0C10)),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 /// 片尾自动下一集的倒计时卡片：下一集的缩略图、名称，倒计时圆环；OK / 点击立即播放，返回取消
 class _NextCountdownCard extends StatelessWidget {
   const _NextCountdownCard({

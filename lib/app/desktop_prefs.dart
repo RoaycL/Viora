@@ -6,7 +6,7 @@ import 'package:window_manager/window_manager.dart';
 
 import 'window_frame.dart';
 
-/// 应用图标样式（Windows：左上角 Logo、任务栏图标）
+/// 桌面图标样式（Windows：任务栏、桌面和开始菜单的快捷方式；应用里左上角的 Logo 始终是深色的，和整体深色界面一致）
 enum AppIconStyle {
   /// 深色底（现在的图标）
   dark('默认'),
@@ -30,6 +30,13 @@ class DesktopPrefs {
   static const _kPlayFull = 'viora.window.fullScreenOnPlay';
   static const _kSystemProxy = 'viora.net.systemProxy';
   static const _kIcon = 'viora.window.iconStyle';
+  static const _kShortcutIcon = 'viora.window.shortcutIconLight';
+  static const _kNavCompact = 'viora.window.navCompact';
+
+  /// 左侧导航栏样式：false = 默认（一长条，设置在最下面），true = 紧凑（高度随项目、上下居中）
+  final navCompact = ValueNotifier(false);
+
+  Future<void> setNavCompact(bool v) => _setBool(_kNavCompact, navCompact, v);
 
   /// 打开软件时全屏
   final fullScreenOnLaunch = ValueNotifier(false);
@@ -42,7 +49,7 @@ class DesktopPrefs {
 
   final iconStyle = ValueNotifier(AppIconStyle.dark);
 
-  /// 现在实际用哪套图标（跟随系统时看系统是浅色还是深色）
+  /// 现在实际用哪套桌面图标（跟随系统时看系统是浅色还是深色）
   final lightIcon = ValueNotifier(false);
 
   Future<void> load() async {
@@ -52,6 +59,7 @@ class DesktopPrefs {
       fullScreenOnPlay.value = p.getBool(_kPlayFull) ?? false;
       followSystemProxy.value = p.getBool(_kSystemProxy) ?? false;
       iconStyle.value = AppIconStyle.values.asNameMap()[p.getString(_kIcon)] ?? AppIconStyle.dark;
+      navCompact.value = p.getBool(_kNavCompact) ?? false;
     } catch (_) {}
     PlatformDispatcher.instance.onPlatformBrightnessChanged = _applyIcon;
     _applyIcon();
@@ -89,9 +97,44 @@ class DesktopPrefs {
     lightIcon.value = light;
     if (!isDesktopWindow) return;
     windowManager.setIcon(light ? 'assets/images/app_icon_light.ico' : 'assets/images/app_icon.ico').catchError((_) {});
+    _applyShortcuts(light);
   }
 
-  static String logoAsset(bool light) => light ? 'assets/images/app_icon_light.png' : 'assets/images/app_icon.png';
+  /// 桌面、开始菜单、任务栏固定的「Viora」快捷方式换图标。
+  /// 日间图标每次启动都设一次（应用更新时安装程序会把快捷方式改回 exe 自带的深色图标）；
+  /// 换回默认时只在之前设过日间图标时改回一次。做不到（没有权限、找不到快捷方式）就算了，不影响使用
+  Future<void> _applyShortcuts(bool light) async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final was = prefs.getBool(_kShortcutIcon) ?? false;
+      if (!light && !was) return;
+      final exe = Platform.resolvedExecutable;
+      final dir = File(exe).parent.path;
+      final icon = light ? '$dir\\data\\flutter_assets\\assets\\images\\app_icon_light.ico,0' : '$exe,0';
+      final env = Platform.environment;
+      final candidates = [
+        if (env['USERPROFILE'] != null) '${env['USERPROFILE']}\\Desktop\\Viora.lnk',
+        if (env['PUBLIC'] != null) '${env['PUBLIC']}\\Desktop\\Viora.lnk',
+        if (env['APPDATA'] != null) '${env['APPDATA']}\\Microsoft\\Windows\\Start Menu\\Programs\\Viora.lnk',
+        if (env['ProgramData'] != null) '${env['ProgramData']}\\Microsoft\\Windows\\Start Menu\\Programs\\Viora.lnk',
+        if (env['APPDATA'] != null)
+          '${env['APPDATA']}\\Microsoft\\Internet Explorer\\Quick Launch\\User Pinned\\TaskBar\\Viora.lnk',
+      ].where((p) => File(p).existsSync()).toList();
+      if (candidates.isNotEmpty) {
+        final script = StringBuffer(r'$w = New-Object -ComObject WScript.Shell;');
+        for (final p in candidates) {
+          final q = p.replaceAll("'", "''");
+          script.write(
+            " try { \$s = \$w.CreateShortcut('$q'); \$s.IconLocation = '${icon.replaceAll("'", "''")}'; \$s.Save() } catch {};",
+          );
+        }
+        await Process.run('powershell', ['-NoProfile', '-NonInteractive', '-Command', script.toString()]);
+      }
+      await prefs.setBool(_kShortcutIcon, light);
+    } catch (e) {
+      debugPrint('shortcut icon: $e');
+    }
+  }
 }
 
 /// Windows 系统代理（「设置 → 网络和 Internet → 代理」，Clash 等工具开的就是这个）。

@@ -27,9 +27,9 @@ class SegmentProviderSettings {
 class SegmentSettings {
   const SegmentSettings({
     required this.providers,
-    this.intro = SegmentSkipMode.button,
+    this.intro = SegmentSkipMode.auto,
     this.recap = SegmentSkipMode.button,
-    this.credits = SegmentSkipMode.button,
+    this.credits = SegmentSkipMode.auto,
     this.firstEpisodeException = true,
     this.serverMarkers = true,
     this.chapterNames = true,
@@ -85,11 +85,21 @@ class SegmentSettings {
     'server_markers': serverMarkers,
     'chapter_names': chapterNames,
     'use_proxy': useProxy,
+    'defaults_version': defaultsVersion,
   };
 
+  /// 默认值的版本：2 = 片头、片尾默认自动跳过（之前默认「显示按钮」）
+  static const defaultsVersion = 2;
+
   factory SegmentSettings.fromJson(Map<String, dynamic> json) {
-    SegmentSkipMode mode(String field) =>
-        SegmentSkipMode.values.where((m) => m.name == json[field]).firstOrNull ?? SegmentSkipMode.button;
+    // 旧版本保存的「显示按钮」是当时的默认值：升级时片头、片尾改成新的默认「自动跳过」（只改一次）
+    final upgrade = (json['defaults_version'] as int? ?? 1) < defaultsVersion;
+    SegmentSkipMode mode(String field, {SegmentSkipMode fallback = SegmentSkipMode.button, bool autoNow = false}) {
+      final saved = SegmentSkipMode.values.where((m) => m.name == json[field]).firstOrNull;
+      if (saved == null) return fallback;
+      return upgrade && autoNow && saved == SegmentSkipMode.button ? SegmentSkipMode.auto : saved;
+    }
+
     final providers = <SegmentProviderSettings>[];
     for (final row in (json['providers'] as List? ?? [])) {
       if (row is! Map<String, dynamic>) continue;
@@ -112,9 +122,9 @@ class SegmentSettings {
     }
     return SegmentSettings(
       providers: providers,
-      intro: mode('intro'),
+      intro: mode('intro', fallback: SegmentSkipMode.auto, autoNow: true),
       recap: mode('recap'),
-      credits: mode('credits'),
+      credits: mode('credits', fallback: SegmentSkipMode.auto, autoNow: true),
       firstEpisodeException: json['first_episode_exception'] as bool? ?? true,
       serverMarkers: json['server_markers'] as bool? ?? true,
       chapterNames: json['chapter_names'] as bool? ?? true,

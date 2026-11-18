@@ -142,6 +142,13 @@ class PlayerClient extends EmbyClient {
 
   /// 服务器上这一集最新的进度（别的设备看过）
   Duration serverPosition = Duration.zero;
+
+  /// Emby 章节上的片尾标记（片尾开始的位置）
+  Duration? creditsStart;
+  @override
+  Future<List<ServerChapter>> chapters(String itemId) async => [
+    if (creditsStart != null) ServerChapter(name: '片尾', start: creditsStart!, marker: 'CreditsStart'),
+  ];
   @override
   Future<MediaItem> item(String id) async {
     final e = all.firstWhere((e) => e.id == id);
@@ -226,6 +233,7 @@ Future<Harness> pumpPlayer(
   int startMs = 0,
   bool resume = false,
   Duration serverPosition = Duration.zero,
+  Duration? creditsStart,
 }) async {
   PlatformProfile.debugOverride = PlatformProfile.tv;
   SharedPreferences.setMockInitialValues({});
@@ -238,7 +246,9 @@ Future<Harness> pumpPlayer(
   final engines = <FakeEngine>[];
   PlayerPage.debugEngineFactory = (_) => FakeEngine()..let(engines.add);
   addTearDown(() => PlayerPage.debugEngineFactory = null);
-  final client = PlayerClient()..serverPosition = serverPosition;
+  final client = PlayerClient()
+    ..serverPosition = serverPosition
+    ..creditsStart = creditsStart;
   late final GoRouter router;
   router = GoRouter(
     initialLocation: '/',
@@ -250,6 +260,11 @@ Future<Harness> pumpPlayer(
       GoRoute(
         path: '/play',
         builder: (_, _) => PlayerPage(serverId: 's', itemId: itemId, startMs: startMs, resume: resume),
+      ),
+      // 连播下一集（片尾自动下一集、上一集 / 下一集）
+      GoRoute(
+        path: '/play/:sid/:id',
+        builder: (_, state) => PlayerPage(serverId: 's', itemId: state.pathParameters['id']!),
       ),
     ],
   );
@@ -741,5 +756,29 @@ void main() {
     await unmountPlayer(tester);
     await tester.pump();
     expect(windowImmersive.value, isFalse);
+  });
+
+  testWidgets('片尾自动下一集（默认）：先显示 3 秒「下一集」按钮，再倒计时 3 秒，然后播放下一集', (tester) async {
+    final h = await pumpPlayer(tester, creditsStart: const Duration(minutes: 18));
+    // 片头片尾在起播后后台解析（第三方数据库在测试里很快失败）
+    for (var i = 0; i < 5; i++) {
+      await tester.runAsync(() => Future<void>.delayed(const Duration(milliseconds: 200)));
+      await tester.pump();
+    }
+    await h.engine.seek(const Duration(minutes: 18, seconds: 2));
+    await tester.pump();
+    await tester.pump();
+    expect(find.text('下一集'), findsWidgets, reason: '先显示「下一集」按钮');
+    expect(find.textContaining('秒后播放下一集'), findsNothing);
+    await tester.pump(const Duration(seconds: 1));
+    await tester.pump(const Duration(seconds: 1));
+    await tester.pump(const Duration(seconds: 1));
+    expect(find.text('3 秒后播放下一集'), findsOneWidget, reason: '3 秒后变成 3 秒倒计时');
+    await tester.pump(const Duration(seconds: 1));
+    await tester.pump(const Duration(seconds: 1));
+    await tester.pump(const Duration(seconds: 1));
+    await tester.pumpAndSettle();
+    expect(h.router.state.uri.path, '/play/s/s1e3', reason: '倒计时结束播放下一集');
+    await unmountPlayer(tester);
   });
 }

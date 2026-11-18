@@ -32,7 +32,8 @@ enum NavItem {
 }
 
 /// 左侧磨砂玻璃导航栏：收起时 88 宽只显示图标（始终显示），展开到 280 并显示文字。
-/// 高度随项目多少，整体上下居中；顶部 Logo 下面是时钟，「资源库」图标上的小点是服务器在线状态。
+/// 两种样式（设置 → 通用与关于 → 导航栏）：默认是撑满高度的一长条、设置在最下面；
+/// 紧凑是高度随项目多少、整体上下居中。顶部 Logo 下面是时钟，「资源库」图标上的小点是服务器在线状态。
 /// - Windows：鼠标移到上面展开，移开立即收起（键盘操作时随焦点展开）。
 /// - Android TV：焦点进入时展开，离开时收起。
 class SideNavRail extends StatefulWidget {
@@ -90,7 +91,16 @@ class _SideNavRailState extends State<SideNavRail> {
   }
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context) => ValueListenableBuilder<bool>(
+    valueListenable: DesktopPrefs.instance.navCompact,
+    builder: (context, compact, _) => _build(context, compact),
+  );
+
+  /// 紧凑：高度随项目多少、上下居中；默认：撑满整个高度
+  static Widget _maybeCenter(bool compact, Widget child) =>
+      compact ? Align(alignment: Alignment.centerLeft, child: child) : child;
+
+  Widget _build(BuildContext context, bool compact) {
     final width = _expanded ? VSpace.navRailExpandedWidth : VSpace.navRailWidth;
     final main = NavItem.values.where((i) => i != NavItem.settings);
     return Stack(
@@ -113,10 +123,9 @@ class _SideNavRailState extends State<SideNavRail> {
           left: 24,
           top: VSpace.safeV,
           bottom: VSpace.safeV,
-          // 高度随项目多少，上下居中（不再撑满整个高度、设置孤零零在最下面）
-          child: Align(
-            alignment: Alignment.centerLeft,
-            child: MouseRegion(
+          child: _maybeCenter(
+            compact,
+            MouseRegion(
               onEnter: (_) => setState(() => _hover = true),
               onExit: (_) => _onPointerExit(),
               child: AnimatedContainer(
@@ -128,7 +137,7 @@ class _SideNavRailState extends State<SideNavRail> {
                   fill: _expanded ? const Color(0x2914161E) : VColors.glassFill,
                   padding: const EdgeInsets.symmetric(vertical: 28, horizontal: 16),
                   child: Column(
-                    mainAxisSize: MainAxisSize.min,
+                    mainAxisSize: compact ? MainAxisSize.min : MainAxisSize.max,
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       _Logo(expanded: _expanded),
@@ -146,13 +155,16 @@ class _SideNavRailState extends State<SideNavRail> {
                         ),
                         const SizedBox(height: 14),
                       ],
-                      // 和上面的页面分开一点
-                      Container(
-                        margin: const EdgeInsets.fromLTRB(12, 4, 12, 18),
-                        width: 32,
-                        height: 1,
-                        color: const Color(0x24FFFFFF),
-                      ),
+                      if (compact)
+                        // 和上面的页面分开一点
+                        Container(
+                          margin: const EdgeInsets.fromLTRB(12, 4, 12, 18),
+                          width: 32,
+                          height: 1,
+                          color: const Color(0x24FFFFFF),
+                        )
+                      else
+                        const Spacer(),
                       _RailItem(
                         item: NavItem.settings,
                         node: widget.nodes[NavItem.settings.path]!,
@@ -324,14 +336,12 @@ class _Logo extends StatelessWidget {
                 child: Center(
                   child: ClipRRect(
                     borderRadius: BorderRadius.circular(VRadius.sm),
-                    child: ValueListenableBuilder<bool>(
-                      valueListenable: DesktopPrefs.instance.lightIcon,
-                      builder: (context, light, _) => Image.asset(
-                        DesktopPrefs.logoAsset(light),
-                        width: 44,
-                        height: 44,
-                        filterQuality: FilterQuality.medium,
-                      ),
+                    // 始终是深色图标（整体界面是深色的）；「日间图标」只换任务栏和桌面快捷方式
+                    child: Image.asset(
+                      'assets/images/app_icon.png',
+                      width: 44,
+                      height: 44,
+                      filterQuality: FilterQuality.medium,
                     ),
                   ),
                 ),
