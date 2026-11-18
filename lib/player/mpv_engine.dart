@@ -190,7 +190,17 @@ class MpvEngine extends PlayerEngine {
   Future<void> setSubtitleDelay(Duration delay) => _prop('sub-delay', (delay.inMilliseconds / 1000).toStringAsFixed(3));
 
   @override
-  Future<void> setSubtitleScale(double scale) => _prop('sub-scale', scale.toStringAsFixed(2));
+  Future<void> setSubtitleScale(double scale) async {
+    // ASS / SSA 字幕默认不理会 sub-scale（内封中文字幕大多是 ASS），要 sub-ass-override=scale 才会跟着缩放
+    await _prop('sub-ass-override', 'scale');
+    await _prop('sub-scale', scale.toStringAsFixed(2));
+  }
+
+  @override
+  bool get supportsSubtitlePosition => true;
+
+  @override
+  Future<void> setSubtitlePosition(int position) => _prop('sub-pos', '$position');
 
   final _fit = ValueNotifier(VideoFit.contain);
 

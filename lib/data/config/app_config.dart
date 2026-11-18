@@ -246,6 +246,7 @@ class PlaybackConfig {
     this.volume = 1.0,
     this.muted = false,
     this.subtitleScale = 1.0,
+    this.subtitlePosition = 100,
     this.askStillWatching = true,
   });
 
@@ -253,6 +254,9 @@ class PlaybackConfig {
   final double subtitleScale;
 
   static const subtitleScales = [(0.75, '小'), (1.0, '标准'), (1.25, '大'), (1.5, '特大')];
+
+  /// 字幕上下位置（播放页「字幕 → 字幕位置」，100 = 默认的底部，越小越靠上；只对 mpv 生效）
+  final int subtitlePosition;
 
   /// 连续自动播放 3 集没有任何操作时问「还在观看吗？」
   final bool askStillWatching;
@@ -324,6 +328,7 @@ class PlaybackConfig {
     double? volume,
     bool? muted,
     double? subtitleScale,
+    int? subtitlePosition,
     bool? askStillWatching,
   }) => PlaybackConfig(
     userAgent: userAgent ?? this.userAgent,
@@ -343,6 +348,7 @@ class PlaybackConfig {
     volume: volume ?? this.volume,
     muted: muted ?? this.muted,
     subtitleScale: subtitleScale ?? this.subtitleScale,
+    subtitlePosition: subtitlePosition ?? this.subtitlePosition,
     askStillWatching: askStillWatching ?? this.askStillWatching,
   );
 
@@ -364,6 +370,7 @@ class PlaybackConfig {
     'volume': volume,
     'muted': muted,
     'subtitleScale': subtitleScale,
+    'subtitlePosition': subtitlePosition,
     'askStillWatching': askStillWatching,
   };
 
@@ -385,6 +392,7 @@ class PlaybackConfig {
     volume: ((j['volume'] as num?)?.toDouble() ?? 1.0).clamp(0.0, 1.0),
     muted: j['muted'] as bool? ?? false,
     subtitleScale: ((j['subtitleScale'] as num?)?.toDouble() ?? 1.0).clamp(0.5, 2.0),
+    subtitlePosition: ((j['subtitlePosition'] as num?)?.toInt() ?? 100).clamp(0, 150),
     askStillWatching: j['askStillWatching'] as bool? ?? true,
   );
 }

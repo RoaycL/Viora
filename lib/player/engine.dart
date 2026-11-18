@@ -204,6 +204,12 @@ abstract class PlayerEngine {
   /// 字幕大小倍数（1 = 默认）
   Future<void> setSubtitleScale(double scale) async {}
 
+  /// 字幕上下位置（mpv 的 sub-pos：100 = 默认的底部，数值越小越靠上）。只有 mpv 实现
+  Future<void> setSubtitlePosition(int position) async {}
+
+  /// 这个内核能不能调字幕位置
+  bool get supportsSubtitlePosition => false;
+
   /// 画面比例：适应 / 填满（裁切）/ 拉伸
   Future<void> setVideoFit(VideoFit fit) async {}
 

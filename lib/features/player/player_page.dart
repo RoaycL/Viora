@@ -1335,11 +1335,22 @@ class _PlayerPageState extends ConsumerState<PlayerPage> with WidgetsBindingObse
     ref.read(configProvider.notifier).update((c) => c.copyWith(playback: c.playback.copyWith(subtitleScale: scale)));
   }
 
+  /// 字幕上下微调：delta 为正往上移（mpv sub-pos 变小），null = 恢复默认
+  void _moveSubtitle(int? delta) {
+    final current = ref.read(configProvider).playback.subtitlePosition;
+    final position = delta == null ? 100 : (current - delta).clamp(0, 150);
+    _engine?.setSubtitlePosition(position);
+    ref.read(configProvider.notifier).update((c) => c.copyWith(playback: c.playback.copyWith(subtitlePosition: position)));
+    showToast(position == 100 ? '字幕位置：默认' : '字幕位置：${position < 100 ? '上移' : '下移'} ${(100 - position).abs()}');
+  }
+
   /// 起播 / 换源后把当前的显示设置交给内核（换源会新开媒体，内核可能是新的）
   Future<void> _applyDisplay(PlayerEngine engine) async {
     if (_fit != VideoFit.contain) await engine.setVideoFit(_fit);
     final scale = ref.read(configProvider).playback.subtitleScale;
     if (scale != 1) await engine.setSubtitleScale(scale);
+    final position = ref.read(configProvider).playback.subtitlePosition;
+    if (position != 100 && engine.supportsSubtitlePosition) await engine.setSubtitlePosition(position);
     if (_subDelay != Duration.zero) await engine.setSubtitleDelay(_subDelay);
   }
 
@@ -1638,6 +1649,7 @@ class _PlayerPageState extends ConsumerState<PlayerPage> with WidgetsBindingObse
     final s = _state;
     final external = _source?.subtitles.where((x) => x.isExternal).toList() ?? const <MediaStreamInfo>[];
     final scale = ref.read(configProvider).playback.subtitleScale;
+    final position = ref.read(configProvider).playback.subtitlePosition;
     return [
       MenuAction(
         '关闭字幕${s.subtitle == null ? '  ✓' : ''}',
@@ -1673,6 +1685,17 @@ class _PlayerPageState extends ConsumerState<PlayerPage> with WidgetsBindingObse
             MenuAction('$label${v == scale ? '  ✓' : ''}', Icons.format_size_rounded, () => _setSubtitleScale(v)),
         ],
       ),
+      if (_engine?.supportsSubtitlePosition ?? false)
+        MenuAction.submenu(
+          '字幕位置 · ${position == 100 ? '默认' : '${position < 100 ? '上移' : '下移'} ${(100 - position).abs()}'}',
+          Icons.vertical_align_center_rounded,
+          title: '字幕位置',
+          items: () => [
+            MenuAction('上移', Icons.arrow_upward_rounded, () => _moveSubtitle(5)),
+            MenuAction('下移', Icons.arrow_downward_rounded, () => _moveSubtitle(-5)),
+            MenuAction('恢复默认', Icons.restart_alt_rounded, () => _moveSubtitle(null)),
+          ],
+        ),
       if (_engine?.supportsSubtitleDelay ?? false)
         MenuAction.submenu(
           '字幕延迟 · ${_subDelay == Duration.zero ? '无' : '${_subDelay.isNegative ? '' : '+'}${(_subDelay.inMilliseconds / 1000).toStringAsFixed(1)} 秒'}',
@@ -2046,6 +2069,8 @@ class _PlayerPageState extends ConsumerState<PlayerPage> with WidgetsBindingObse
           autofocus: true,
           onKeyEvent: _onKey,
           child: MouseRegion(
+            // 控制层隐藏时鼠标指针也隐藏，一动就和控制层一起出来
+            cursor: immersive ? SystemMouseCursors.none : MouseCursor.defer,
             onHover: (_) => _showOsd(),
             child: ValueListenableBuilder<bool>(
               valueListenable: MiniPlayerWindow.active,
