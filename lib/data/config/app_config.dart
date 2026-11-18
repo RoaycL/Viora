@@ -243,7 +243,13 @@ class PlaybackConfig {
     this.clearCacheOnExit = true,
     this.sourceOrder = SourceOrder.quality,
     this.pinnedServerId,
+    this.volume = 1.0,
+    this.muted = false,
   });
+
+  /// Windows 播放音量（0–1）与静音，下次播放沿用
+  final double volume;
+  final bool muted;
 
   /// 多个版本时默认选哪个（自动换源也按这个顺序）
   final SourceOrder sourceOrder;
@@ -305,6 +311,8 @@ class PlaybackConfig {
     bool? clearCacheOnExit,
     SourceOrder? sourceOrder,
     String? pinnedServerId,
+    double? volume,
+    bool? muted,
   }) => PlaybackConfig(
     userAgent: userAgent ?? this.userAgent,
     uaForApi: uaForApi ?? this.uaForApi,
@@ -320,6 +328,8 @@ class PlaybackConfig {
     clearCacheOnExit: clearCacheOnExit ?? this.clearCacheOnExit,
     sourceOrder: sourceOrder ?? this.sourceOrder,
     pinnedServerId: pinnedServerId ?? this.pinnedServerId,
+    volume: volume ?? this.volume,
+    muted: muted ?? this.muted,
   );
 
   Map<String, dynamic> toJson() => {
@@ -337,6 +347,8 @@ class PlaybackConfig {
     'clearCacheOnExit': clearCacheOnExit,
     'sourceOrder': sourceOrder.name,
     'pinnedServerId': pinnedServerId,
+    'volume': volume,
+    'muted': muted,
   };
 
   factory PlaybackConfig.fromJson(Map<String, dynamic> j) => PlaybackConfig(
@@ -354,6 +366,8 @@ class PlaybackConfig {
     clearCacheOnExit: j['clearCacheOnExit'] as bool? ?? true,
     sourceOrder: SourceOrder.values.asNameMap()[j['sourceOrder']] ?? SourceOrder.quality,
     pinnedServerId: j['pinnedServerId'] as String?,
+    volume: ((j['volume'] as num?)?.toDouble() ?? 1.0).clamp(0.0, 1.0),
+    muted: j['muted'] as bool? ?? false,
   );
 }
 

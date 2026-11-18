@@ -169,6 +169,9 @@ class MpvEngine extends PlayerEngine {
   Future<void> setRate(double rate) => _player.setRate(rate);
 
   @override
+  Future<void> setVolume(double volume) => _player.setVolume((volume * 100).clamp(0, 100).toDouble());
+
+  @override
   Future<void> selectAudio(EngineTrack track) async {
     final t = _player.state.tracks.audio.where((a) => a.id == track.id).firstOrNull;
     if (t != null) await _player.setAudioTrack(t);

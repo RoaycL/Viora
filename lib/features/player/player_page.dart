@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/foundation.dart';
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -377,7 +378,45 @@ class _PlayerPageState extends ConsumerState<PlayerPage> with WidgetsBindingObse
     if (req == null || engine == null) return;
     final headers = {...req.headers}..remove('User-Agent');
     await engine.open(EngineMedia(url: req.url, headers: headers, userAgent: req.userAgent, start: at));
+    if (PlatformProfile.isDesktop) await engine.setVolume(_muted ? 0 : _volume);
   }
+
+  // ───────────────────────── 音量（Windows） ─────────────────────────
+
+  /// 当前音量与静音（Windows；电视用遥控器调系统音量）。改动后稍等再存进设置，滚轮连续调时不反复写盘
+  late double _volume = ref.read(configProvider).playback.volume;
+  late bool _muted = ref.read(configProvider).playback.muted;
+  Timer? _volumeSave;
+
+  void _setVolume(double volume, {bool? muted}) {
+    if (!PlatformProfile.isDesktop) return;
+    final v = (volume * 100).round().clamp(0, 100) / 100;
+    // 调大音量时自动取消静音
+    final m = muted ?? (_muted && v <= _volume);
+    setState(() {
+      _volume = v;
+      _muted = m;
+    });
+    _engine?.setVolume(m ? 0 : v);
+    showToast(m ? '静音' : '音量 ${(v * 100).round()}%', duration: const Duration(milliseconds: 1200));
+    _volumeSave?.cancel();
+    _volumeSave = Timer(const Duration(milliseconds: 800), _saveVolume);
+  }
+
+  void _saveVolume() {
+    final v = _volume, m = _muted;
+    final store = _container?.read(configProvider.notifier);
+    if (store == null) return;
+    try {
+      store.update(
+        (c) => c.copyWith(
+          playback: c.playback.copyWith(volume: v, muted: m),
+        ),
+      );
+    } on StateError catch (_) {}
+  }
+
+  void _toggleMute() => _setVolume(_volume, muted: !_muted);
 
   // ───────────────────────── 打开媒体 ─────────────────────────
 
@@ -873,6 +912,10 @@ class _PlayerPageState extends ConsumerState<PlayerPage> with WidgetsBindingObse
   void dispose() {
     DesktopTray.instance.hiddenToTray.removeListener(_onHiddenToTray);
     WidgetsBinding.instance.removeObserver(this);
+    if (_volumeSave?.isActive ?? false) {
+      _volumeSave!.cancel();
+      _saveVolume();
+    }
     if (_holdsIndexSync) IndexSyncGate.release();
     // 最先关闭播放器：后面任何一步出错都不能让视频在后台继续播放
     final engine = _engine;
@@ -1062,6 +1105,10 @@ class _PlayerPageState extends ConsumerState<PlayerPage> with WidgetsBindingObse
         key == LogicalKeyboardKey.mediaFastForward ||
         key == LogicalKeyboardKey.keyL) {
       _seekBy(repeat ? step * 3 : step);
+    } else if (repeat && PlatformProfile.isDesktop && key == LogicalKeyboardKey.arrowUp) {
+      _setVolume(_volume + 0.05);
+    } else if (repeat && PlatformProfile.isDesktop && key == LogicalKeyboardKey.arrowDown) {
+      _setVolume(_volume - 0.05);
     } else if (repeat) {
       return KeyEventResult.handled;
     } else if (confirmKeys.contains(key) && _skipPrompt != null) {
@@ -1076,11 +1123,18 @@ class _PlayerPageState extends ConsumerState<PlayerPage> with WidgetsBindingObse
       _engine?.play();
     } else if (key == LogicalKeyboardKey.mediaPause) {
       _engine?.pause();
+    } else if (key == LogicalKeyboardKey.arrowUp && PlatformProfile.isDesktop) {
+      // Windows：↑↓ 音量 ±5%（docs/07 §3.5；播放设置在右键 / 菜单键 / 「更多」）
+      _setVolume(_volume + 0.05);
+    } else if (key == LogicalKeyboardKey.arrowDown && PlatformProfile.isDesktop) {
+      _setVolume(_volume - 0.05);
+    } else if (key == LogicalKeyboardKey.keyM && PlatformProfile.isDesktop) {
+      _toggleMute();
     } else if (key == LogicalKeyboardKey.arrowUp) {
       _showOsd();
     } else if (key == LogicalKeyboardKey.arrowDown) {
-      // 电视：焦点移到底部按钮行；Windows：打开播放设置菜单
-      PlatformProfile.isTv ? _focusControls() : _openMenu();
+      // 电视：焦点移到底部按钮行
+      _focusControls();
     } else if (key == LogicalKeyboardKey.contextMenu || key == LogicalKeyboardKey.gameButtonX) {
       _openMenu();
     } else if (key == LogicalKeyboardKey.keyI || key == LogicalKeyboardKey.info) {
@@ -1509,17 +1563,25 @@ class _PlayerPageState extends ConsumerState<PlayerPage> with WidgetsBindingObse
                     ),
                   // 画面：单击暂停 / 播放（打开面板时先关面板）；Windows 双击全屏、右键播放设置
                   Positioned.fill(
-                    child: GestureDetector(
-                      behavior: HitTestBehavior.opaque,
-                      onTap: () {
-                        if (_panel != OsdPanel.none) {
-                          _closePanel();
-                        } else {
-                          _togglePlay();
+                    child: Listener(
+                      // Windows：滚轮调音量（向上滚变大）
+                      onPointerSignal: (e) {
+                        if (e is PointerScrollEvent && PlatformProfile.isDesktop && !mini) {
+                          _setVolume(_volume + (e.scrollDelta.dy < 0 ? 0.05 : -0.05));
                         }
                       },
-                      onDoubleTap: PlatformProfile.isDesktop && !mini ? toggleFullScreen : null,
-                      onSecondaryTap: mini ? null : _openMenu,
+                      child: GestureDetector(
+                        behavior: HitTestBehavior.opaque,
+                        onTap: () {
+                          if (_panel != OsdPanel.none) {
+                            _closePanel();
+                          } else {
+                            _togglePlay();
+                          }
+                        },
+                        onDoubleTap: PlatformProfile.isDesktop && !mini ? toggleFullScreen : null,
+                        onSecondaryTap: mini ? null : _openMenu,
+                      ),
                     ),
                   ),
                   if (_error != null)
@@ -1610,6 +1672,10 @@ class _PlayerPageState extends ConsumerState<PlayerPage> with WidgetsBindingObse
                                           onEpisodes: () => _openPanel(OsdPanel.episodes),
                                           onRate: _openRateMenu,
                                           onHoverControls: _onHoverControls,
+                                          volume: _volume,
+                                          muted: _muted,
+                                          onVolume: (v) => _setVolume(v, muted: false),
+                                          onMute: _toggleMute,
                                         ),
                                       ),
                                     ),

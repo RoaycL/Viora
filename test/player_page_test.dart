@@ -63,6 +63,11 @@ class FakeEngine extends PlayerEngine {
 
   @override
   Future<void> setRate(double rate) async => _state.value = _state.value.copyWith(rate: rate);
+
+  /// 最后设置的音量（0–1）
+  double volume = 1;
+  @override
+  Future<void> setVolume(double volume) async => this.volume = volume;
   @override
   Future<void> selectAudio(EngineTrack track) async {}
   @override
@@ -504,6 +509,51 @@ void main() {
     await gesture.moveTo(const Offset(960, 400));
     await tester.pump(const Duration(milliseconds: 50));
     expect(focused, 'player');
+    await unmountPlayer(tester);
+  });
+
+  testWidgets('Windows：↑↓ 调音量、M 静音、滚轮和音量滑块；音量存进设置；电视上 ↑↓ 照常移动焦点', (tester) async {
+    final h = await pumpPlayer(tester);
+    PlatformProfile.debugOverride = PlatformProfile.desktop;
+    // 回到画面（默认焦点在画面上）
+    expect(focused, 'player');
+    await press(tester, LogicalKeyboardKey.arrowDown);
+    expect(h.engine.volume, closeTo(0.95, 0.001));
+    for (var i = 0; i < 3; i++) {
+      await press(tester, LogicalKeyboardKey.arrowDown);
+    }
+    expect(h.engine.volume, closeTo(0.80, 0.001));
+    await press(tester, LogicalKeyboardKey.arrowUp);
+    expect(h.engine.volume, closeTo(0.85, 0.001));
+    // 不会超过 100%
+    for (var i = 0; i < 5; i++) {
+      await press(tester, LogicalKeyboardKey.arrowUp);
+    }
+    expect(h.engine.volume, 1);
+    // M 静音 / 取消静音，音量记得原来的
+    await press(tester, LogicalKeyboardKey.keyM);
+    expect(h.engine.volume, 0);
+    await press(tester, LogicalKeyboardKey.keyM);
+    expect(h.engine.volume, 1);
+
+    // 滚轮：向下滚变小
+    final center = tester.getCenter(find.byType(PlayerPage));
+    tester.binding.handlePointerEvent(PointerScrollEvent(position: center, scrollDelta: const Offset(0, 50)));
+    await tester.pump();
+    expect(h.engine.volume, closeTo(0.95, 0.001));
+
+    // 底部音量滑块：点在中间 = 50%
+    await tester.pump();
+    final slider = find.byKey(const ValueKey('volume-slider'));
+    expect(slider, findsOneWidget);
+    await tester.tapAt(tester.getCenter(slider));
+    await tester.pump();
+    expect(h.engine.volume, closeTo(0.5, 0.01));
+
+    // 停一下后存进设置，下次播放沿用
+    await tester.pump(const Duration(seconds: 1));
+    final container = ProviderScope.containerOf(tester.element(find.byType(PlayerPage)));
+    expect(container.read(configProvider).playback.volume, closeTo(0.5, 0.01));
     await unmountPlayer(tester);
   });
 }

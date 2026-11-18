@@ -179,6 +179,9 @@ abstract class PlayerEngine {
   Future<void> playOrPause() => state.value.playing ? pause() : play();
   Future<void> seek(Duration position);
   Future<void> setRate(double rate);
+
+  /// 播放器音量 0–1（Windows 播放页调节；电视用系统音量，ExoPlayer 不需要实现）
+  Future<void> setVolume(double volume) async {}
   Future<void> selectAudio(EngineTrack track);
 
   /// null = 关闭字幕
