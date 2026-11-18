@@ -74,8 +74,21 @@ class _VioraAppState extends ConsumerState<VioraApp> with WidgetsBindingObserver
   static const _tabRoots = {'/', '/library', '/search', '/favorites', '/history', '/settings'};
 
   void _updateCanGoBack() {
+    // 播放页左上角已经有自己的 ✕（跟着控制层显示 / 隐藏），标题栏不再重复放返回
+    if (_topPath().startsWith('/play/')) {
+      _canGoBack.value = false;
+      return;
+    }
     // 详情页、播放页是压栈打开的（路径不变），所以还要看能不能 pop
     _canGoBack.value = _router.canPop() || !_tabRoots.contains(_router.routerDelegate.currentConfiguration.uri.path);
+  }
+
+  /// 最上面那一页的路径（压栈打开的页面取它自己的路径）
+  String _topPath() {
+    final config = _router.routerDelegate.currentConfiguration;
+    if (config.isEmpty) return '';
+    final last = config.last;
+    return last is ImperativeRouteMatch ? last.matches.uri.path : config.uri.path;
   }
 
   /// 路由通知时导航器还没把新页面压进去（canPop 仍是 false），等这一帧建完再算

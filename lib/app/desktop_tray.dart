@@ -94,11 +94,20 @@ class DesktopTray with TrayListener, WindowListener {
   void onWindowClose() async {
     // 托盘图标创建失败时不能隐藏（否则窗口找不回来），直接退出
     if (closeToTray.value && _trayShown) {
+      // 窗口可能不是经 restore() 显示的（比如再次打开 exe 时由已有实例的原生代码直接显示），
+      // 标志还停在 true；先清掉，保证这次一定通知到播放器暂停
+      hiddenToTray.value = false;
       hiddenToTray.value = true;
       await windowManager.hide();
     } else {
       await quit();
     }
+  }
+
+  /// 再次打开 exe 时，原生代码会直接把隐藏的窗口显示出来并切到前台，不经过 restore()
+  @override
+  void onWindowFocus() {
+    if (hiddenToTray.value) hiddenToTray.value = false;
   }
 
   @override

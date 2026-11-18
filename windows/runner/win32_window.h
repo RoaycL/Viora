@@ -7,6 +7,9 @@
 #include <memory>
 #include <string>
 
+// 窗口类名。单实例检测靠它和窗口标题找到已运行的窗口，别和其他 Flutter 程序重名
+inline constexpr const wchar_t kWindowClassName[] = L"VIORA_WIN32_WINDOW";
+
 // A class abstraction for a high DPI-aware Win32 Window. Intended to be
 // inherited from by classes that wish to specialize with custom
 // rendering and input handling
