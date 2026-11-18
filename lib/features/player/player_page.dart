@@ -306,9 +306,6 @@ class _PlayerPageState extends ConsumerState<PlayerPage> with WidgetsBindingObse
     setState(() => _nextCountdown = nextButtonSeconds + nextCountdownSeconds);
     _countdownTimer?.cancel();
     _skipFadeTimer?.cancel();
-    if (_autoFullScreenPending && windowFullScreen.value) unawaited(toggleFullScreen());
-    // 销毁过程中不能让别的组件重建：这一帧结束后再恢复标题栏
-    scheduleMicrotask(() => windowImmersive.value = false);
     _countdownTimer = Timer.periodic(const Duration(seconds: 1), (t) {
       if (!mounted) return t.cancel();
       final left = (_nextCountdown ?? 0) - 1;
@@ -1179,8 +1176,13 @@ class _PlayerPageState extends ConsumerState<PlayerPage> with WidgetsBindingObse
     _focus.dispose();
     _playNode.dispose();
     _topNode.dispose();
+    _skipFadeTimer?.cancel();
     // 退出播放时恢复窗口；连播下一集 / 换服务器时保持小窗
     if (!handoff) MiniPlayerWindow.exit();
+    // 「开始播放时全屏」自动进的全屏：退出播放时恢复原来的窗口（连播 / 换服务器时已在 _handoffTo 交给下一个播放页）
+    if (_autoFullScreenPending && windowFullScreen.value) unawaited(toggleFullScreen());
+    // 销毁过程中不能让别的组件重建：这一帧结束后再恢复标题栏
+    scheduleMicrotask(() => windowImmersive.value = false);
     super.dispose();
   }
 

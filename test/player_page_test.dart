@@ -788,6 +788,17 @@ void main() {
     expect(windowImmersive.value, isFalse);
   });
 
+  testWidgets('Windows 沉浸：控制层隐藏时直接退出播放，标题栏的窗口按钮也恢复', (tester) async {
+    await pumpPlayer(tester);
+    PlatformProfile.debugOverride = PlatformProfile.desktop;
+    await tester.pump(const Duration(seconds: 6));
+    await tester.pump();
+    expect(windowImmersive.value, isTrue);
+    await unmountPlayer(tester);
+    await tester.pump();
+    expect(windowImmersive.value, isFalse);
+  });
+
   testWidgets('片尾自动下一集（默认）：先显示 3 秒「下一集」按钮，再倒计时 3 秒，然后播放下一集', (tester) async {
     final h = await pumpPlayer(tester, creditsStart: const Duration(minutes: 18));
     // 片头片尾在起播后后台解析（第三方数据库在测试里很快失败）

@@ -91,9 +91,11 @@ class SegmentSettings {
   /// 默认值的版本：2 = 片头、片尾默认自动跳过（之前默认「显示按钮」）
   static const defaultsVersion = 2;
 
-  factory SegmentSettings.fromJson(Map<String, dynamic> json) {
+  /// [migrateDefaults]：本机保存的设置升级默认值。WebDAV / 局域网同步收到的设置传 false：
+  /// 旧版本设备发来的设置不带版本号，里面的「显示按钮」可能是用户在新设备上特意改回的，不能再改成自动跳过
+  factory SegmentSettings.fromJson(Map<String, dynamic> json, {bool migrateDefaults = true}) {
     // 旧版本保存的「显示按钮」是当时的默认值：升级时片头、片尾改成新的默认「自动跳过」（只改一次）
-    final upgrade = (json['defaults_version'] as int? ?? 1) < defaultsVersion;
+    final upgrade = migrateDefaults && (json['defaults_version'] as int? ?? 1) < defaultsVersion;
     SegmentSkipMode mode(String field, {SegmentSkipMode fallback = SegmentSkipMode.button, bool autoNow = false}) {
       final saved = SegmentSkipMode.values.where((m) => m.name == json[field]).firstOrNull;
       if (saved == null) return fallback;

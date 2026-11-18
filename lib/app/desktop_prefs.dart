@@ -1,6 +1,7 @@
 import 'dart:io';
 
 import 'package:flutter/foundation.dart';
+import 'package:flutter/widgets.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:window_manager/window_manager.dart';
 
@@ -31,6 +32,9 @@ class DesktopPrefs {
   static const _kSystemProxy = 'viora.net.systemProxy';
   static const _kIcon = 'viora.window.iconStyle';
   static const _kShortcutIcon = 'viora.window.shortcutIconLight';
+
+  /// 上次改快捷方式图标时的 exe（路径 + 修改时间）：没更新过应用就不用每次启动都跑 PowerShell
+  static const _kShortcutExe = 'viora.window.shortcutIconExe';
   static const _kNavCompact = 'viora.window.navCompact';
 
   /// 左侧导航栏样式：false = 默认（一长条，设置在最下面），true = 紧凑（高度随项目、上下居中）
@@ -61,7 +65,9 @@ class DesktopPrefs {
       iconStyle.value = AppIconStyle.values.asNameMap()[p.getString(_kIcon)] ?? AppIconStyle.dark;
       navCompact.value = p.getBool(_kNavCompact) ?? false;
     } catch (_) {}
-    PlatformDispatcher.instance.onPlatformBrightnessChanged = _applyIcon;
+    // 用观察者监听系统深浅色变化：直接改 PlatformDispatcher.onPlatformBrightnessChanged 会顶掉 Flutter 自己的处理
+    // （MediaQuery.platformBrightness 不再更新）
+    WidgetsBinding.instance.addObserver(_BrightnessObserver(_applyIcon));
     _applyIcon();
   }
 
@@ -109,6 +115,9 @@ class DesktopPrefs {
       final was = prefs.getBool(_kShortcutIcon) ?? false;
       if (!light && !was) return;
       final exe = Platform.resolvedExecutable;
+      // 日间图标：应用更新后安装程序会把快捷方式改回深色图标，所以 exe 变了（路径或修改时间）才重新设
+      final stamp = '$exe|${File(exe).lastModifiedSync().millisecondsSinceEpoch}';
+      if (light && was && prefs.getString(_kShortcutExe) == stamp) return;
       final dir = File(exe).parent.path;
       final icon = light ? '$dir\\data\\flutter_assets\\assets\\images\\app_icon_light.ico,0' : '$exe,0';
       final env = Platform.environment;
@@ -131,6 +140,7 @@ class DesktopPrefs {
         await Process.run('powershell', ['-NoProfile', '-NonInteractive', '-Command', script.toString()]);
       }
       await prefs.setBool(_kShortcutIcon, light);
+      await prefs.setString(_kShortcutExe, stamp);
     } catch (e) {
       debugPrint('shortcut icon: $e');
     }
@@ -146,17 +156,25 @@ abstract final class SystemProxy {
   static String? current;
   static List<String> _bypass = const [];
 
+  /// 按「跟随系统代理」开关重新读取系统代理（开始播放前调用：启动后系统代理可能开了或关了）
+  static Future<void> refresh() => apply(DesktopPrefs.instance.followSystemProxy.value);
+
   /// 读取系统代理并应用（关闭时恢复直连）
   static Future<void> apply(bool enabled) async {
     if (!enabled || !Platform.isWindows) {
       current = null;
-      HttpOverrides.global = null;
+      // 只撤掉自己设的（测试环境等别处设的不动）
+      if (HttpOverrides.current is _ProxyOverrides) HttpOverrides.global = null;
       return;
     }
     final read = await readWindows();
     current = read?.$1;
     _bypass = read?.$2 ?? const [];
-    HttpOverrides.global = current == null ? null : _ProxyOverrides();
+    if (current != null) {
+      if (HttpOverrides.current is! _ProxyOverrides) HttpOverrides.global = _ProxyOverrides();
+    } else if (HttpOverrides.current is _ProxyOverrides) {
+      HttpOverrides.global = null;
+    }
     debugPrint('system proxy: ${current ?? '未开启'}');
   }
 
@@ -217,6 +235,14 @@ abstract final class SystemProxy {
 
   /// mpv 的 http-proxy 参数（播放也走系统代理）；直连的地址返回 null
   static String? forMpv(Uri url) => current == null || direct(url.host) ? null : 'http://$current';
+}
+
+class _BrightnessObserver with WidgetsBindingObserver {
+  _BrightnessObserver(this.onChanged);
+  final VoidCallback onChanged;
+
+  @override
+  void didChangePlatformBrightness() => onChanged();
 }
 
 class _ProxyOverrides extends HttpOverrides {

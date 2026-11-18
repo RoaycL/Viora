@@ -304,7 +304,7 @@ RatingsSettings applyRatingsSync(RatingsSettings current, SyncMergeResult result
 
 /// 把收到的片头片尾设置 / Key 应用到本机设置上（Key 填了的数据源同时打开）
 SegmentSettings applySegmentSync(SegmentSettings current, SyncMergeResult r) {
-  var s = r.segmentSettings == null ? current : SegmentSettings.fromJson(r.segmentSettings!);
+  var s = r.segmentSettings == null ? current : SegmentSettings.fromJson(r.segmentSettings!, migrateDefaults: false);
   // 设置里不含 Key：先保留本机已有的 Key
   s = s.copyWith(
     providers: [
