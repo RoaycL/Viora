@@ -39,7 +39,6 @@ import '../../player/segment_playback_session.dart';
 import '../../player/segment_skip_controller.dart';
 import '../../ui/focus/input_mode.dart';
 import '../../ui/glass/glass.dart';
-import '../../ui/widgets/server_image.dart';
 import '../../ui/panels/context_menu.dart';
 import '../../ui/panels/form_dialog.dart';
 import '../../ui/scale/design_scale.dart';
@@ -296,14 +295,13 @@ class _PlayerPageState extends ConsumerState<PlayerPage> with WidgetsBindingObse
   bool _autoNextPending = false;
   Timer? _countdownTimer;
 
-  /// 片尾自动下一集：先显示 3 秒「下一集」按钮，再倒计时 3 秒，然后播放下一集
-  static const nextButtonSeconds = 3;
+  /// 片尾自动下一集：显示「下一集」按钮，同时开始 3 秒倒计时，倒计时结束播放下一集
   static const nextCountdownSeconds = 3;
 
   /// 片尾自动模式：先倒计时，OK / 回车立即播放，返回取消（docs/07 §3.3）
   void _startNextCountdown() {
     if (_nextEpisode == null || _nextCountdown != null) return;
-    setState(() => _nextCountdown = nextButtonSeconds + nextCountdownSeconds);
+    setState(() => _nextCountdown = nextCountdownSeconds);
     _countdownTimer?.cancel();
     _skipFadeTimer?.cancel();
     _countdownTimer = Timer.periodic(const Duration(seconds: 1), (t) {
@@ -1464,7 +1462,7 @@ class _PlayerPageState extends ConsumerState<PlayerPage> with WidgetsBindingObse
     final keyboard = HardwareKeyboard.instance;
     final digit = _digitOf(key);
 
-    // 片尾倒计时卡片：OK / 回车立即播放下一集
+    // 片尾「下一集」倒计时：OK / 回车立即播放下一集
     if (_nextCountdown != null && confirmKeys.contains(key) && !repeat) {
       _playNextNow();
       return KeyEventResult.handled;
@@ -2196,17 +2194,13 @@ class _PlayerPageState extends ConsumerState<PlayerPage> with WidgetsBindingObse
                                   bottom: _osd ? (_panel == OsdPanel.none ? 250 : 420) : 110,
                                   child: AnimatedSwitcher(
                                     duration: VMotion.focus,
-                                    child: _nextCountdown != null && _nextCountdown! > nextCountdownSeconds
-                                        // 先是「下一集」按钮（OK / 回车 / 点击立即播放）
-                                        ? _NextButton(key: const ValueKey('next-button'), onPressed: _playNextNow)
-                                        : _nextCountdown != null
-                                        ? _NextCountdownCard(
-                                            key: const ValueKey('next-countdown'),
+                                    child: _nextCountdown != null
+                                        // 「下一集」按钮带 3 秒倒计时（OK / 回车 / 点击立即播放，返回取消）
+                                        ? _NextButton(
+                                            key: const ValueKey('next-button'),
                                             seconds: _nextCountdown!,
                                             total: nextCountdownSeconds,
-                                            next: _nextEpisode,
-                                            onPlay: _playNextNow,
-                                            onCancel: _cancelNextCountdown,
+                                            onPressed: _playNextNow,
                                           )
                                         : !_skipVisible
                                         ? const SizedBox.shrink()
@@ -2414,36 +2408,63 @@ class _ErrorPanel extends StatelessWidget {
   }
 }
 
-/// 跳过片头 / 前情提要 / 片尾、下一集（电视上按 OK，电脑上点击或按回车）
-/// 片尾自动下一集的第一步：白色「下一集」按钮（和「跳过片头」一样），3 秒后变成倒计时卡片
+/// 片尾自动下一集：白色「下一集」按钮（和「跳过片头」一样），左边的圆环和数字同步倒计时，结束后播放下一集
 class _NextButton extends StatelessWidget {
-  const _NextButton({super.key, required this.onPressed});
+  const _NextButton({super.key, required this.seconds, required this.total, required this.onPressed});
 
+  final int seconds;
+  final int total;
   final VoidCallback onPressed;
 
   @override
   Widget build(BuildContext context) {
+    const ink = Color(0xFF0B0C10);
     return ExcludeFocus(
       child: GestureDetector(
         onTap: onPressed,
         child: MouseRegion(
           cursor: SystemMouseCursors.click,
           child: Container(
-            padding: const EdgeInsets.fromLTRB(30, 16, 24, 16),
+            padding: const EdgeInsets.fromLTRB(18, 12, 24, 12),
             decoration: BoxDecoration(
               color: Colors.white,
               borderRadius: BorderRadius.circular(999),
               boxShadow: const [BoxShadow(color: Color(0x66000000), blurRadius: 30, offset: Offset(0, 8))],
             ),
-            child: const Row(
+            child: Row(
               mainAxisSize: MainAxisSize.min,
               children: [
-                Text(
-                  '下一集',
-                  style: TextStyle(fontSize: 26, fontWeight: FontWeight.w700, color: Color(0xFF0B0C10)),
+                SizedBox(
+                  width: 34,
+                  height: 34,
+                  child: Stack(
+                    alignment: Alignment.center,
+                    children: [
+                      // 圆环在每一秒里连续走完，不是一秒跳一格
+                      TweenAnimationBuilder<double>(
+                        tween: Tween<double>(begin: 1, end: (seconds - 1).clamp(0, total) / total),
+                        duration: const Duration(seconds: 1),
+                        builder: (context, v, _) => CircularProgressIndicator(
+                          value: v,
+                          strokeWidth: 3,
+                          color: ink,
+                          backgroundColor: const Color(0x260B0C10),
+                        ),
+                      ),
+                      Text(
+                        '$seconds',
+                        style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w700, color: ink),
+                      ),
+                    ],
+                  ),
                 ),
-                SizedBox(width: 8),
-                Icon(Icons.skip_next_rounded, size: 30, color: Color(0xFF0B0C10)),
+                const SizedBox(width: 12),
+                const Text(
+                  '下一集',
+                  style: TextStyle(fontSize: 26, fontWeight: FontWeight.w700, color: ink),
+                ),
+                const SizedBox(width: 6),
+                const Icon(Icons.skip_next_rounded, size: 30, color: ink),
               ],
             ),
           ),
@@ -2453,120 +2474,7 @@ class _NextButton extends StatelessWidget {
   }
 }
 
-/// 片尾自动下一集的倒计时卡片：下一集的缩略图、名称，倒计时圆环；OK / 点击立即播放，返回取消
-class _NextCountdownCard extends StatelessWidget {
-  const _NextCountdownCard({
-    super.key,
-    required this.seconds,
-    required this.total,
-    required this.next,
-    required this.onPlay,
-    required this.onCancel,
-  });
-
-  final int seconds;
-  final int total;
-  final MediaItem? next;
-  final VoidCallback onPlay;
-  final VoidCallback onCancel;
-
-  @override
-  Widget build(BuildContext context) {
-    final n = next;
-    return ExcludeFocus(
-      child: Glass(
-        radius: VRadius.panel,
-        padding: const EdgeInsets.all(18),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            if (n != null)
-              ClipRRect(
-                borderRadius: BorderRadius.circular(VRadius.md),
-                child: SizedBox(
-                  width: 200,
-                  height: 112,
-                  child: ServerImage(
-                    serverId: n.serverId,
-                    image: n.thumb ?? n.primary ?? n.backdrop,
-                    width: 200,
-                    fallbackSeed: n.id,
-                  ),
-                ),
-              ),
-            const SizedBox(width: 20),
-            Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text('$seconds 秒后播放下一集', style: VText.label.copyWith(color: VColors.textTertiary)),
-                const SizedBox(height: 6),
-                if (n != null)
-                  ConstrainedBox(
-                    constraints: const BoxConstraints(maxWidth: 360),
-                    child: Text(
-                      [if (n.episodeNumber != null) '第 ${n.episodeNumber} 集', n.name].join('  '),
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: VText.h2.copyWith(fontSize: 26),
-                    ),
-                  ),
-                const SizedBox(height: 14),
-                Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    GestureDetector(
-                      onTap: onPlay,
-                      child: MouseRegion(
-                        cursor: SystemMouseCursors.click,
-                        child: Container(
-                          padding: const EdgeInsets.fromLTRB(18, 8, 22, 8),
-                          decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(999)),
-                          child: Row(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              SizedBox(
-                                width: 26,
-                                height: 26,
-                                child: CircularProgressIndicator(
-                                  value: seconds / total,
-                                  strokeWidth: 3,
-                                  color: const Color(0xFF0B0C10),
-                                  backgroundColor: const Color(0x260B0C10),
-                                ),
-                              ),
-                              const SizedBox(width: 10),
-                              const Text(
-                                '立即播放',
-                                style: TextStyle(fontSize: 22, fontWeight: FontWeight.w700, color: Color(0xFF0B0C10)),
-                              ),
-                            ],
-                          ),
-                        ),
-                      ),
-                    ),
-                    const SizedBox(width: 14),
-                    GestureDetector(
-                      onTap: onCancel,
-                      child: MouseRegion(
-                        cursor: SystemMouseCursors.click,
-                        child: Text(
-                          PlatformProfile.isTv ? '返回键取消' : '取消',
-                          style: VText.label.copyWith(color: VColors.textSecondary),
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-              ],
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
+/// 跳过片头 / 前情提要 / 片尾、下一集（电视上按 OK，电脑上点击或按回车）
 class _SkipButton extends StatelessWidget {
   const _SkipButton({super.key, required this.action, required this.onPressed});
 
