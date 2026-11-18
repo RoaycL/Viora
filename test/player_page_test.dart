@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/foundation.dart';
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -483,6 +484,26 @@ void main() {
     expect(h.engine.state.value.playing, isTrue);
     tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
     tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+    await unmountPlayer(tester);
+  });
+
+  testWidgets('Windows：鼠标移出控制栏后按钮不保持高亮；键盘移动的焦点不动', (tester) async {
+    await pumpPlayer(tester);
+    PlatformProfile.debugOverride = PlatformProfile.desktop;
+    final gesture = await tester.createGesture(kind: PointerDeviceKind.mouse);
+    addTearDown(gesture.removePointer);
+    // 鼠标移到「倍速」上：拿到焦点（白色高亮）
+    final rate = tester.getCenter(find.text('倍速'));
+    await gesture.addPointer(location: const Offset(960, 400));
+    await gesture.moveTo(rate);
+    await tester.pump(const Duration(milliseconds: 50));
+    await gesture.moveTo(rate + const Offset(2, 0));
+    await tester.pump(const Duration(milliseconds: 50));
+    expect(FocusManager.instance.primaryFocus!.rect.contains(rate), isTrue);
+    // 移出控制栏：焦点回到画面
+    await gesture.moveTo(const Offset(960, 400));
+    await tester.pump(const Duration(milliseconds: 50));
+    expect(focused, 'player');
     await unmountPlayer(tester);
   });
 }

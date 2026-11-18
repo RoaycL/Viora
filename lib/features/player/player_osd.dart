@@ -144,10 +144,11 @@ class PlayerOsd extends StatelessWidget {
                 OrderedButtonRow(
                   mainAxisSize: MainAxisSize.min,
                   children: [
+                    // 点击打开弹幕设置（开关、区域、字号……）；长按 / 右键直接开关
                     OsdIconButton(
-                      label: danmakuOn ? '弹幕：开' : '弹幕：关',
-                      onPressed: onDanmaku,
-                      onMenu: onDanmakuMenu,
+                      label: danmakuOn ? '弹幕设置（弹幕：开）' : '弹幕设置（弹幕：关）',
+                      onPressed: onDanmakuMenu,
+                      onMenu: onDanmaku,
                       child: (focused) => _DanmakuGlyph(on: danmakuOn, focused: focused),
                     ),
                     if (desktop) ...[

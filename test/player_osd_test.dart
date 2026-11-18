@@ -183,12 +183,12 @@ void main() {
     // ↑ 到顶部的弹幕 / 音轨 / 字幕 / 更多（按钮行只接管左右时 ↑ 会被吞掉）；顶部也按顺序左右移动、到两端停住
     await tester.sendKeyEvent(LogicalKeyboardKey.arrowUp);
     await tester.pumpAndSettle();
-    expect(['弹幕：开', '音轨', '字幕', '更多'], contains(label()));
+    expect(['弹幕设置（弹幕：开）', '音轨', '字幕', '更多'], contains(label()));
     for (var i = 0; i < 5; i++) {
       await tester.sendKeyEvent(LogicalKeyboardKey.arrowLeft);
       await tester.pumpAndSettle();
     }
-    expect(label(), '弹幕：开');
+    expect(label(), '弹幕设置（弹幕：开）');
     for (var i = 0; i < 5; i++) {
       await tester.sendKeyEvent(LogicalKeyboardKey.arrowRight);
       await tester.pumpAndSettle();
