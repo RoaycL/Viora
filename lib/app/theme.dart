@@ -1,3 +1,6 @@
+import 'dart:io' show Platform;
+
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 
 import 'platform_profile.dart';
@@ -96,6 +99,11 @@ const _fontFallback = <String>[
   'sans-serif',
 ];
 
+/// Windows 直接把微软雅黑设为主字体，而不是只放在回退列表里。
+/// 默认主字体 Segoe UI 没有中文，中文字逐个走回退时，同一个词里的字可能落到不同字体上，
+/// 出现「倍速」两个字一大一小、一高一低（issue #56）。
+final String? _primaryFont = !kIsWeb && Platform.isWindows ? 'Microsoft YaHei UI' : null;
+
 abstract final class VText {
   static const display = TextStyle(fontSize: 112, fontWeight: FontWeight.w900, height: 1, letterSpacing: 6);
 
@@ -117,6 +125,7 @@ ThemeData buildTheme() {
     brightness: Brightness.dark,
     colorScheme: scheme,
     scaffoldBackgroundColor: VColors.background,
+    fontFamily: _primaryFont,
     fontFamilyFallback: _fontFallback,
     // 焦点效果全部由 VFocusable 自绘，关掉 Material 默认高亮。
     focusColor: Colors.transparent,
@@ -128,6 +137,7 @@ ThemeData buildTheme() {
     textTheme: base.textTheme.apply(
       bodyColor: VColors.textPrimary,
       displayColor: VColors.textPrimary,
+      fontFamily: _primaryFont,
       fontFamilyFallback: _fontFallback,
     ),
   );
