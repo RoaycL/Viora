@@ -7,6 +7,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
+import '../../app/desktop_prefs.dart';
 import '../../app/desktop_tray.dart';
 import '../../app/input/back_handler.dart';
 import '../../app/input/intents.dart';
@@ -136,6 +137,13 @@ class _PlayerPageState extends ConsumerState<PlayerPage> with WidgetsBindingObse
   bool _failingOver = false;
 
   bool _osd = true;
+
+  /// Windows：「跳过片头」按钮出现 3 秒后收起（控制层显示时再出现），不一直挡着画面
+  bool _skipFaded = false;
+  Timer? _skipFadeTimer;
+  static const skipButtonSeconds = 3;
+
+  bool get _skipVisible => _skipPrompt != null && (PlatformProfile.isTv || !_skipFaded || _osd);
   bool _info = false;
   Timer? _osdTimer;
   Timer? _progressTimer;
@@ -250,12 +258,25 @@ class _PlayerPageState extends ConsumerState<PlayerPage> with WidgetsBindingObse
       IndexSyncGate.hold();
     }
     WidgetsBinding.instance.addObserver(this);
-    _autoArrived; // 读取「是不是自动连播过来的」
+    _autoArrived;
+    // Windows「开始播放时全屏」：退出播放后恢复（连播下一集、换服务器时保持全屏）
+    if (isDesktopWindow && DesktopPrefs.instance.fullScreenOnPlay.value && !MiniPlayerWindow.active.value) {
+      final enter = !windowFullScreen.value;
+      _autoFullScreenPending = enter || _autoFullScreenCarried;
+      _autoFullScreenCarried = false;
+      if (enter) unawaited(toggleFullScreen());
+    } // 读取「是不是自动连播过来的」
     // Windows 关闭到托盘时暂停（窗口看不见了，不在后台继续放）
     DesktopTray.instance.hiddenToTray.addListener(_onHiddenToTray);
   }
 
   bool _holdsIndexSync = false;
+
+  /// 这次播放是不是自动进的全屏（退出播放时恢复窗口）
+  bool _autoFullScreenPending = false;
+
+  /// 连播 / 换服务器到下一个播放页：全屏是上一个播放页自动进的，下一个退出时也要恢复
+  static bool _autoFullScreenCarried = false;
 
   /// 这一集是自动连播过来的
   late final bool _autoArrived = () {
@@ -280,6 +301,10 @@ class _PlayerPageState extends ConsumerState<PlayerPage> with WidgetsBindingObse
     if (_nextEpisode == null || _nextCountdown != null) return;
     setState(() => _nextCountdown = nextCountdownSeconds);
     _countdownTimer?.cancel();
+    _skipFadeTimer?.cancel();
+    if (_autoFullScreenPending && windowFullScreen.value) unawaited(toggleFullScreen());
+    // 销毁过程中不能让别的组件重建：这一帧结束后再恢复标题栏
+    scheduleMicrotask(() => windowImmersive.value = false);
     _countdownTimer = Timer.periodic(const Duration(seconds: 1), (t) {
       if (!mounted) return t.cancel();
       final left = (_nextCountdown ?? 0) - 1;
@@ -733,7 +758,16 @@ class _PlayerPageState extends ConsumerState<PlayerPage> with WidgetsBindingObse
             },
             onPrompt: (action) {
               if (!mounted || _samePrompt(action, _skipPrompt)) return;
-              setState(() => _skipPrompt = action);
+              setState(() {
+                _skipPrompt = action;
+                _skipFaded = false;
+              });
+              _skipFadeTimer?.cancel();
+              if (action != null && PlatformProfile.isDesktop) {
+                _skipFadeTimer = Timer(const Duration(seconds: skipButtonSeconds), () {
+                  if (mounted) setState(() => _skipFaded = true);
+                });
+              }
             },
             onResolution: (r) {
               // 写进日志：没跳过时能看出是没查到数据、来源出错，还是查到了但模式是「显示按钮」
@@ -1056,6 +1090,11 @@ class _PlayerPageState extends ConsumerState<PlayerPage> with WidgetsBindingObse
 
   void _handoffTo(String route) {
     _handoff = true;
+    // 自动进的全屏交给下一个播放页（新页面先建好、这一页后销毁，所以在这里交接）
+    if (_autoFullScreenPending) {
+      _autoFullScreenCarried = true;
+      _autoFullScreenPending = false;
+    }
     context.pushReplacement(route);
   }
 
@@ -1457,7 +1496,7 @@ class _PlayerPageState extends ConsumerState<PlayerPage> with WidgetsBindingObse
       _setVolume(_volume - 0.05);
     } else if (repeat) {
       return KeyEventResult.handled;
-    } else if (confirmKeys.contains(key) && _skipPrompt != null) {
+    } else if (confirmKeys.contains(key) && _skipVisible) {
       // 出现"跳过片头 / 下一集"按钮时，OK 键执行跳过（空格仍是暂停）
       _activateSkip();
     } else if (confirmKeys.contains(key) ||
@@ -1955,6 +1994,13 @@ class _PlayerPageState extends ConsumerState<PlayerPage> with WidgetsBindingObse
   Widget build(BuildContext context) {
     final engine = _engine;
     final isEpisode = _item?.kind == MediaKind.episode;
+    // Windows 沉浸：控制层隐藏时标题栏的窗口按钮也隐藏（不能在 build 里改，画完这一帧再改）
+    final immersive = PlatformProfile.isDesktop && !_osd && _error == null;
+    if (windowImmersive.value != immersive) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) windowImmersive.value = immersive;
+      });
+    }
     // 面板在这里建好（页面状态变化时才重建），下面随进度每秒重建 4 次的控制层只是把同一个对象传下去：
     // 不然面板里几十张集卡片每秒跟着重建 4 次，电视上选集 / 选资源时卡得动不了
     final Widget? panelChild = switch (_panel) {
@@ -2138,7 +2184,7 @@ class _PlayerPageState extends ConsumerState<PlayerPage> with WidgetsBindingObse
                                             onPlay: _playNextNow,
                                             onCancel: _cancelNextCountdown,
                                           )
-                                        : _skipPrompt == null
+                                        : !_skipVisible
                                         ? const SizedBox.shrink()
                                         : _SkipButton(
                                             key: ValueKey('${_skipPrompt!.segment.type}${_skipPrompt!.segment.start}'),

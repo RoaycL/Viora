@@ -12,6 +12,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:viora/app/input/back_handler.dart';
 import 'package:viora/app/input/intents.dart';
 import 'package:viora/app/platform_profile.dart';
+import 'package:viora/app/window_frame.dart';
 import 'package:viora/data/aggregate/sources.dart';
 import 'package:viora/data/config/app_config.dart';
 import 'package:viora/data/config/config_store.dart';
@@ -726,5 +727,19 @@ void main() {
     final left = await tester.runAsync(PendingPlayReports.list);
     expect([for (final r in left!) (r.itemId, r.position)], [('s1e2', const Duration(minutes: 9))]);
     await unmountPlayer(tester);
+  });
+
+  testWidgets('Windows 沉浸：控制层隐藏时窗口按钮也隐藏，控制层出来时一起出来，退出播放恢复', (tester) async {
+    await pumpPlayer(tester);
+    PlatformProfile.debugOverride = PlatformProfile.desktop;
+    await tester.pump(const Duration(seconds: 6)); // 播放中 5 秒后控制层隐藏
+    await tester.pump();
+    expect(windowImmersive.value, isTrue);
+    await press(tester, LogicalKeyboardKey.arrowRight); // 有操作：控制层出来
+    await tester.pump();
+    expect(windowImmersive.value, isFalse);
+    await unmountPlayer(tester);
+    await tester.pump();
+    expect(windowImmersive.value, isFalse);
   });
 }

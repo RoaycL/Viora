@@ -10,7 +10,6 @@ import '../../app/platform_profile.dart';
 import '../../app/theme.dart';
 import '../../ui/focus/row_focus.dart';
 import '../../ui/widgets/buttons.dart';
-import '../../ui/widgets/status_bar.dart';
 import '../../ui/widgets/art.dart';
 
 /// Hero 的一条：TMDB 今日趋势，或（未配置 TMDB 时）媒体库最近入库
@@ -298,7 +297,7 @@ class HomeHeroState extends State<HomeHero> with WidgetsBindingObserver implemen
               ),
             ),
           // 电视的服务器状态和时钟在顶部标签栏右侧
-          if (!PlatformProfile.isTv) const Positioned(right: VSpace.safeH, top: VSpace.safeV, child: StatusBar()),
+          // Windows 的服务器状态和时钟在左侧导航栏里，电视在顶部标签栏里
           // Windows：右下角小圆点，当前这部是长条；点圆点切换（鼠标停在大图上时不自动轮播）
           if (_carousel && desktop)
             Positioned(

@@ -4,6 +4,7 @@ import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../app/desktop_prefs.dart';
 import '../../app/desktop_tray.dart';
 import '../../app/platform_profile.dart';
 import '../../app/theme.dart';
@@ -579,6 +580,27 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
           ),
           const SizedBox(height: 24),
           ..._proxyUsers(config, updater),
+          // 仅 Windows：跟随系统代理（Clash 等工具开的系统代理），只存在本机
+          if (isDesktopWindow) ...[
+            const SizedBox(height: 36),
+            const _Subtitle('系统代理'),
+            ValueListenableBuilder<bool>(
+              valueListenable: DesktopPrefs.instance.followSystemProxy,
+              builder: (context, on, _) => VToggle(
+                label: '跟随 Windows 系统代理',
+                subtitle: on
+                    ? (SystemProxy.current == null
+                          ? '已打开，但系统现在没有开代理：照常直连'
+                          : '经过 ${SystemProxy.current}：应用里所有请求和视频播放都走它，局域网地址直连')
+                    : '打开后应用里所有请求和视频播放都走系统代理（设置 → 网络和 Internet → 代理）',
+                value: on,
+                onChanged: (v) async {
+                  await DesktopPrefs.instance.setFollowSystemProxy(v);
+                  if (mounted) setState(() {});
+                },
+              ),
+            ),
+          ],
           const SizedBox(height: 36),
           const _Subtitle('TMDB（元数据、推荐、中文标题）'),
           Text(
@@ -625,6 +647,32 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
         children: [
           // 仅 Windows：关闭窗口时退出还是隐藏到托盘（默认隐藏到托盘）
           if (isDesktopWindow) ...[
+            ValueListenableBuilder<bool>(
+              valueListenable: DesktopPrefs.instance.fullScreenOnLaunch,
+              builder: (context, v, _) =>
+                  VToggle(label: '打开软件时全屏', value: v, onChanged: DesktopPrefs.instance.setFullScreenOnLaunch),
+            ),
+            const SizedBox(height: 12),
+            ValueListenableBuilder<bool>(
+              valueListenable: DesktopPrefs.instance.fullScreenOnPlay,
+              builder: (context, v, _) => VToggle(
+                label: '开始播放时全屏',
+                subtitle: '退出播放后恢复原来的窗口；连播下一集时保持全屏',
+                value: v,
+                onChanged: DesktopPrefs.instance.setFullScreenOnPlay,
+              ),
+            ),
+            const SizedBox(height: 12),
+            ValueListenableBuilder<AppIconStyle>(
+              valueListenable: DesktopPrefs.instance.iconStyle,
+              builder: (context, v, _) => VChoice<AppIconStyle>(
+                label: '应用图标（左上角和任务栏）',
+                options: [for (final s in AppIconStyle.values) (s, s.label)],
+                value: v,
+                onChanged: DesktopPrefs.instance.setIconStyle,
+              ),
+            ),
+            const SizedBox(height: 24),
             ValueListenableBuilder<bool>(
               valueListenable: DesktopTray.instance.closeToTray,
               builder: (context, toTray, _) => VToggle(
