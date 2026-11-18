@@ -140,6 +140,8 @@ class MpvEngine extends PlayerEngine {
       // 自定义播放 UA（docs/03-media-servers.md §6），其余请求头由 httpHeaders 传入
       await set('user-agent', media.userAgent);
       // 跟随系统代理（设置 → 接口与网络）：播放也走代理；局域网地址直连
+      // 每次开始播放前重新读系统代理：启动后才打开 / 关掉 Clash 时不会连到已经失效的代理
+      await SystemProxy.refresh();
       await set('http-proxy', SystemProxy.forMpv(media.url) ?? '');
       await set('network-timeout', '20');
       // 预读缓冲上限（设置 → 播放 → 播放缓冲上限）；超过内存上限时写到磁盘缓存，关闭播放器后清除

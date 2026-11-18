@@ -139,6 +139,12 @@ void main() {
     final again = SegmentSettings.fromJson(old.copyWith(intro: SegmentSkipMode.button).toJson());
     expect(again.intro, SegmentSkipMode.button);
   });
+
+  test('同步收到的旧版本设置不再升级默认值：用户改回的「显示按钮」保留', () {
+    final synced = SegmentSettings.fromJson({'intro': 'button', 'credits': 'button'}, migrateDefaults: false);
+    expect(synced.intro, SegmentSkipMode.button);
+    expect(synced.credits, SegmentSkipMode.button);
+  });
 }
 
 class _BrokenSecrets extends FlutterSecureStorage {

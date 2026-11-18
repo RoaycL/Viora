@@ -87,4 +87,60 @@ void main() {
     PerfMode.debugLite = true;
     expect(PerfMode.lite, isTrue);
   });
+
+  testWidgets('卡片数变多时（继续观看多了一项）画面里新出现的卡片直接显示，不等滚动', (tester) async {
+    PlatformProfile.debugOverride = PlatformProfile.desktop;
+    tester.view.physicalSize = const Size(1920, 1080);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+    Widget row(int count) => MaterialApp(
+      home: Material(
+        child: RowFocusScope(
+          child: FocusRow(
+            rowIndex: 0,
+            itemCount: count,
+            itemExtent: 220,
+            height: 300,
+            itemBuilder: (context, i, node) => Focus(focusNode: node, child: Text('卡片 $i')),
+          ),
+        ),
+      ),
+    );
+    await tester.pumpWidget(row(3));
+    await tester.pump();
+    await tester.pumpWidget(row(4));
+    await tester.pump();
+    await tester.pump();
+    final o = find.ancestor(of: find.text('卡片 3'), matching: find.byType(Opacity));
+    expect(tester.widget<Opacity>(o.first).opacity, 1);
+  });
+
+  testWidgets('窗口变宽时多出来的卡片直接显示', (tester) async {
+    PlatformProfile.debugOverride = PlatformProfile.desktop;
+    tester.view.physicalSize = const Size(1000, 1080);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Material(
+          child: RowFocusScope(
+            child: FocusRow(
+              rowIndex: 0,
+              itemCount: 20,
+              itemExtent: 220,
+              height: 300,
+              itemBuilder: (context, i, node) => Focus(focusNode: node, child: Text('卡片 $i')),
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pump();
+    tester.view.physicalSize = const Size(1920, 1080);
+    await tester.pump();
+    await tester.pump();
+    await tester.pump();
+    final o = find.ancestor(of: find.text('卡片 6'), matching: find.byType(Opacity));
+    expect(tester.widget<Opacity>(o.first).opacity, 1);
+  });
 }

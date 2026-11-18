@@ -155,6 +155,9 @@ class _FocusRowState extends State<FocusRow> implements RevealableFocusRow {
   final _revealAt = <int, Duration>{};
   final _revealClock = Stopwatch()..start();
 
+  /// 上次的画面宽度（窗口变宽时校正）
+  double? _revealViewport;
+
   static const _revealStagger = Duration(milliseconds: 55);
 
   void _revealVisible({bool initial = false}) {
@@ -192,7 +195,12 @@ class _FocusRowState extends State<FocusRow> implements RevealableFocusRow {
   void didUpdateWidget(FocusRow oldWidget) {
     super.didUpdateWidget(oldWidget);
     // 数据后到（卡片数从 0 变成 N）：同样先估计哪些卡片在画面里
-    if (oldWidget.itemCount == 0) _estimateRevealed();
+    if (oldWidget.itemCount == 0) {
+      _estimateRevealed();
+    } else if (_reveal && oldWidget.itemCount != widget.itemCount) {
+      // 卡片数变了（比如退出播放后「继续观看」多了一项）：画面里新出现的卡片直接显示，不等滚动
+      WidgetsBinding.instance.addPostFrameCallback((_) => _revealVisible(initial: true));
+    }
     if (oldWidget.rowIndex != widget.rowIndex) {
       _controller?.unregister(oldWidget.rowIndex, this);
       _controller?.register(widget.rowIndex, this);
@@ -302,36 +310,49 @@ class _FocusRowState extends State<FocusRow> implements RevealableFocusRow {
           clipper: _LeftEdgeClipper(widget.leading - FocusRow.focusBleed),
           child: SizedBox(
             height: widget.height + FocusRow.focusBleed * 2,
-            child: Listener(
-              onPointerSignal: widget.forwardShiftWheelAtEdge && PlatformProfile.isDesktop ? _forwardEdgeScroll : null,
-              child: ListView.separated(
-                controller: _scroll,
-                scrollDirection: Axis.horizontal,
-                clipBehavior: Clip.none,
-                // 屏幕外提前构建的范围：电视 800 像素（左右各多两三张卡），电脑 1600。
-                // 电视上每行少建一半屏外卡片，首页十来行加起来少解码几十张海报
-                scrollCacheExtent: ScrollCacheExtent.pixels(PlatformProfile.isTv ? 800 : 1600),
-                padding: EdgeInsets.fromLTRB(widget.leading, FocusRow.focusBleed, VSpace.safeH, FocusRow.focusBleed),
-                itemCount: widget.itemCount,
-                findItemIndexCallback: widget.itemKeys == null
-                    ? null
-                    : (key) {
-                        final i = widget.itemKeys!.indexOf((key as ValueKey<Object>).value);
-                        return i < 0 ? null : i;
-                      },
-                separatorBuilder: (_, _) => SizedBox(width: widget.gap),
-                itemBuilder: (context, index) => SizedBox(
-                  key: widget.itemKeys == null ? null : ValueKey(widget.itemKeys![index]),
-                  width: widget.itemExtent,
-                  child: _reveal
-                      ? _RiseIn(
-                          index: index,
-                          revealed: _revealed,
-                          startAt: () => _revealAt[index],
-                          clock: _revealClock,
-                          child: widget.itemBuilder(context, index, nodeAt(index)),
-                        )
-                      : widget.itemBuilder(context, index, nodeAt(index)),
+            child: NotificationListener<ScrollMetricsNotification>(
+              // 窗口变宽（最大化、拖大窗口）时画面里多出来的卡片直接显示，不等滚动
+              // （只看画面宽度：滚动时列表估算的总长度也会变，那时要照常播放浮现动画）
+              onNotification: (n) {
+                final w = n.metrics.viewportDimension;
+                if (_reveal && w != _revealViewport) {
+                  final grew = _revealViewport != null && w > _revealViewport!;
+                  _revealViewport = w;
+                  if (grew) _revealVisible(initial: true);
+                }
+                return false;
+              },
+                child: Listener(
+                onPointerSignal: widget.forwardShiftWheelAtEdge && PlatformProfile.isDesktop ? _forwardEdgeScroll : null,
+                child: ListView.separated(
+                  controller: _scroll,
+                  scrollDirection: Axis.horizontal,
+                  clipBehavior: Clip.none,
+                  // 屏幕外提前构建的范围：电视 800 像素（左右各多两三张卡），电脑 1600。
+                  // 电视上每行少建一半屏外卡片，首页十来行加起来少解码几十张海报
+                  scrollCacheExtent: ScrollCacheExtent.pixels(PlatformProfile.isTv ? 800 : 1600),
+                  padding: EdgeInsets.fromLTRB(widget.leading, FocusRow.focusBleed, VSpace.safeH, FocusRow.focusBleed),
+                  itemCount: widget.itemCount,
+                  findItemIndexCallback: widget.itemKeys == null
+                      ? null
+                      : (key) {
+                          final i = widget.itemKeys!.indexOf((key as ValueKey<Object>).value);
+                          return i < 0 ? null : i;
+                        },
+                  separatorBuilder: (_, _) => SizedBox(width: widget.gap),
+                  itemBuilder: (context, index) => SizedBox(
+                    key: widget.itemKeys == null ? null : ValueKey(widget.itemKeys![index]),
+                    width: widget.itemExtent,
+                    child: _reveal
+                        ? _RiseIn(
+                            index: index,
+                            revealed: _revealed,
+                            startAt: () => _revealAt[index],
+                            clock: _revealClock,
+                            child: widget.itemBuilder(context, index, nodeAt(index)),
+                          )
+                        : widget.itemBuilder(context, index, nodeAt(index)),
+                  ),
                 ),
               ),
             ),
