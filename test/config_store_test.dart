@@ -106,6 +106,21 @@ void main() {
     expect(saved.movieCount, 12);
   });
 
+  test('后台连接没有重新登录时，不覆盖期间前台刷新的令牌', () async {
+    SharedPreferences.setMockInitialValues({'viora.config.v1': oldJson});
+    ConfigStore.vault = MemoryVault();
+    final container = ProviderContainer();
+    addTearDown(container.dispose);
+    final store = container.read(configProvider.notifier);
+    await store.load();
+    await store.updateServer('s1', (s) => s.copyWith(token: 'old', userId: 'u1'));
+    final initial = container.read(configProvider).server('s1')!;
+    // 前台请求遇到 401 重新登录，拿到新令牌
+    await store.updateServer('s1', (s) => s.copyWith(token: 'refreshed'));
+    expect(await store.replaceServerIfUnchanged(initial, initial.copyWith(lastAccessAt: DateTime(2026))), isTrue);
+    expect(container.read(configProvider).server('s1')!.token, 'refreshed');
+  });
+
   test('旧版本的明文密码：读取正常，保存后移进密钥库，配置里不再有密码和令牌', () async {
     SharedPreferences.setMockInitialValues({'viora.config.v1': oldJson});
     final vault = MemoryVault();

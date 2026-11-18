@@ -175,12 +175,15 @@ class ConfigStore extends Notifier<AppConfig> {
     if (current == null || _identityOf(current) != _identityOf(expected)) return false;
     await updateServer(expected.id, (s) {
       if (_identityOf(s) != _identityOf(expected)) return s;
+      // 令牌 / 用户 / 当前线路：只有这次连接自己改了（重新登录、换线路）才写回。
+      // 连接期间前台请求可能已经刷新了过期的令牌，不能用后台快照里的旧令牌覆盖回去
+      final sessionChanged = replacement.token != expected.token || replacement.userId != expected.userId;
       return s.copyWith(
         name: s.name.trim().isEmpty ? replacement.name : null,
         lines: replacement.lines,
-        userId: replacement.userId,
-        token: replacement.token,
-        activeLineId: replacement.activeLineId,
+        userId: sessionChanged ? replacement.userId : null,
+        token: sessionChanged ? replacement.token : null,
+        activeLineId: replacement.activeLineId != expected.activeLineId ? replacement.activeLineId : null,
         lastAccessAt: replacement.lastAccessAt,
       );
     });
