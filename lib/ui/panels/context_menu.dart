@@ -329,12 +329,10 @@ class _PopupMenuState extends State<_PopupMenu> {
   Widget build(BuildContext context) {
     final actions = widget.actions();
     final title = widget.title;
-    // 电视离得远：菜单和字都大一号
-    final tv = !PlatformProfile.isDesktop;
     return Material(
       type: MaterialType.transparency,
       child: Glass(
-        width: tv ? 520 : 380,
+        width: 380,
         radius: VRadius.card,
         blur: 30,
         fill: const Color(0xE614161E),
@@ -350,7 +348,7 @@ class _PopupMenuState extends State<_PopupMenu> {
                   title,
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
-                  style: VText.small.copyWith(color: VColors.textTertiary, fontSize: tv ? 20 : null),
+                  style: VText.small.copyWith(color: VColors.textTertiary),
                 ),
               ),
             Flexible(
@@ -377,7 +375,7 @@ class _PopupMenuState extends State<_PopupMenu> {
                           builder: (context, focused) => AnimatedContainer(
                             key: _itemKey(i),
                             duration: VMotion.focus,
-                            height: tv ? (actions[i].detail == null ? 64 : 80) : (actions[i].detail == null ? 50 : 64),
+                            height: actions[i].detail == null ? 50 : 64,
                             padding: const EdgeInsets.symmetric(horizontal: 14),
                             decoration: BoxDecoration(
                               color: focused ? const Color(0x24FFFFFF) : const Color(0x00FFFFFF),
@@ -385,19 +383,19 @@ class _PopupMenuState extends State<_PopupMenu> {
                             ),
                             child: Row(
                               children: [
-                                Icon(actions[i].icon, size: tv ? 28 : 22, color: Colors.white),
+                                Icon(actions[i].icon, size: 22, color: Colors.white),
                                 const SizedBox(width: 14),
                                 Expanded(
                                   child: _ItemText(
                                     label: actions[i].label,
                                     detail: actions[i].detail,
-                                    size: tv ? 24 : 20,
+                                    size: 20,
                                     color: Colors.white,
                                     detailColor: const Color(0x99FFFFFF),
                                   ),
                                 ),
                                 if (actions[i].submenu != null)
-                                  Icon(Icons.chevron_right_rounded, size: tv ? 28 : 22, color: const Color(0x99FFFFFF)),
+                                  Icon(Icons.chevron_right_rounded, size: 22, color: const Color(0x99FFFFFF)),
                               ],
                             ),
                           ),
