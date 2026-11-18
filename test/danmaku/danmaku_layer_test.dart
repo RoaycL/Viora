@@ -88,7 +88,16 @@ void main() {
     }
     final rects = {for (final r in layer.debugRects) r.$1: r.$2};
     expect(rects['顶部']!.center.dx, closeTo(960, 1));
-    expect(rects['底部']!.top, greaterThan(800));
+    // 默认半屏：底部弹幕在显示区域的底边（不在屏幕最下面）
+    expect(rects['底部']!.bottom, lessThanOrEqualTo(16 + 540 + 1));
+    expect(rects['底部']!.top, greaterThan(400));
+
+    // 全屏：底部弹幕在屏幕下方（避开字幕）
+    final (_, full) = await pump(tester, comments, config: const DanmakuConfig(area: 1));
+    for (var i = 0; i < 4; i++) {
+      await tester.pump(const Duration(milliseconds: 50));
+    }
+    expect({for (final r in full.debugRects) r.$1: r.$2}['底部']!.top, greaterThan(800));
 
     final (_, hidden) = await pump(tester, comments, config: const DanmakuConfig(showFixed: false));
     for (var i = 0; i < 4; i++) {
@@ -172,6 +181,33 @@ void main() {
     await tester.pump(const Duration(milliseconds: 500));
     expect(layer.debugRects.single.$2.left, x2);
     expect(tester.binding.hasScheduledFrame, isFalse);
+    await tester.pumpWidget(const SizedBox());
+  });
+
+  testWidgets('显示区域 1/4 屏：滚动、顶部、底部弹幕都在区域里', (tester) async {
+    final comments = [
+      for (var i = 0; i < 30; i++) DanmakuComment(time: 0.1 + i * 0.01, text: '滚动 $i'),
+      for (var i = 0; i < 10; i++) DanmakuComment(time: 0.1 + i * 0.01, text: '顶部 $i', mode: DanmakuMode.top),
+      for (var i = 0; i < 10; i++) DanmakuComment(time: 0.1 + i * 0.01, text: '底部 $i', mode: DanmakuMode.bottom),
+    ];
+    final (_, layer) = await pump(tester, comments, config: const DanmakuConfig(area: 0.25));
+    for (var i = 0; i < 20; i++) {
+      await tester.pump(const Duration(milliseconds: 50));
+    }
+    final rects = layer.debugRects;
+    expect(rects.where((r) => r.$1.startsWith('底部')), isNotEmpty);
+    expect(rects.where((r) => r.$1.startsWith('顶部')), isNotEmpty);
+    // 1080 的 1/4 = 270，加上顶部留白 16
+    for (final (text, rect) in rects) {
+      expect(rect.bottom, lessThanOrEqualTo(16 + 270 + 1), reason: text);
+    }
+    // 顶部、底部固定弹幕互不重叠
+    final fixed = rects.where((r) => !r.$1.startsWith('滚动')).toList();
+    for (var i = 0; i < fixed.length; i++) {
+      for (var j = i + 1; j < fixed.length; j++) {
+        expect(fixed[i].$2.overlaps(fixed[j].$2), isFalse, reason: '${fixed[i].$1} / ${fixed[j].$1}');
+      }
+    }
     await tester.pumpWidget(const SizedBox());
   });
 }

@@ -158,9 +158,8 @@ class DanmakuLayerState extends State<DanmakuLayer> with SingleTickerProviderSta
       changed = true;
     }
     if (old.area != c.area || old.fontSize != c.fontSize || old.showFixed != c.showFixed) {
-      final laneH = c.fontSize * 1.32;
-      final scrollLanes = (_size.height * c.area / laneH).floor().clamp(1, 60);
-      final fixedLanes = (_size.height * 0.4 / laneH).floor().clamp(1, 30);
+      final scrollLanes = _scrollLanes(c);
+      final fixedLanes = _fixedLanes(c);
       _live.removeWhere((l) {
         final out = l.comment.mode == DanmakuMode.scroll
             ? l.lane >= scrollLanes
@@ -277,14 +276,24 @@ class DanmakuLayerState extends State<DanmakuLayer> with SingleTickerProviderSta
 
   double get _laneHeight => widget.config.fontSize * 1.32;
 
+  /// 滚动弹幕的行数：显示区域（从顶部算起）能放几行
+  int _scrollLanes(DanmakuConfig c) => (_size.height * c.area / (c.fontSize * 1.32)).floor().clamp(1, 60);
+
+  /// 顶部 / 底部固定弹幕各自的行数。全屏时各占 40%；限制了显示区域时也只在区域里，
+  /// 顶部的从区域顶端往下排、底部的从区域底端往上排，各占区域的一半（原来不受区域限制，底部弹幕总在屏幕最下面）
+  int _fixedLanes(DanmakuConfig c) =>
+      (_size.height * (c.area >= 1 ? 0.4 : c.area / 2) / (c.fontSize * 1.32)).floor().clamp(1, 30);
+
+  /// 底部固定弹幕的底边：全屏时在屏幕 90% 处（避开字幕），否则在显示区域的底边
+  double _bottomEdge(Size size, DanmakuConfig c) => c.area >= 1 ? size.height * 0.9 : 16 + size.height * c.area;
+
   bool _emit(DanmakuComment d, double now) {
     final c = widget.config;
     final (fill, stroke) = _paint(d);
     final w = fill.width;
-    final laneH = _laneHeight;
     int? lane;
     if (d.mode == DanmakuMode.scroll) {
-      final lanes = (_size.height * c.area / laneH).floor().clamp(1, 60);
+      final lanes = _scrollLanes(c);
       final last = List<_Live?>.filled(lanes, null);
       for (final l in _live) {
         if (l.comment.mode == DanmakuMode.scroll && l.lane < lanes) {
@@ -299,7 +308,7 @@ class DanmakuLayerState extends State<DanmakuLayer> with SingleTickerProviderSta
         }
       }
     } else {
-      final lanes = (_size.height * 0.4 / laneH).floor().clamp(1, 30);
+      final lanes = _fixedLanes(c);
       final used = {
         for (final l in _live)
           if (l.comment.mode == d.mode) l.lane,
@@ -378,7 +387,7 @@ class DanmakuLayerState extends State<DanmakuLayer> with SingleTickerProviderSta
         top + l.lane * laneH,
       ),
       DanmakuMode.top => Offset((size.width - l.width) / 2, top + l.lane * laneH),
-      DanmakuMode.bottom => Offset((size.width - l.width) / 2, size.height * 0.9 - (l.lane + 1) * laneH),
+      DanmakuMode.bottom => Offset((size.width - l.width) / 2, _bottomEdge(size, widget.config) - (l.lane + 1) * laneH),
     };
   }
 

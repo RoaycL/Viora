@@ -33,6 +33,7 @@ import '../../player/playback_cache.dart';
 import '../../player/preload.dart';
 import '../../player/segment_playback_session.dart';
 import '../../player/segment_skip_controller.dart';
+import '../../ui/focus/input_mode.dart';
 import '../../ui/glass/glass.dart';
 import '../../ui/panels/context_menu.dart';
 import '../../ui/panels/form_dialog.dart';
@@ -1138,9 +1139,22 @@ class _PlayerPageState extends ConsumerState<PlayerPage> with WidgetsBindingObse
     _showOsd(sticky: true);
     await show();
     if (!mounted) return;
-    (restore != null && restore.context != null && restore.context!.mounted ? restore : _focus).requestFocus();
+    // Windows 用鼠标操作、菜单关闭时鼠标已不在控制栏上：焦点回到画面，按钮不保持高亮
+    final pointerAway = PlatformProfile.isDesktop && InputMode.pointer && !_hoverControls;
+    (!pointerAway && restore != null && restore.context != null && restore.context!.mounted ? restore : _focus)
+        .requestFocus();
     _armOsdTimer();
   }
+
+  /// Windows：鼠标移出控制栏时，鼠标悬停时拿到焦点的按钮交还焦点（不然按钮一直白色高亮，像是选中了）。
+  /// 键盘操作（方向键移动焦点）时不动；打开着面板时也不动
+  void _onHoverControls(bool inside) {
+    _hoverControls = inside;
+    if (inside || !PlatformProfile.isDesktop || !InputMode.pointer || _panel != OsdPanel.none) return;
+    if (_onControls && ModalRoute.of(context)?.isCurrent == true) _focus.requestFocus();
+  }
+
+  Future<void> _openDanmakuSettings() => _menu(_openDanmakuMenu);
 
   Future<void> _openAudioMenu() => _menu(() {
     final s = _state;
@@ -1588,14 +1602,14 @@ class _PlayerPageState extends ConsumerState<PlayerPage> with WidgetsBindingObse
                                           onNext: _playNext,
                                           onSeek: _seekTo,
                                           onDanmaku: _toggleDanmaku,
-                                          onDanmakuMenu: _openDanmakuMenu,
+                                          onDanmakuMenu: _openDanmakuSettings,
                                           onAudio: _openAudioMenu,
                                           onSubtitle: _openSubtitleMenu,
                                           onMore: _openMenu,
                                           onSources: () => _openPanel(OsdPanel.sources),
                                           onEpisodes: () => _openPanel(OsdPanel.episodes),
                                           onRate: _openRateMenu,
-                                          onHoverControls: (v) => _hoverControls = v,
+                                          onHoverControls: _onHoverControls,
                                         ),
                                       ),
                                     ),
