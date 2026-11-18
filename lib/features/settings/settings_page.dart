@@ -680,6 +680,16 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
               setState(() {});
             },
           ),
+          const SizedBox(height: 20),
+          VToggle(
+            label: '检查测试版',
+            subtitle: '打开：测试版和正式版都检查，有更新的就提示；关闭：只检查正式版（测试版可能不稳定）',
+            value: updater.settings.includePrerelease,
+            onChanged: (v) async {
+              await updater.saveSettings(updater.settings.copyWith(includePrerelease: v));
+              setState(() {});
+            },
+          ),
           const SizedBox(height: 24),
           SettingsEntry(
             title: '导出日志',
