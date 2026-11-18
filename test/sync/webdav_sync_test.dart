@@ -19,6 +19,7 @@ class _FakeDav {
   bool sendEtag = true;
   bool sendWeakEtag = false;
   Future<void> Function()? beforePut;
+  void Function()? afterGet;
 
   String etag(String content) => '"${base64.encode(utf8.encode(content))}"';
 
@@ -52,6 +53,9 @@ class _FakeDav {
           } else {
             if (sendEtag) res.headers.set('etag', '${sendWeakEtag ? 'W/' : ''}${etag(f)}');
             res.write(f);
+            final hook = afterGet;
+            afterGet = null;
+            hook?.call();
           }
         case 'PUT':
           createConditions.add(req.headers.value('if-none-match'));
@@ -179,22 +183,48 @@ void main() {
     expect((remote['servers'] as List).map((s) => s['name']), containsAll(['friend', 'home', 'local']));
   });
 
-  test('没有强 ETag 时自动上传失败，仍可明确覆盖云端', () async {
+  test('没有强 ETag 时自动上传仍可用：上传前重新确认云端没被改过', () async {
     final webdav = WebDavConfig(url: dav.url, username: 'me', password: 'pw');
     final (a, syncA) = await device('a', AppConfig(servers: [_server('1', 'home')], webdav: webdav));
     await syncA.sync();
-    await a.read(configProvider.notifier).upsertServer(_server('2', 'friend'));
-    final original = dav.files['/dav/Viora/viora-config.json'];
+    var n = 1;
     for (final weak in [false, true]) {
       dav.sendEtag = weak;
       dav.sendWeakEtag = weak;
-      await expectLater(
-        syncA.sync(),
-        throwsA(isA<WebDavException>().having((e) => e.message, 'message', contains('强 ETag'))),
-      );
-      expect(dav.files['/dav/Viora/viora-config.json'], original);
+      await a.read(configProvider.notifier).upsertServer(_server('${++n}', 'friend$n'));
+      expect(await syncA.sync(), contains('上传'));
+      final remote = jsonDecode(dav.files['/dav/Viora/viora-config.json']!) as Map;
+      expect((remote['servers'] as List).map((s) => s['name']), contains('friend$n'));
     }
     expect(await syncA.sync(mode: WebDavSyncMode.upload), contains('覆盖云端'));
+  });
+
+  test('没有 ETag 时：读取后云端被别的设备改过，按冲突重新合并，不覆盖对方的修改', () async {
+    final webdav = WebDavConfig(url: dav.url, username: 'me', password: 'pw');
+    final (a, syncA) = await device('a', AppConfig(servers: [_server('1', 'home')], webdav: webdav));
+    await syncA.sync();
+    dav.sendEtag = false;
+    await a.read(configProvider.notifier).upsertServer(_server('2', 'local'));
+    dav.afterGet = () {
+      final remote = jsonDecode(dav.files['/dav/Viora/viora-config.json']!) as Map<String, dynamic>;
+      remote['rev'] = 'other-device';
+      remote['servers'] = [
+        ...remote['servers'] as List,
+        {
+          'type': 'emby',
+          'name': 'other',
+          'lines': [
+            {'name': '主线路', 'url': 'http://127.0.0.1:1/other', 'proxied': false},
+          ],
+          'username': 'u',
+          'password': 'p-other',
+        },
+      ];
+      dav.files['/dav/Viora/viora-config.json'] = jsonEncode(remote);
+    };
+    expect(await syncA.sync(), contains('合并'));
+    final remote = jsonDecode(dav.files['/dav/Viora/viora-config.json']!) as Map;
+    expect((remote['servers'] as List).map((s) => s['name']), containsAll(['home', 'local', 'other']));
   });
 
   test('连续冲突最多重试三次，不覆盖云端的新版本', () async {

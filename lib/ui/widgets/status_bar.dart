@@ -59,7 +59,7 @@ class _StatusBarState extends ConsumerState<StatusBar> {
         : VColors.warn;
     final timeText = Text(
       time,
-      style: const TextStyle(fontSize: 22, fontWeight: FontWeight.w600, color: Color(0xEBFFFFFF)),
+      style: numericStyle(const TextStyle(fontSize: 22, fontWeight: FontWeight.w600, color: Color(0xEBFFFFFF))),
     );
     if (widget.compact) {
       return Semantics(

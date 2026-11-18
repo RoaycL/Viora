@@ -327,7 +327,10 @@ Future<void> _connect(ProviderContainer ref, String id, void Function(String) lo
       } catch (_) {}
     }
     if (!server.loggedIn) server = await clientForDraft(config, server).login();
-    if (!await store.replaceServerIfUnchanged(initial, server.copyWith(lastAccessAt: DateTime.now()))) return;
+    if (!await store.replaceServerIfUnchanged(initial, server.copyWith(lastAccessAt: DateTime.now()))) {
+      log('「${server.displayName}」连接期间地址或账号被修改 / 服务器已删除，这次连接结果不保存');
+      return;
+    }
     log('「${server.displayName}」已连接');
     Future<void>.delayed(
       const Duration(seconds: 1),

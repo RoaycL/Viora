@@ -2138,7 +2138,10 @@ class _PlayerPageState extends ConsumerState<PlayerPage> with WidgetsBindingObse
                                       child: Glass(
                                         radius: VRadius.panel,
                                         padding: const EdgeInsets.symmetric(horizontal: 36, vertical: 20),
-                                        child: Text(formatClock(_pendingSeek!), style: VText.h2.copyWith(fontSize: 44)),
+                                        child: Text(
+                                          formatClock(_pendingSeek!),
+                                          style: numericStyle(VText.h2.copyWith(fontSize: 44)),
+                                        ),
                                       ),
                                     ),
                                   ),
@@ -2453,7 +2456,7 @@ class _NextButton extends StatelessWidget {
                       ),
                       Text(
                         '$seconds',
-                        style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w700, color: ink),
+                        style: numericStyle(const TextStyle(fontSize: 18, fontWeight: FontWeight.w700, color: ink)),
                       ),
                     ],
                   ),

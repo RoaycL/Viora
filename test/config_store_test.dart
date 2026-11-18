@@ -88,6 +88,24 @@ void main() {
     expect(container.read(configProvider).allServers, isEmpty);
   });
 
+  test('后台连接期间测速、改了其他设置：连接结果照常保存，用户改的设置保留', () async {
+    SharedPreferences.setMockInitialValues({'viora.config.v1': oldJson});
+    ConfigStore.vault = MemoryVault();
+    final container = ProviderContainer();
+    addTearDown(container.dispose);
+    final store = container.read(configProvider.notifier);
+    await store.load();
+    final initial = container.read(configProvider).server('s1')!;
+    // 连接进行中：别处更新了这台服务器（测速、用户关掉聚合），对象已经不是同一个
+    await store.updateServer('s1', (s) => s.copyWith(aggregate: false, movieCount: 12));
+    expect(await store.replaceServerIfUnchanged(initial, initial.copyWith(token: 'fresh', userId: 'u1')), isTrue);
+    final saved = container.read(configProvider).server('s1')!;
+    expect(saved.token, 'fresh');
+    expect(saved.userId, 'u1');
+    expect(saved.aggregate, isFalse);
+    expect(saved.movieCount, 12);
+  });
+
   test('旧版本的明文密码：读取正常，保存后移进密钥库，配置里不再有密码和令牌', () async {
     SharedPreferences.setMockInitialValues({'viora.config.v1': oldJson});
     final vault = MemoryVault();

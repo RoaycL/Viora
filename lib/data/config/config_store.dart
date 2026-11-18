@@ -165,12 +165,35 @@ class ConfigStore extends Notifier<AppConfig> {
     return _writes;
   }
 
-  /// 后台连接只可更新启动时的那份服务器；已删除或修改的服务器不再回写。
+  /// 后台连接（导入配置后自动登录）的结果写回：服务器已删除、或地址 / 账号 / 密码 / UA 被改过时不写回，返回 false。
+  ///
+  /// 只比较这些决定「连的是哪台、用哪个账号」的字段：连接期间首页测速、播放器刷新登录也会更新这台服务器
+  /// （测速延迟、令牌等），那些变化不能让这次连接结果被丢掉。写回时只合并连接得到的字段（令牌、用户、
+  /// 线路测速、服务器名、访问时间），连接期间用户改的其他设置（聚合、索引、成人内容等）保留
   Future<bool> replaceServerIfUnchanged(ServerConfig expected, ServerConfig replacement) async {
-    if (!identical(state.server(expected.id), expected)) return false;
-    await updateServer(expected.id, (_) => replacement);
+    final current = state.server(expected.id);
+    if (current == null || _identityOf(current) != _identityOf(expected)) return false;
+    await updateServer(expected.id, (s) {
+      if (_identityOf(s) != _identityOf(expected)) return s;
+      return s.copyWith(
+        name: s.name.trim().isEmpty ? replacement.name : null,
+        lines: replacement.lines,
+        userId: replacement.userId,
+        token: replacement.token,
+        activeLineId: replacement.activeLineId,
+        lastAccessAt: replacement.lastAccessAt,
+      );
+    });
     return true;
   }
+
+  static String _identityOf(ServerConfig s) => [
+    s.type.name,
+    s.username,
+    s.password,
+    s.userAgent,
+    for (final l in s.lines) '${l.id}|${l.url}|${l.proxied}',
+  ].join('\u0001');
 
   Future<void> upsertServer(ServerConfig server) => update((c) {
     final list = [...c.allServers];

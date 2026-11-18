@@ -272,10 +272,8 @@ class PlayerOsd extends StatelessWidget {
     );
   }
 
-  static const _timeStyle = TextStyle(
-    fontSize: 24,
-    fontWeight: FontWeight.w600,
-    fontFeatures: [FontFeature.tabularFigures()],
+  static final _timeStyle = numericStyle(
+    const TextStyle(fontSize: 24, fontWeight: FontWeight.w600, fontFeatures: [FontFeature.tabularFigures()]),
   );
 
   static String _qualityLabel(MediaSourceInfo s) {
@@ -340,7 +338,7 @@ class _ClockState extends State<_Clock> {
     return Text(
       '${now.hour.toString().padLeft(2, '0')}:${now.minute.toString().padLeft(2, '0')}',
       key: const ValueKey('osd-clock'),
-      style: _statusStyle,
+      style: numericStyle(_statusStyle),
     );
   }
 }
