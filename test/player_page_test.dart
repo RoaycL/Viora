@@ -159,6 +159,9 @@ class PlayerClient extends EmbyClient {
   ];
   @override
   Future<void> reportStart(MediaSourceInfo s, Duration position, String? playSessionId) async {}
+
+  /// 进度上报（事件, 位置）
+  final progress = <(String, Duration)>[];
   @override
   Future<void> reportProgress(
     MediaSourceInfo s,
@@ -166,7 +169,7 @@ class PlayerClient extends EmbyClient {
     String? playSessionId, {
     bool paused = false,
     String event = 'TimeUpdate',
-  }) async {}
+  }) async => progress.add((event, position));
 
   /// 停止上报的位置
   final stopped = <Duration>[];
@@ -630,5 +633,26 @@ void main() {
     await tester.pump();
     await unmountPlayer(tester);
     expect(h.client.stopped, [const Duration(minutes: 7)]);
+  });
+
+  testWidgets('内核报 0 时暂停：暂停上报也用最后的播放位置；真的拖回开头时报 0', (tester) async {
+    final h = await pumpPlayer(tester);
+    await h.engine.seek(const Duration(minutes: 7));
+    await tester.pump();
+    // 内核位置变成 0（如刚切换、停下时）后暂停
+    await h.engine.seek(Duration.zero);
+    await tester.pump();
+    await press(tester, LogicalKeyboardKey.enter);
+    expect(h.client.progress.last, ('Pause', const Duration(minutes: 7)));
+
+    // 用户真的拖回开头（数字键 0 在电视上不响应，用 ← 快退到 0）
+    await press(tester, LogicalKeyboardKey.enter); // 继续播放
+    for (var i = 0; i < 50; i++) {
+      await tester.sendKeyEvent(LogicalKeyboardKey.arrowLeft);
+    }
+    await tester.pump(const Duration(seconds: 1));
+    await press(tester, LogicalKeyboardKey.enter); // 暂停
+    expect(h.client.progress.last, ('Pause', Duration.zero));
+    await unmountPlayer(tester);
   });
 }

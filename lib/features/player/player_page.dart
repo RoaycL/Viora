@@ -382,9 +382,13 @@ class _PlayerPageState extends ConsumerState<PlayerPage> with WidgetsBindingObse
     if (mounted) setState(() {});
   }
 
-  /// 最后一次有效的播放位置：关闭播放器 / 播完时内核可能已经停了、报 0，停止上报不能用 0
-  /// （用 0 上报会把服务器上这一集的进度清掉，继续观看里就没有了）
+  /// 最后一次确定的播放位置：起播时是续播位置，播放中跟着内核走，拖动 / 快进后是目标位置。
+  /// 内核刚起播还没跳到续播位置、关闭 / 停下时会报 0：上报不能用这个 0
+  /// （用 0 上报会把服务器上这一集的进度清掉，继续观看里就没有了，连之前的记录也一起没了）
   Duration _lastPosition = Duration.zero;
+
+  /// 上报给服务器的位置：内核报 0 时用 [_lastPosition]（真的拖回开头时 [_lastPosition] 也是 0）
+  Duration get _reportPosition => _state.position > Duration.zero ? _state.position : _lastPosition;
 
   void _onEngineState() {
     final s = _state;
@@ -473,6 +477,7 @@ class _PlayerPageState extends ConsumerState<PlayerPage> with WidgetsBindingObse
     final engine = _engine;
     if (req == null || engine == null) return;
     final headers = {...req.headers}..remove('User-Agent');
+    _lastPosition = at;
     await engine.open(EngineMedia(url: req.url, headers: headers, userAgent: req.userAgent, start: at));
     if (PlatformProfile.isDesktop) await engine.setVolume(_muted ? 0 : _volume);
     await _applyDisplay(engine);
@@ -560,7 +565,7 @@ class _PlayerPageState extends ConsumerState<PlayerPage> with WidgetsBindingObse
   void _report({bool start = false, String event = 'TimeUpdate'}) {
     final client = _client, source = _source;
     if (client == null || source == null || _stopped) return;
-    final pos = _state.position;
+    final pos = _reportPosition;
     // 本机也记一份上次播放时间（部分服务器的继续观看不带 LastPlayedDate）。只在开始和停止时记：
     // 每次进度上报（10 秒一次）都记的话，安卓上每次都要把整个设置文件重写到闪存，低端盒子会卡一下
     if (start) PlayHistory.record(widget.serverId, widget.itemId, scope: accountScope(client.server));
@@ -578,9 +583,8 @@ class _PlayerPageState extends ConsumerState<PlayerPage> with WidgetsBindingObse
     final client = _client, source = _source;
     if (client != null && source != null && _started) {
       // 位置在这里取好：后面是异步的，那时播放器可能已经关了，读到的是 0
-      final now = _state.position;
       final duration = _state.duration > Duration.zero ? _state.duration : (source.duration ?? Duration.zero);
-      final position = completed && duration > Duration.zero ? duration : (now > Duration.zero ? now : _lastPosition);
+      final position = completed && duration > Duration.zero ? duration : _reportPosition;
       AppLog.add(
         '[play] 停止上报 ${widget.itemId} 位置 ${formatClock(position)} / ${formatClock(duration)}${completed ? '（播完）' : ''}',
       );
@@ -1131,7 +1135,10 @@ class _PlayerPageState extends ConsumerState<PlayerPage> with WidgetsBindingObse
     _seekTimer?.cancel();
     _seekTimer = Timer(const Duration(milliseconds: 800), () {
       final t = _pendingSeek;
-      if (t != null) _engine?.seek(t);
+      if (t != null) {
+        _lastPosition = t;
+        _engine?.seek(t);
+      }
       if (mounted) setState(() => _pendingSeek = null);
       _report();
     });
@@ -1251,6 +1258,7 @@ class _PlayerPageState extends ConsumerState<PlayerPage> with WidgetsBindingObse
   /// 进度条点击 / 拖动（Windows）
   void _seekTo(Duration to) {
     _seekTimer?.cancel();
+    _lastPosition = to;
     setState(() => _pendingSeek = null);
     _engine?.seek(to);
     _showOsd();
