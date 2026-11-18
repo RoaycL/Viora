@@ -13,6 +13,11 @@ class WebDavException implements Exception {
   String toString() => message;
 }
 
+/// 条件写入失败：读取后另一台设备已经修改了云端文件。
+class WebDavConflict extends WebDavException {
+  const WebDavConflict() : super('云端配置已被其他设备修改，请重新同步');
+}
+
 /// 最简 WebDAV 客户端：只用到 PROPFIND（测试连接）、MKCOL（建目录）、GET / PUT（读写配置文件）
 class WebDavClient {
   WebDavClient(this.config, {Dio? dio})
@@ -75,23 +80,26 @@ class WebDavClient {
     if (r.statusCode != 207 && r.statusCode != 200) _fail('连接', r.statusCode);
   }
 
-  /// 读取配置文件；不存在时返回 null
-  Future<String?> read() async {
+  /// 读取内容和同一次响应的 ETag，供条件写入使用。
+  Future<({String content, String? etag})?> readFile() async {
     final r = await _send('GET', fileUri);
     if (r.statusCode == 404) return null;
     if (r.statusCode != 200) _fail('读取', r.statusCode);
-    return r.data;
+    return (content: r.data ?? '', etag: r.headers.value('etag'));
   }
 
+  Future<String?> read() async => (await readFile())?.content;
+
   /// 写入配置文件（目录不存在时逐级创建）
-  Future<void> write(String content) async {
+  Future<void> write(String content, {String? ifMatch, bool ifNoneMatch = false}) async {
     final body = utf8.encode(content);
-    var r = await _send(
-      'PUT',
-      fileUri,
-      data: Stream.fromIterable([body]),
-      headers: {'Content-Type': 'application/json; charset=utf-8', 'Content-Length': '${body.length}'},
-    );
+    final headers = <String, String>{
+      'Content-Type': 'application/json; charset=utf-8',
+      'Content-Length': '${body.length}',
+      'If-Match': ?ifMatch,
+      if (ifNoneMatch) 'If-None-Match': '*',
+    };
+    var r = await _send('PUT', fileUri, data: Stream.fromIterable([body]), headers: headers);
     // 父目录不存在：多数服务器回 409 / 404，有的（如部分 Nginx、Alist 挂载）回 405。建好目录再试一次
     if (r.statusCode == 409 || r.statusCode == 404 || r.statusCode == 405) {
       final dirs = _segments.take(_segments.length - 1).toList();
@@ -100,13 +108,9 @@ class WebDavClient {
         // 201 新建；405 已存在
         if (m.statusCode != 201 && m.statusCode != 405 && m.statusCode != 200) _fail('创建目录', m.statusCode);
       }
-      r = await _send(
-        'PUT',
-        fileUri,
-        data: Stream.fromIterable([body]),
-        headers: {'Content-Type': 'application/json; charset=utf-8', 'Content-Length': '${body.length}'},
-      );
+      r = await _send('PUT', fileUri, data: Stream.fromIterable([body]), headers: headers);
     }
+    if (r.statusCode == 412) throw const WebDavConflict();
     if (r.statusCode == 405) {
       throw const WebDavException(
         'WebDAV 不允许在这个位置写文件（HTTP 405）：目录可能是只读的（如 Alist 的只读存储、网盘挂载的根目录），'

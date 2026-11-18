@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -12,6 +13,22 @@ class _BrokenVault implements SecretVault {
 
   @override
   Future<void> write(String key, String? value) async => throw Exception('keystore unavailable');
+}
+
+class _DelayedVault extends MemoryVault {
+  final started = Completer<void>();
+  final release = Completer<void>();
+  int writes = 0;
+
+  @override
+  Future<void> write(String key, String? value) async {
+    writes++;
+    if (writes == 1) {
+      started.complete();
+      await release.future;
+    }
+    await super.write(key, value);
+  }
 }
 
 void main() {
@@ -29,6 +46,47 @@ void main() {
 
   Future<Map<String, dynamic>> saved() async =>
       jsonDecode((await SharedPreferences.getInstance()).getString('viora.config.v1')!) as Map<String, dynamic>;
+
+  test('较慢的旧保存不能覆盖新的配置和密码', () async {
+    SharedPreferences.setMockInitialValues({'viora.config.v1': oldJson});
+    final vault = _DelayedVault();
+    ConfigStore.vault = vault;
+    final container = ProviderContainer();
+    addTearDown(container.dispose);
+    final store = container.read(configProvider.notifier);
+    await store.load();
+    final first = store.updateServer('s1', (s) => s.copyWith(password: 'first'));
+    await vault.started.future;
+    final second = store.updateServer('s1', (s) => s.copyWith(name: 'new name', password: 'second'));
+    await Future<void>.delayed(Duration.zero);
+    expect(vault.writes, 1, reason: '第二次保存必须等前一次密钥库写入结束');
+    vault.release.complete();
+    await Future.wait([first, second]);
+    final reloaded = ProviderContainer();
+    addTearDown(reloaded.dispose);
+    await reloaded.read(configProvider.notifier).load();
+    expect(reloaded.read(configProvider).server('s1')!.name, 'new name');
+    expect(reloaded.read(configProvider).server('s1')!.password, 'second');
+  });
+
+  test('后台连接不能复活删除的服务器，也不能覆盖用户的新修改', () async {
+    SharedPreferences.setMockInitialValues({'viora.config.v1': oldJson});
+    ConfigStore.vault = MemoryVault();
+    final container = ProviderContainer();
+    addTearDown(container.dispose);
+    final store = container.read(configProvider.notifier);
+    await store.load();
+    final initial = container.read(configProvider).server('s1')!;
+    await store.updateServer('s1', (s) => s.copyWith(password: 'edited'));
+    expect(await store.replaceServerIfUnchanged(initial, initial.copyWith(token: 'stale')), isFalse);
+    expect(container.read(configProvider).server('s1')!.password, 'edited');
+    final edited = container.read(configProvider).server('s1')!;
+    expect(await store.replaceServerIfUnchanged(edited, edited.copyWith(token: 'fresh')), isTrue);
+    final connected = container.read(configProvider).server('s1')!;
+    await store.removeServer('s1');
+    expect(await store.replaceServerIfUnchanged(connected, connected), isFalse);
+    expect(container.read(configProvider).allServers, isEmpty);
+  });
 
   test('旧版本的明文密码：读取正常，保存后移进密钥库，配置里不再有密码和令牌', () async {
     SharedPreferences.setMockInitialValues({'viora.config.v1': oldJson});
