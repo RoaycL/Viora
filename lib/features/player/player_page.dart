@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/foundation.dart';
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -35,6 +36,7 @@ import '../../player/segment_playback_session.dart';
 import '../../player/segment_skip_controller.dart';
 import '../../ui/focus/input_mode.dart';
 import '../../ui/glass/glass.dart';
+import '../../ui/widgets/server_image.dart';
 import '../../ui/panels/context_menu.dart';
 import '../../ui/panels/form_dialog.dart';
 import '../../ui/scale/design_scale.dart';
@@ -47,6 +49,12 @@ import '../danmaku/danmaku_service.dart';
 import '../segments/segment_service.dart';
 import 'mini_player.dart';
 import 'player_osd.dart';
+
+/// 连续自动播放（片尾倒计时结束、播完自动下一集，中间没有任何按键 / 点击）了几集：到 3 集时问「还在观看吗？」
+int _autoPlayStreak = 0;
+
+/// 下一个播放页是不是自动播放过来的（自动连播时设置，新播放页读取后清掉）
+bool _arrivingByAutoPlay = false;
 
 /// 整部剧的集列表缓存（按服务器 + 剧，3 分钟）：连播时每一集都是新的播放页，不用每次打开「选集」都重新取
 final _episodeCache = <String, (DateTime, Future<List<MediaItem>>)>{};
@@ -76,6 +84,10 @@ class PlayerPage extends ConsumerStatefulWidget {
   /// 测试用：换成假的播放内核（测试环境里 mpv / ExoPlayer 都跑不起来），用来测遥控器操作、面板、返回键
   @visibleForTesting
   static PlayerEngine Function(EngineOptions options)? debugEngineFactory;
+
+  /// 测试用：按住方向键加速用的时钟
+  @visibleForTesting
+  static DateTime Function() debugNow = DateTime.now;
 
   @visibleForTesting
   static void debugClearEpisodeCache() => _episodeCache.clear();
@@ -230,11 +242,85 @@ class _PlayerPageState extends ConsumerState<PlayerPage> with WidgetsBindingObse
       IndexSyncGate.hold();
     }
     WidgetsBinding.instance.addObserver(this);
+    _autoArrived; // 读取「是不是自动连播过来的」
     // Windows 关闭到托盘时暂停（窗口看不见了，不在后台继续放）
     DesktopTray.instance.hiddenToTray.addListener(_onHiddenToTray);
   }
 
   bool _holdsIndexSync = false;
+
+  /// 这一集是自动连播过来的
+  late final bool _autoArrived = () {
+    final v = _arrivingByAutoPlay;
+    _arrivingByAutoPlay = false;
+    if (v) {
+      _autoPlayStreak++;
+    } else {
+      _autoPlayStreak = 0;
+    }
+    return v;
+  }();
+
+  /// 片尾自动下一集的倒计时（秒）；null = 没有倒计时
+  int? _nextCountdown;
+  bool _autoNextPending = false;
+  Timer? _countdownTimer;
+  static const nextCountdownSeconds = 5;
+
+  /// 片尾自动模式：先倒计时，OK / 回车立即播放，返回取消（docs/07 §3.3）
+  void _startNextCountdown() {
+    if (_nextEpisode == null || _nextCountdown != null) return;
+    setState(() => _nextCountdown = nextCountdownSeconds);
+    _countdownTimer?.cancel();
+    _countdownTimer = Timer.periodic(const Duration(seconds: 1), (t) {
+      if (!mounted) return t.cancel();
+      final left = (_nextCountdown ?? 0) - 1;
+      if (left <= 0) {
+        t.cancel();
+        _goNext(auto: true);
+      } else {
+        setState(() => _nextCountdown = left);
+      }
+    });
+  }
+
+  void _playNextNow() => _goNext(auto: false);
+
+  void _cancelNextCountdown() {
+    _countdownTimer?.cancel();
+    setState(() => _nextCountdown = null);
+    showToast('已取消自动播放下一集');
+  }
+
+  void _goNext({required bool auto}) {
+    _countdownTimer?.cancel();
+    final next = _nextEpisode;
+    if (next == null || !mounted) return;
+    if (auto) _arrivingByAutoPlay = true;
+    _handoffTo('/play/${widget.serverId}/${next.id}?pos=0');
+  }
+
+  /// 连续自动播放 3 集没人操作：暂停，问还在不在看
+  Future<void> _askStillWatching() async {
+    if (!mounted) return;
+    await _engine?.pause();
+    if (!mounted) return;
+    var exit = false;
+    await _menu(
+      () => showContextMenu(
+        context,
+        title: '还在观看吗？已经连续自动播放了 $_autoPlayStreak 集',
+        actions: [
+          MenuAction('继续观看', Icons.play_arrow_rounded, () {
+            _autoPlayStreak = 0;
+            _engine?.play();
+          }),
+          MenuAction('退出播放', Icons.close_rounded, () => exit = true),
+        ],
+      ),
+    );
+    if (exit && mounted) context.pop();
+  }
 
   void _onHiddenToTray() {
     if (DesktopTray.instance.hiddenToTray.value && _state.playing) _engine?.pause();
@@ -309,6 +395,9 @@ class _PlayerPageState extends ConsumerState<PlayerPage> with WidgetsBindingObse
       if (!_started && s.playing) {
         _started = true;
         _report(start: true);
+        if (_autoArrived && _autoPlayStreak >= 3 && ref.read(configProvider).playback.askStillWatching) {
+          unawaited(_askStillWatching());
+        }
       } else if (_started) {
         _report(event: s.playing ? 'Unpause' : 'Pause');
       }
@@ -377,7 +466,46 @@ class _PlayerPageState extends ConsumerState<PlayerPage> with WidgetsBindingObse
     if (req == null || engine == null) return;
     final headers = {...req.headers}..remove('User-Agent');
     await engine.open(EngineMedia(url: req.url, headers: headers, userAgent: req.userAgent, start: at));
+    if (PlatformProfile.isDesktop) await engine.setVolume(_muted ? 0 : _volume);
+    await _applyDisplay(engine);
   }
+
+  // ───────────────────────── 音量（Windows） ─────────────────────────
+
+  /// 当前音量与静音（Windows；电视用遥控器调系统音量）。改动后稍等再存进设置，滚轮连续调时不反复写盘
+  late double _volume = ref.read(configProvider).playback.volume;
+  late bool _muted = ref.read(configProvider).playback.muted;
+  Timer? _volumeSave;
+
+  void _setVolume(double volume, {bool? muted}) {
+    if (!PlatformProfile.isDesktop) return;
+    final v = (volume * 100).round().clamp(0, 100) / 100;
+    // 调大音量时自动取消静音
+    final m = muted ?? (_muted && v <= _volume);
+    setState(() {
+      _volume = v;
+      _muted = m;
+    });
+    _engine?.setVolume(m ? 0 : v);
+    showToast(m ? '静音' : '音量 ${(v * 100).round()}%', duration: const Duration(milliseconds: 1200));
+    _volumeSave?.cancel();
+    _volumeSave = Timer(const Duration(milliseconds: 800), _saveVolume);
+  }
+
+  void _saveVolume() {
+    final v = _volume, m = _muted;
+    final store = _container?.read(configProvider.notifier);
+    if (store == null) return;
+    try {
+      store.update(
+        (c) => c.copyWith(
+          playback: c.playback.copyWith(volume: v, muted: m),
+        ),
+      );
+    } on StateError catch (_) {}
+  }
+
+  void _toggleMute() => _setVolume(_volume, muted: !_muted);
 
   // ───────────────────────── 打开媒体 ─────────────────────────
 
@@ -519,8 +647,14 @@ class _PlayerPageState extends ConsumerState<PlayerPage> with WidgetsBindingObse
             resolver: resolver,
             seek: (to) async => _engine?.seek(to),
             nextEpisode: () async {
-              final next = _nextEpisode;
-              if (next != null && mounted) _handoffTo('/play/${widget.serverId}/${next.id}?pos=0');
+              if (!mounted) return;
+              // 自动模式先倒计时；用户按了「下一集」按钮直接播放
+              if (_autoNextPending) {
+                _autoNextPending = false;
+                _startNextCountdown();
+              } else {
+                _goNext(auto: false);
+              }
             },
             onPrompt: (action) {
               if (!mounted || _samePrompt(action, _skipPrompt)) return;
@@ -536,7 +670,13 @@ class _PlayerPageState extends ConsumerState<PlayerPage> with WidgetsBindingObse
               );
               if (mounted) setState(() => _segmentList = r.segments);
             },
-            onAutoSkip: (action) => showToast(_autoSkipText(action)),
+            onAutoSkip: (action) {
+              if (action.kind == SegmentSkipActionKind.nextEpisode) {
+                _autoNextPending = true;
+              } else {
+                showToast(_autoSkipText(action));
+              }
+            },
             onActionError: (e) => debugPrint('segments: $e'),
           )..begin(
             query,
@@ -618,99 +758,107 @@ class _PlayerPageState extends ConsumerState<PlayerPage> with WidgetsBindingObse
     return _danmakuError == null ? '未加载' : '未匹配';
   }
 
+  String get _danmakuTitle => _danmaku == null ? '弹幕' : '弹幕 · ${_danmaku!.source}';
+
   Future<void> _openDanmakuMenu() async {
+    if (_danmakuReady() == null) return;
+    // 每次显示时重新生成：二级菜单里改了样式，回到这一级显示新的值
+    await showContextMenu(context, title: _danmakuTitle, actionsBuilder: _danmakuItems);
+    if (mounted) _focus.requestFocus();
+  }
+
+  /// 弹幕服务器和要找弹幕的那一集；没配置服务器时提示并返回 null
+  (DanmakuClient, DanmakuTarget)? _danmakuReady() {
     final client = _danmakuClient;
     final target = _danmakuTarget ?? (_item == null ? null : DanmakuTarget.of(_item!));
     if (client == null || target == null) {
       showToast('还没有配置弹幕服务器：设置 → 接口与网络');
-      return;
+      return null;
     }
     _danmakuTarget ??= target;
-    final shift = _danmakuChoice.shiftMs;
-    final style = ref.read(configProvider).danmaku;
-    await showContextMenu(
-      context,
-      title: _danmaku == null ? '弹幕' : '弹幕 · ${_danmaku!.source}',
-      actions: [
-        if (_danmaku != null)
-          MenuAction(
-            _danmakuVisible ? '隐藏弹幕' : '显示弹幕',
-            _danmakuVisible ? Icons.speaker_notes_off_outlined : Icons.speaker_notes_outlined,
-            _toggleDanmaku,
-          ),
-        // 显示样式：改完立即作用在屏幕上的弹幕，并保存到「设置 → 弹幕」
-        MenuAction(
-          '显示区域 · ${DanmakuConfig.labelOf(DanmakuConfig.areaOptions, style.area)}',
-          Icons.height_rounded,
-          () => _pickDanmakuStyle('显示区域', DanmakuConfig.areaOptions, style.area, (c, v) => c.copyWith(area: v)),
-        ),
-        MenuAction(
-          '字号 · ${DanmakuConfig.labelOf(DanmakuConfig.fontOptions, style.fontSize)}',
-          Icons.format_size_rounded,
-          () => _pickDanmakuStyle('字号', DanmakuConfig.fontOptions, style.fontSize, (c, v) => c.copyWith(fontSize: v)),
-        ),
-        MenuAction(
-          '不透明度 · ${DanmakuConfig.labelOf(DanmakuConfig.opacityOptions, style.opacity)}',
-          Icons.opacity_rounded,
-          () =>
-              _pickDanmakuStyle('不透明度', DanmakuConfig.opacityOptions, style.opacity, (c, v) => c.copyWith(opacity: v)),
-        ),
-        MenuAction(
-          '速度 · ${DanmakuConfig.labelOf(DanmakuConfig.speedOptions, style.speed)}',
-          Icons.speed_rounded,
-          () => _pickDanmakuStyle('滚动速度', DanmakuConfig.speedOptions, style.speed, (c, v) => c.copyWith(speed: v)),
-        ),
-        MenuAction('搜索「${target.title}」并选择', Icons.manage_search_rounded, () => _searchDanmaku(target.title)),
-        MenuAction('按关键词搜索…', Icons.keyboard_rounded, () => _searchDanmakuByKeyword(target.title)),
-        MenuAction(
-          '时间偏移 · ${shift == 0 ? '无' : '${shift > 0 ? '+' : ''}${(shift / 1000).toStringAsFixed(1)} 秒'}',
-          Icons.schedule_rounded,
-          () => showContextMenu(
-            context,
-            title: '弹幕时间偏移（当前 ${(shift / 1000).toStringAsFixed(1)} 秒）',
-            actions: [
-              for (final d in const [-5000, -1000, -500, 500, 1000, 5000])
-                MenuAction(
-                  '${d > 0 ? '延后' : '提前'} ${(d.abs() / 1000).toStringAsFixed(1)} 秒',
-                  d > 0 ? Icons.fast_forward_rounded : Icons.fast_rewind_rounded,
-                  () => _setDanmakuShift(_danmakuChoice.shiftMs + d),
-                ),
-              MenuAction('重置', Icons.restart_alt_rounded, () => _setDanmakuShift(0)),
-            ],
-          ),
-        ),
-        MenuAction(
-          '重新自动匹配',
-          Icons.refresh_rounded,
-          () => _loadDanmaku(() => resolveDanmaku(client, target, choice: _danmakuChoice), announce: true),
-        ),
-      ],
-    );
-    if (mounted) _focus.requestFocus();
+    return (client, target);
   }
 
-  /// 选一个弹幕样式（显示区域 / 字号 / 不透明度 / 速度）；选完回到上一级弹幕菜单，方便接着调
-  Future<void> _pickDanmakuStyle(
+  List<MenuAction> _danmakuItems() {
+    final ready = _danmakuReady();
+    if (ready == null) return const [];
+    final (client, target) = ready;
+
+    final shift = _danmakuChoice.shiftMs;
+    final style = ref.read(configProvider).danmaku;
+    return [
+      if (_danmaku != null)
+        MenuAction(
+          _danmakuVisible ? '隐藏弹幕' : '显示弹幕',
+          _danmakuVisible ? Icons.speaker_notes_off_outlined : Icons.speaker_notes_outlined,
+          _toggleDanmaku,
+        ),
+      // 显示样式：改完立即作用在屏幕上的弹幕，并保存到「设置 → 弹幕」
+      _danmakuStyle('显示区域', Icons.height_rounded, DanmakuConfig.areaOptions, style.area, (c, v) => c.copyWith(area: v)),
+      _danmakuStyle(
+        '字号',
+        Icons.format_size_rounded,
+        DanmakuConfig.fontOptions,
+        style.fontSize,
+        (c, v) => c.copyWith(fontSize: v),
+      ),
+      _danmakuStyle(
+        '不透明度',
+        Icons.opacity_rounded,
+        DanmakuConfig.opacityOptions,
+        style.opacity,
+        (c, v) => c.copyWith(opacity: v),
+      ),
+      _danmakuStyle(
+        '滚动速度',
+        Icons.speed_rounded,
+        DanmakuConfig.speedOptions,
+        style.speed,
+        (c, v) => c.copyWith(speed: v),
+      ),
+      MenuAction('搜索「${target.title}」并选择', Icons.manage_search_rounded, () => _searchDanmaku(target.title)),
+      MenuAction('按关键词搜索…', Icons.keyboard_rounded, () => _searchDanmakuByKeyword(target.title)),
+      MenuAction.submenu(
+        '时间偏移 · ${shift == 0 ? '无' : '${shift > 0 ? '+' : ''}${(shift / 1000).toStringAsFixed(1)} 秒'}',
+        Icons.schedule_rounded,
+        title: '弹幕时间偏移',
+        items: () => [
+          for (final d in const [-5000, -1000, -500, 500, 1000, 5000])
+            MenuAction(
+              '${d > 0 ? '延后' : '提前'} ${(d.abs() / 1000).toStringAsFixed(1)} 秒',
+              d > 0 ? Icons.fast_forward_rounded : Icons.fast_rewind_rounded,
+              () => _setDanmakuShift(_danmakuChoice.shiftMs + d),
+            ),
+          MenuAction('重置', Icons.restart_alt_rounded, () => _setDanmakuShift(0)),
+        ],
+      ),
+      MenuAction(
+        '重新自动匹配',
+        Icons.refresh_rounded,
+        () => _loadDanmaku(() => resolveDanmaku(client, target, choice: _danmakuChoice), announce: true),
+      ),
+    ];
+  }
+
+  /// 弹幕样式（显示区域 / 字号 / 不透明度 / 速度）的二级菜单：选完回到弹幕菜单，方便接着调
+  MenuAction _danmakuStyle(
     String title,
+    IconData icon,
     List<(double, String)> options,
     double current,
     DanmakuConfig Function(DanmakuConfig, double) apply,
-  ) async {
-    var picked = false;
-    await showContextMenu(
-      context,
-      title: '弹幕$title',
-      actions: [
-        for (final (v, label) in options)
-          MenuAction('$label${v == current ? '  ✓' : ''}', Icons.chat_outlined, () {
-            picked = true;
-            if (!_danmakuVisible) setState(() => _danmakuVisible = true);
-            ref.read(configProvider.notifier).update((c) => c.copyWith(danmaku: apply(c.danmaku, v)));
-          }),
-      ],
-    );
-    if (picked && mounted) await _openDanmakuMenu();
-  }
+  ) => MenuAction.submenu(
+    '$title · ${DanmakuConfig.labelOf(options, current)}',
+    icon,
+    title: '弹幕$title',
+    items: () => [
+      for (final (v, label) in options)
+        MenuAction('$label${v == current ? '  ✓' : ''}', Icons.chat_outlined, () {
+          if (!_danmakuVisible) setState(() => _danmakuVisible = true);
+          ref.read(configProvider.notifier).update((c) => c.copyWith(danmaku: apply(c.danmaku, v)));
+        }),
+    ],
+  );
 
   Future<void> _searchDanmakuByKeyword(String initial) async {
     final controller = TextEditingController(text: initial);
@@ -854,6 +1002,8 @@ class _PlayerPageState extends ConsumerState<PlayerPage> with WidgetsBindingObse
     final next = await _resolveNextEpisode();
     if (!mounted) return;
     if (next != null) {
+      _arrivingByAutoPlay = true;
+      _countdownTimer?.cancel();
       _handoffTo('/play/${widget.serverId}/${next.id}?pos=0');
       return;
     }
@@ -873,6 +1023,11 @@ class _PlayerPageState extends ConsumerState<PlayerPage> with WidgetsBindingObse
   void dispose() {
     DesktopTray.instance.hiddenToTray.removeListener(_onHiddenToTray);
     WidgetsBinding.instance.removeObserver(this);
+    _countdownTimer?.cancel();
+    if (_volumeSave?.isActive ?? false) {
+      _volumeSave!.cancel();
+      _saveVolume();
+    }
     if (_holdsIndexSync) IndexSyncGate.release();
     // 最先关闭播放器：后面任何一步出错都不能让视频在后台继续播放
     final engine = _engine;
@@ -963,6 +1118,117 @@ class _PlayerPageState extends ConsumerState<PlayerPage> with WidgetsBindingObse
     });
   }
 
+  /// 按住 ←→ 时越按越快（docs/07 §3.1）：头 1.5 秒每秒快进约 1 分钟，到 4 秒约 4 分钟，之后约 16 分钟。
+  /// 按时间算而不是按重复次数算，不同遥控器的连发速度不同也一样快
+  DateTime? _holdSince;
+  DateTime? _lastHold;
+
+  Duration _holdDelta(Duration step, bool repeat) {
+    final now = PlayerPage.debugNow();
+    if (!repeat) {
+      _holdSince = _lastHold = now;
+      return step;
+    }
+    final held = now.difference(_holdSince ?? now);
+    final dt = now.difference(_lastHold ?? now).inMilliseconds.clamp(0, 250);
+    _lastHold = now;
+    final speed = held < const Duration(milliseconds: 1500)
+        ? 60
+        : held < const Duration(seconds: 4)
+        ? 240
+        : 960;
+    return Duration(milliseconds: (speed * dt).clamp(1000, 60000).round());
+  }
+
+  static int? _digitOf(LogicalKeyboardKey key) {
+    const rows = [
+      [LogicalKeyboardKey.digit0, LogicalKeyboardKey.numpad0],
+      [LogicalKeyboardKey.digit1, LogicalKeyboardKey.numpad1],
+      [LogicalKeyboardKey.digit2, LogicalKeyboardKey.numpad2],
+      [LogicalKeyboardKey.digit3, LogicalKeyboardKey.numpad3],
+      [LogicalKeyboardKey.digit4, LogicalKeyboardKey.numpad4],
+      [LogicalKeyboardKey.digit5, LogicalKeyboardKey.numpad5],
+      [LogicalKeyboardKey.digit6, LogicalKeyboardKey.numpad6],
+      [LogicalKeyboardKey.digit7, LogicalKeyboardKey.numpad7],
+      [LogicalKeyboardKey.digit8, LogicalKeyboardKey.numpad8],
+      [LogicalKeyboardKey.digit9, LogicalKeyboardKey.numpad9],
+    ];
+    for (var i = 0; i < rows.length; i++) {
+      if (rows[i].contains(key)) return i;
+    }
+    return null;
+  }
+
+  static const _rates = [0.5, 0.75, 1.0, 1.25, 1.5, 2.0, 3.0];
+
+  void _setRate(double r) {
+    _engine?.setRate(r);
+    showToast('倍速 ${r}x', duration: const Duration(milliseconds: 1200));
+  }
+
+  void _stepRate(int dir) {
+    final i = _rates.indexWhere((r) => r >= _state.rate - 0.001);
+    final cur = i < 0 ? _rates.length - 1 : i;
+    final next = (cur + dir).clamp(0, _rates.length - 1);
+    _setRate(_rates[next]);
+  }
+
+  // ───────────────────────── 字幕延迟 / 大小、画面比例 ─────────────────────────
+
+  Duration _subDelay = Duration.zero;
+
+  void _shiftSubtitle(int ms) {
+    final engine = _engine;
+    if (engine == null) return;
+    if (!engine.supportsSubtitleDelay) {
+      showToast('当前播放内核不支持调整字幕延迟');
+      return;
+    }
+    _subDelay += Duration(milliseconds: ms);
+    engine.setSubtitleDelay(_subDelay);
+    final s = _subDelay.inMilliseconds / 1000;
+    showToast(s == 0 ? '字幕延迟：0' : '字幕${s > 0 ? '推后' : '提前'} ${s.abs().toStringAsFixed(1)} 秒');
+  }
+
+  VideoFit _fit = VideoFit.contain;
+
+  void _setFit(VideoFit fit) {
+    _fit = fit;
+    _engine?.setVideoFit(fit);
+    showToast('画面比例：${fit.label}');
+  }
+
+  void _setSubtitleScale(double scale) {
+    _engine?.setSubtitleScale(scale);
+    ref.read(configProvider.notifier).update((c) => c.copyWith(playback: c.playback.copyWith(subtitleScale: scale)));
+  }
+
+  /// 起播 / 换源后把当前的显示设置交给内核（换源会新开媒体，内核可能是新的）
+  Future<void> _applyDisplay(PlayerEngine engine) async {
+    if (_fit != VideoFit.contain) await engine.setVideoFit(_fit);
+    final scale = ref.read(configProvider).playback.subtitleScale;
+    if (scale != 1) await engine.setSubtitleScale(scale);
+    if (_subDelay != Duration.zero) await engine.setSubtitleDelay(_subDelay);
+  }
+
+  // ───────────────────────── 上一集 ─────────────────────────
+
+  Future<void> _playPrevious() async {
+    final item = _item, client = _client;
+    if (item == null || client == null || item.kind != MediaKind.episode || item.seriesId == null) return;
+    try {
+      final prev = previousEpisodeBefore(await _loadEpisodes(client, item.seriesId!), item);
+      if (!mounted) return;
+      if (prev == null) {
+        showToast('已经是第一集');
+        return;
+      }
+      _handoffTo('/play/${widget.serverId}/${prev.id}?pos=0');
+    } catch (e) {
+      if (mounted) showToast('获取集列表失败');
+    }
+  }
+
   /// 进度条点击 / 拖动（Windows）
   void _seekTo(Duration to) {
     _seekTimer?.cancel();
@@ -992,6 +1258,10 @@ class _PlayerPageState extends ConsumerState<PlayerPage> with WidgetsBindingObse
   /// 键盘 Esc 等由 [_onKey] 调这里
   bool _handleBack() {
     if (!mounted) return false;
+    if (_nextCountdown != null) {
+      _cancelNextCountdown();
+      return true;
+    }
     final tv = PlatformProfile.isTv;
     if (_panel != OsdPanel.none || (tv && (_onControls || _osd))) {
       _osdTimer?.cancel();
@@ -1042,6 +1312,7 @@ class _PlayerPageState extends ConsumerState<PlayerPage> with WidgetsBindingObse
       return KeyEventResult.handled;
     }
     if (event is KeyUpEvent) return KeyEventResult.ignored;
+    _autoPlayStreak = 0;
     if (_onControls) {
       if (PlatformProfile.isTv) {
         // 电视：焦点在按钮 / 面板上时，方向键移动焦点、OK 点击，交给按钮处理
@@ -1054,14 +1325,57 @@ class _PlayerPageState extends ConsumerState<PlayerPage> with WidgetsBindingObse
     }
 
     final step = Duration(seconds: ref.read(configProvider).playback.seekStepSeconds);
-    if (key == LogicalKeyboardKey.arrowLeft ||
+    final desktop = PlatformProfile.isDesktop;
+    final keyboard = HardwareKeyboard.instance;
+    final digit = _digitOf(key);
+
+    // 片尾倒计时卡片：OK / 回车立即播放下一集
+    if (_nextCountdown != null && confirmKeys.contains(key) && !repeat) {
+      _playNextNow();
+      return KeyEventResult.handled;
+    }
+    if (desktop &&
+        keyboard.isControlPressed &&
+        (key == LogicalKeyboardKey.arrowLeft || key == LogicalKeyboardKey.arrowRight)) {
+      // Windows：Ctrl + ←→ 字幕提前 / 推后 0.1 秒
+      _shiftSubtitle(key == LogicalKeyboardKey.arrowLeft ? -100 : 100);
+    } else if (desktop &&
+        keyboard.isShiftPressed &&
+        (key == LogicalKeyboardKey.arrowLeft || key == LogicalKeyboardKey.arrowRight)) {
+      // Windows：Shift + ←→ ±60 秒
+      _seekBy(Duration(seconds: key == LogicalKeyboardKey.arrowLeft ? -60 : 60));
+    } else if (key == LogicalKeyboardKey.arrowLeft ||
         key == LogicalKeyboardKey.mediaRewind ||
         key == LogicalKeyboardKey.keyJ) {
-      _seekBy(-(repeat ? step * 3 : step));
+      _seekBy(-_holdDelta(step, repeat));
     } else if (key == LogicalKeyboardKey.arrowRight ||
         key == LogicalKeyboardKey.mediaFastForward ||
         key == LogicalKeyboardKey.keyL) {
-      _seekBy(repeat ? step * 3 : step);
+      _seekBy(_holdDelta(step, repeat));
+    } else if (digit != null && !repeat && (desktop || digit > 0)) {
+      // 数字键跳到 N0% 处（电视 1–9，Windows 0–9）
+      final d = _state.duration;
+      if (d > Duration.zero) _seekBy(d * (digit / 10) - (_pendingSeek ?? _state.position));
+    } else if (desktop && !repeat && key == LogicalKeyboardKey.bracketLeft) {
+      _stepRate(-1);
+    } else if (desktop && !repeat && key == LogicalKeyboardKey.bracketRight) {
+      _stepRate(1);
+    } else if (desktop && !repeat && key == LogicalKeyboardKey.backslash) {
+      _setRate(1);
+    } else if (desktop && !repeat && key == LogicalKeyboardKey.keyS && _skipPrompt != null) {
+      _activateSkip();
+    } else if (!repeat &&
+        (key == LogicalKeyboardKey.mediaTrackPrevious ||
+            key == LogicalKeyboardKey.channelDown ||
+            (desktop && key == LogicalKeyboardKey.keyN && keyboard.isShiftPressed))) {
+      // 上一集：上一曲键 / 频道 -；Windows Shift + N
+      _playPrevious();
+    } else if (!repeat && key == LogicalKeyboardKey.channelUp) {
+      _playNext();
+    } else if (repeat && PlatformProfile.isDesktop && key == LogicalKeyboardKey.arrowUp) {
+      _setVolume(_volume + 0.05);
+    } else if (repeat && PlatformProfile.isDesktop && key == LogicalKeyboardKey.arrowDown) {
+      _setVolume(_volume - 0.05);
     } else if (repeat) {
       return KeyEventResult.handled;
     } else if (confirmKeys.contains(key) && _skipPrompt != null) {
@@ -1076,11 +1390,18 @@ class _PlayerPageState extends ConsumerState<PlayerPage> with WidgetsBindingObse
       _engine?.play();
     } else if (key == LogicalKeyboardKey.mediaPause) {
       _engine?.pause();
+    } else if (key == LogicalKeyboardKey.arrowUp && PlatformProfile.isDesktop) {
+      // Windows：↑↓ 音量 ±5%（docs/07 §3.5；播放设置在右键 / 菜单键 / 「更多」）
+      _setVolume(_volume + 0.05);
+    } else if (key == LogicalKeyboardKey.arrowDown && PlatformProfile.isDesktop) {
+      _setVolume(_volume - 0.05);
+    } else if (key == LogicalKeyboardKey.keyM && PlatformProfile.isDesktop) {
+      _toggleMute();
     } else if (key == LogicalKeyboardKey.arrowUp) {
       _showOsd();
     } else if (key == LogicalKeyboardKey.arrowDown) {
-      // 电视：焦点移到底部按钮行；Windows：打开播放设置菜单
-      PlatformProfile.isTv ? _focusControls() : _openMenu();
+      // 电视：焦点移到底部按钮行
+      _focusControls();
     } else if (key == LogicalKeyboardKey.contextMenu || key == LogicalKeyboardKey.gameButtonX) {
       _openMenu();
     } else if (key == LogicalKeyboardKey.keyI || key == LogicalKeyboardKey.info) {
@@ -1157,66 +1478,86 @@ class _PlayerPageState extends ConsumerState<PlayerPage> with WidgetsBindingObse
   Future<void> _openDanmakuSettings() => _menu(_openDanmakuMenu);
 
   Future<void> _openAudioMenu() => _menu(() {
-    final s = _state;
-    if (s.audioTracks.isEmpty) {
+    if (_state.audioTracks.isEmpty) {
       showToast('没有可选的音轨');
       return Future.value();
     }
-    return showContextMenu(
-      context,
-      title: '音轨',
-      actions: [
-        for (final t in s.audioTracks)
-          MenuAction(
-            '${t.displayName}${t == s.audio ? '  ✓' : ''}',
-            Icons.graphic_eq_rounded,
-            () => _engine?.selectAudio(t),
-          ),
-      ],
-    );
+    return showContextMenu(context, title: '音轨', actionsBuilder: _audioItems);
   });
 
-  Future<void> _openSubtitleMenu() => _menu(() {
+  List<MenuAction> _audioItems() {
+    final s = _state;
+    return [
+      for (final t in s.audioTracks)
+        MenuAction(
+          '${t.displayName}${t == s.audio ? '  ✓' : ''}',
+          Icons.graphic_eq_rounded,
+          () => _engine?.selectAudio(t),
+        ),
+    ];
+  }
+
+  Future<void> _openSubtitleMenu() =>
+      _menu(() => showContextMenu(context, title: '字幕', actionsBuilder: _subtitleItems));
+
+  List<MenuAction> _subtitleItems() {
     final s = _state;
     final external = _source?.subtitles.where((x) => x.isExternal).toList() ?? const <MediaStreamInfo>[];
-    return showContextMenu(
-      context,
-      title: '字幕',
-      actions: [
+    final scale = ref.read(configProvider).playback.subtitleScale;
+    return [
+      MenuAction(
+        '关闭字幕${s.subtitle == null ? '  ✓' : ''}',
+        Icons.subtitles_off_rounded,
+        () => _engine?.selectSubtitle(null),
+      ),
+      for (final t in s.subtitleTracks)
         MenuAction(
-          '关闭字幕${s.subtitle == null ? '  ✓' : ''}',
-          Icons.subtitles_off_rounded,
-          () => _engine?.selectSubtitle(null),
+          '${t.displayName}${t == s.subtitle ? '  ✓' : ''}',
+          Icons.closed_caption_rounded,
+          () => _engine?.selectSubtitle(t),
         ),
-        for (final t in s.subtitleTracks)
-          MenuAction(
-            '${t.displayName}${t == s.subtitle ? '  ✓' : ''}',
-            Icons.closed_caption_rounded,
-            () => _engine?.selectSubtitle(t),
-          ),
-        for (final x in external)
-          MenuAction('外挂 · ${x.displayName}', Icons.closed_caption_outlined, () {
-            final req = _client?.subtitle(_source!, x);
-            if (req != null) _engine?.addExternalSubtitle(req.url, title: x.displayName, language: x.language);
-          }),
-        MenuAction('在线搜索字幕…', Icons.travel_explore_rounded, _searchOnlineSubtitles),
-      ],
-    );
-  });
+      for (final x in external)
+        MenuAction('外挂 · ${x.displayName}', Icons.closed_caption_outlined, () {
+          final req = _client?.subtitle(_source!, x);
+          if (req != null) _engine?.addExternalSubtitle(req.url, title: x.displayName, language: x.language);
+        }),
+      MenuAction.submenu(
+        '在线搜索字幕',
+        Icons.travel_explore_rounded,
+        title: '在线搜索字幕',
+        items: () => [
+          MenuAction('中文字幕', Icons.translate_rounded, () => _searchSubtitles('chi', '中文')),
+          MenuAction('英文字幕', Icons.translate_rounded, () => _searchSubtitles('eng', '英文')),
+        ],
+      ),
+      MenuAction.submenu(
+        '字幕大小 · ${DanmakuConfig.labelOf(PlaybackConfig.subtitleScales, scale)}',
+        Icons.format_size_rounded,
+        title: '字幕大小',
+        items: () => [
+          for (final (v, label) in PlaybackConfig.subtitleScales)
+            MenuAction('$label${v == scale ? '  ✓' : ''}', Icons.format_size_rounded, () => _setSubtitleScale(v)),
+        ],
+      ),
+      if (_engine?.supportsSubtitleDelay ?? false)
+        MenuAction.submenu(
+          '字幕延迟 · ${_subDelay == Duration.zero ? '无' : '${_subDelay.isNegative ? '' : '+'}${(_subDelay.inMilliseconds / 1000).toStringAsFixed(1)} 秒'}',
+          Icons.schedule_rounded,
+          title: '字幕延迟（正数 = 字幕推后）',
+          items: () => [
+            for (final ms in const [-2000, -1000, -500, -100, 100, 500, 1000, 2000])
+              MenuAction(
+                '${ms > 0 ? '推后' : '提前'} ${(ms.abs() / 1000).toStringAsFixed(1)} 秒',
+                Icons.schedule_rounded,
+                () => _shiftSubtitle(ms),
+              ),
+            MenuAction('恢复为 0', Icons.restart_alt_rounded, () => _shiftSubtitle(-_subDelay.inMilliseconds)),
+          ],
+        ),
+    ];
+  }
 
   // ───────────────────────── 在线字幕 ─────────────────────────
-
-  /// 让媒体服务器用它的字幕插件（OpenSubtitles 等）在线搜索；下载后服务器保存在视频旁边，下次播放也能直接用
-  Future<void> _searchOnlineSubtitles() => _menu(
-    () => showContextMenu(
-      context,
-      title: '在线搜索字幕',
-      actions: [
-        MenuAction('中文字幕', Icons.translate_rounded, () => _searchSubtitles('chi', '中文')),
-        MenuAction('英文字幕', Icons.translate_rounded, () => _searchSubtitles('eng', '英文')),
-      ],
-    ),
-  );
 
   Future<void> _searchSubtitles(String language, String label) async {
     final client = _client, item = _item;
@@ -1289,59 +1630,108 @@ class _PlayerPageState extends ConsumerState<PlayerPage> with WidgetsBindingObse
   }
 
   /// 手动标记片头 / 片尾：以当前播放位置为准，剧集同一季各集通用
-  Future<void> _openMarkMenu() => _menu(() {
+  String _markTitle(SegmentQuery query) =>
+      '片头片尾标记（${query.kind == SegmentMediaKind.episode ? '第 ${query.season ?? 0} 季各集通用' : '这部电影'}）';
+
+  List<MenuAction> _markItems() {
     final query = _segmentQuery;
-    if (query == null) return Future.value();
+    if (query == null) return const [];
     final pos = _state.position;
     final duration = query.duration;
     final m = _manualMark;
-    final scope = query.kind == SegmentMediaKind.episode ? '第 ${query.season ?? 0} 季各集通用' : '这部电影';
     String clock(Duration d) => formatClock(d);
-    return showContextMenu(
-      context,
-      title: '片头片尾标记（$scope）',
-      actions: [
+    // 现在实际生效的片段（手动标记优先，否则来自媒体服务器 / 片头片尾数据库），写在每一项下面的灰字里
+    String from(Segment x) => x.provider == 'manual' ? '手动标记' : '来自${segmentProviderName(x.provider)}';
+    final intro = _segmentList.where((x) => x.type == SegmentType.intro).firstOrNull;
+    final credits = _segmentList.where((x) => x.type == SegmentType.credits).firstOrNull;
+    final introNow = intro == null ? '现在：没有片头' : '现在：片头 ${clock(intro.start)}–${clock(intro.end)}（${from(intro)}）';
+    final creditsNow = credits == null
+        ? '现在：没有片尾'
+        : '现在：片尾从 ${clock(credits.start)} 开始，结尾前 ${clock(duration - credits.start)}（${from(credits)}）';
+    return [
+      MenuAction('片头到这里结束（${clock(pos)}）', Icons.first_page_rounded, detail: introNow, () {
+        if (pos <= (m.introStart ?? Duration.zero)) {
+          showToast('片头结束要在片头开始之后');
+          return;
+        }
+        _saveMark(m.copyWith(introEnd: pos), '片头 ${clock(m.introStart ?? Duration.zero)}–${clock(pos)}');
+      }),
+      MenuAction(
+        '片头从这里开始（${clock(pos)}）',
+        Icons.start_rounded,
+        detail: m.introStart == null ? '手动标记的片头默认从 00:00 开始' : '手动标记的片头现在从 ${clock(m.introStart!)} 开始',
+        () {
+          // 有些剧先放一段正片再进片头：片头开始后移；已有的结束点在它之前就作废
+          final end = m.introEnd;
+          final next = end != null && end <= pos
+              ? ManualMark(introStart: pos, creditsFromEnd: m.creditsFromEnd)
+              : m.copyWith(introStart: pos);
+          _saveMark(next, '片头从 ${clock(pos)} 开始${next.introEnd == null ? '，请再标记片头结束' : ''}');
+        },
+      ),
+      MenuAction('片尾从这里开始（${clock(pos)}）', Icons.last_page_rounded, detail: creditsNow, () {
+        if (pos >= duration || (m.introEnd != null && pos <= m.introEnd!)) {
+          showToast('片尾开始要在片头之后、结尾之前');
+          return;
+        }
+        _saveMark(m.copyWith(creditsFromEnd: duration - pos), '片尾从结尾前 ${clock(duration - pos)} 开始');
+      }),
+      if (m.introEnd != null || m.introStart != null)
         MenuAction(
-          '片头到这里结束（${clock(pos)}）${m.introEnd == null ? '' : '  · 现为 ${clock(m.introEnd!)}'}',
-          Icons.first_page_rounded,
-          () {
-            if (pos <= (m.introStart ?? Duration.zero)) {
-              showToast('片头结束要在片头开始之后');
-              return;
-            }
-            _saveMark(m.copyWith(introEnd: pos), '片头 ${clock(m.introStart ?? Duration.zero)}–${clock(pos)}');
-          },
+          '清除片头标记',
+          Icons.backspace_outlined,
+          () => _saveMark(m.copyWith(clearIntro: true), '已清除片头标记'),
+          detail: '手动标记：${clock(m.introStart ?? Duration.zero)}–${m.introEnd == null ? '未标结束' : clock(m.introEnd!)}',
         ),
+      // 片头片尾时长固定的剧（多数国产剧）：直接选秒数，不用播放到那个位置再标
+      MenuAction.submenu(
+        '片头固定为开头 N 秒',
+        Icons.first_page_rounded,
+        detail: m.introEnd == null || (m.introStart ?? Duration.zero) > Duration.zero
+            ? '不用播放到那里，直接选秒数'
+            : '现在：开头 ${m.introEnd!.inSeconds} 秒',
+        title: '片头固定为开头多少秒',
+        items: () => [
+          for (final sec in const [30, 45, 60, 75, 90, 105, 120, 150, 180])
+            MenuAction(
+              '$sec 秒（跳到 ${clock(Duration(seconds: sec))}）${m.introEnd == Duration(seconds: sec) && (m.introStart ?? Duration.zero) == Duration.zero ? '  ✓' : ''}',
+              Icons.timer_outlined,
+              () => _saveMark(
+                ManualMark(
+                  introEnd: Duration(seconds: sec),
+                  creditsFromEnd: _manualMark.creditsFromEnd,
+                ),
+                '片头 00:00–${clock(Duration(seconds: sec))}',
+              ),
+            ),
+        ],
+      ),
+      MenuAction.submenu(
+        '片尾固定为结尾 N 秒',
+        Icons.last_page_rounded,
+        detail: m.creditsFromEnd == null ? '不用播放到那里，直接选秒数' : '现在：结尾 ${m.creditsFromEnd!.inSeconds} 秒',
+        title: '片尾固定为结尾多少秒',
+        items: () => [
+          for (final sec in const [30, 60, 90, 120, 150, 180, 240, 300])
+            MenuAction(
+              '$sec 秒${m.creditsFromEnd == Duration(seconds: sec) ? '  ✓' : ''}',
+              Icons.timer_outlined,
+              () => _saveMark(
+                _manualMark.copyWith(creditsFromEnd: Duration(seconds: sec)),
+                '片尾从结尾前 ${clock(Duration(seconds: sec))} 开始',
+              ),
+            ),
+        ],
+      ),
+      if (m.creditsFromEnd != null)
         MenuAction(
-          '片头从这里开始（${clock(pos)}）${m.introStart == null ? '  · 默认从 00:00' : '  · 现为 ${clock(m.introStart!)}'}',
-          Icons.start_rounded,
-          () {
-            // 有些剧先放一段正片再进片头：片头开始后移；已有的结束点在它之前就作废
-            final end = m.introEnd;
-            final next = end != null && end <= pos
-                ? ManualMark(introStart: pos, creditsFromEnd: m.creditsFromEnd)
-                : m.copyWith(introStart: pos);
-            _saveMark(next, '片头从 ${clock(pos)} 开始${next.introEnd == null ? '，请再标记片头结束' : ''}');
-          },
+          '清除片尾标记',
+          Icons.backspace_outlined,
+          () => _saveMark(m.copyWith(clearCredits: true), '已清除片尾标记'),
+          detail: '手动标记：结尾前 ${clock(m.creditsFromEnd!)}',
         ),
-        MenuAction(
-          '片尾从这里开始（${clock(pos)}）${m.creditsFromEnd == null ? '' : '  · 现为结尾前 ${clock(m.creditsFromEnd!)}'}',
-          Icons.last_page_rounded,
-          () {
-            if (pos >= duration || (m.introEnd != null && pos <= m.introEnd!)) {
-              showToast('片尾开始要在片头之后、结尾之前');
-              return;
-            }
-            _saveMark(m.copyWith(creditsFromEnd: duration - pos), '片尾从结尾前 ${clock(duration - pos)} 开始');
-          },
-        ),
-        if (m.introEnd != null || m.introStart != null)
-          MenuAction('清除片头标记', Icons.backspace_outlined, () => _saveMark(m.copyWith(clearIntro: true), '已清除片头标记')),
-        if (m.creditsFromEnd != null)
-          MenuAction('清除片尾标记', Icons.backspace_outlined, () => _saveMark(m.copyWith(clearCredits: true), '已清除片尾标记')),
-      ],
-    );
-  });
+    ];
+  }
 
   Future<void> _saveMark(ManualMark mark, String what) async {
     final query = _segmentQuery;
@@ -1357,45 +1747,70 @@ class _PlayerPageState extends ConsumerState<PlayerPage> with WidgetsBindingObse
     }
   }
 
-  Future<void> _openRateMenu() => _menu(() {
+  Future<void> _openRateMenu() => _menu(() => showContextMenu(context, title: '倍速', actionsBuilder: _rateItems));
+
+  List<MenuAction> _rateItems() {
     final rate = _state.rate;
-    return showContextMenu(
-      context,
-      title: '倍速',
-      actions: [
-        for (final r in const [0.5, 0.75, 1.0, 1.25, 1.5, 2.0, 3.0])
-          MenuAction('${r}x${rate == r ? '  ✓' : ''}', Icons.speed_rounded, () => _engine?.setRate(r)),
-      ],
-    );
-  });
+    return [
+      for (final r in _rates)
+        MenuAction('${r}x${rate == r ? '  ✓' : ''}', Icons.speed_rounded, () => _engine?.setRate(r)),
+    ];
+  }
 
   /// 「更多」：完整的播放设置菜单
   Future<void> _openMenu() => _menu(() {
+    return showContextMenu(context, title: '播放设置', actionsBuilder: _moreItems);
+  });
+
+  List<MenuAction> _moreItems() {
     final s = _state;
     final engine = _engine;
-    return showContextMenu(
-      context,
-      title: '播放设置',
-      actions: [
-        MenuAction('音轨 · ${s.audioTracks.length} 条', Icons.audiotrack_rounded, _openAudioMenu),
-        MenuAction('字幕 · ${s.subtitleTracks.length} 条', Icons.subtitles_rounded, _openSubtitleMenu),
-        MenuAction('弹幕 · $_danmakuStatus', Icons.chat_outlined, _openDanmakuMenu),
-        MenuAction('切换资源（所有服务器）', Icons.swap_horiz_rounded, () => _openPanel(OsdPanel.sources)),
-        if (_item?.kind == MediaKind.episode)
-          MenuAction('选集', Icons.video_library_outlined, () => _openPanel(OsdPanel.episodes)),
-        MenuAction('倍速 · ${s.rate}x', Icons.speed_rounded, _openRateMenu),
-        if (_segmentQuery != null)
-          MenuAction('片头片尾标记${_manualMark.isEmpty ? '' : ' · 已标记'}', Icons.bookmark_add_outlined, _openMarkMenu),
-        if (ExoEngine.supported && engine != null)
-          MenuAction(
-            '播放内核 · ${engine.kind.label}（切换到 ${engine.kind == EngineKind.exo ? 'mpv' : 'ExoPlayer'}）',
-            Icons.memory_rounded,
-            () => _switchEngine(forceMpv: engine.kind == EngineKind.exo, forceExo: engine.kind == EngineKind.mpv),
-          ),
-        MenuAction('媒体信息', Icons.info_outline_rounded, () => setState(() => _info = true)),
-      ],
-    );
-  });
+    final query = _segmentQuery;
+    return [
+      if (s.audioTracks.isEmpty)
+        MenuAction('音轨 · 0 条', Icons.audiotrack_rounded, _openAudioMenu)
+      else
+        MenuAction.submenu('音轨 · ${s.audioTracks.length} 条', Icons.audiotrack_rounded, title: '音轨', items: _audioItems),
+      MenuAction.submenu(
+        '字幕 · ${s.subtitleTracks.length} 条',
+        Icons.subtitles_rounded,
+        title: '字幕',
+        items: _subtitleItems,
+      ),
+      if (_danmakuClient == null)
+        MenuAction('弹幕 · $_danmakuStatus', Icons.chat_outlined, _openDanmakuMenu)
+      else
+        MenuAction.submenu('弹幕 · $_danmakuStatus', Icons.chat_outlined, title: _danmakuTitle, items: _danmakuItems),
+      MenuAction('切换资源（所有服务器）', Icons.swap_horiz_rounded, () => _openPanel(OsdPanel.sources)),
+      if (_item?.kind == MediaKind.episode)
+        MenuAction('选集', Icons.video_library_outlined, () => _openPanel(OsdPanel.episodes)),
+      MenuAction.submenu('倍速 · ${s.rate}x', Icons.speed_rounded, title: '倍速', items: _rateItems),
+      MenuAction.submenu(
+        '画面比例 · ${_fit.label}',
+        Icons.aspect_ratio_rounded,
+        title: '画面比例',
+        items: () => [
+          for (final f in VideoFit.values)
+            MenuAction('${f.label}${f == _fit ? '  ✓' : ''}', Icons.aspect_ratio_rounded, () => _setFit(f)),
+        ],
+      ),
+      if (_item?.kind == MediaKind.episode) MenuAction('上一集', Icons.skip_previous_rounded, _playPrevious),
+      if (query != null)
+        MenuAction.submenu(
+          '片头片尾标记${_manualMark.isEmpty ? '' : ' · 已标记'}',
+          Icons.bookmark_add_outlined,
+          title: _markTitle(query),
+          items: _markItems,
+        ),
+      if (ExoEngine.supported && engine != null)
+        MenuAction(
+          '播放内核 · ${engine.kind.label}（切换到 ${engine.kind == EngineKind.exo ? 'mpv' : 'ExoPlayer'}）',
+          Icons.memory_rounded,
+          () => _switchEngine(forceMpv: engine.kind == EngineKind.exo, forceExo: engine.kind == EngineKind.mpv),
+        ),
+      MenuAction('媒体信息', Icons.info_outline_rounded, () => setState(() => _info = true)),
+    ];
+  }
 
   /// 打开「播放资源」/「选集」面板（替换控制层底部的按钮行）
   void _openPanel(OsdPanel panel) {
@@ -1509,17 +1924,25 @@ class _PlayerPageState extends ConsumerState<PlayerPage> with WidgetsBindingObse
                     ),
                   // 画面：单击暂停 / 播放（打开面板时先关面板）；Windows 双击全屏、右键播放设置
                   Positioned.fill(
-                    child: GestureDetector(
-                      behavior: HitTestBehavior.opaque,
-                      onTap: () {
-                        if (_panel != OsdPanel.none) {
-                          _closePanel();
-                        } else {
-                          _togglePlay();
+                    child: Listener(
+                      // Windows：滚轮调音量（向上滚变大）
+                      onPointerSignal: (e) {
+                        if (e is PointerScrollEvent && PlatformProfile.isDesktop && !mini) {
+                          _setVolume(_volume + (e.scrollDelta.dy < 0 ? 0.05 : -0.05));
                         }
                       },
-                      onDoubleTap: PlatformProfile.isDesktop && !mini ? toggleFullScreen : null,
-                      onSecondaryTap: mini ? null : _openMenu,
+                      child: GestureDetector(
+                        behavior: HitTestBehavior.opaque,
+                        onTap: () {
+                          if (_panel != OsdPanel.none) {
+                            _closePanel();
+                          } else {
+                            _togglePlay();
+                          }
+                        },
+                        onDoubleTap: PlatformProfile.isDesktop && !mini ? toggleFullScreen : null,
+                        onSecondaryTap: mini ? null : _openMenu,
+                      ),
                     ),
                   ),
                   if (_error != null)
@@ -1610,6 +2033,10 @@ class _PlayerPageState extends ConsumerState<PlayerPage> with WidgetsBindingObse
                                           onEpisodes: () => _openPanel(OsdPanel.episodes),
                                           onRate: _openRateMenu,
                                           onHoverControls: _onHoverControls,
+                                          volume: _volume,
+                                          muted: _muted,
+                                          onVolume: (v) => _setVolume(v, muted: false),
+                                          onMute: _toggleMute,
                                         ),
                                       ),
                                     ),
@@ -1623,7 +2050,16 @@ class _PlayerPageState extends ConsumerState<PlayerPage> with WidgetsBindingObse
                                   bottom: _osd ? (_panel == OsdPanel.none ? 250 : 420) : 110,
                                   child: AnimatedSwitcher(
                                     duration: VMotion.focus,
-                                    child: _skipPrompt == null
+                                    child: _nextCountdown != null
+                                        ? _NextCountdownCard(
+                                            key: const ValueKey('next-countdown'),
+                                            seconds: _nextCountdown!,
+                                            total: nextCountdownSeconds,
+                                            next: _nextEpisode,
+                                            onPlay: _playNextNow,
+                                            onCancel: _cancelNextCountdown,
+                                          )
+                                        : _skipPrompt == null
                                         ? const SizedBox.shrink()
                                         : _SkipButton(
                                             key: ValueKey('${_skipPrompt!.segment.type}${_skipPrompt!.segment.start}'),
@@ -1830,6 +2266,120 @@ class _ErrorPanel extends StatelessWidget {
 }
 
 /// 跳过片头 / 前情提要 / 片尾、下一集（电视上按 OK，电脑上点击或按回车）
+/// 片尾自动下一集的倒计时卡片：下一集的缩略图、名称，倒计时圆环；OK / 点击立即播放，返回取消
+class _NextCountdownCard extends StatelessWidget {
+  const _NextCountdownCard({
+    super.key,
+    required this.seconds,
+    required this.total,
+    required this.next,
+    required this.onPlay,
+    required this.onCancel,
+  });
+
+  final int seconds;
+  final int total;
+  final MediaItem? next;
+  final VoidCallback onPlay;
+  final VoidCallback onCancel;
+
+  @override
+  Widget build(BuildContext context) {
+    final n = next;
+    return ExcludeFocus(
+      child: Glass(
+        radius: VRadius.panel,
+        padding: const EdgeInsets.all(18),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            if (n != null)
+              ClipRRect(
+                borderRadius: BorderRadius.circular(VRadius.md),
+                child: SizedBox(
+                  width: 200,
+                  height: 112,
+                  child: ServerImage(
+                    serverId: n.serverId,
+                    image: n.thumb ?? n.primary ?? n.backdrop,
+                    width: 200,
+                    fallbackSeed: n.id,
+                  ),
+                ),
+              ),
+            const SizedBox(width: 20),
+            Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text('$seconds 秒后播放下一集', style: VText.label.copyWith(color: VColors.textTertiary)),
+                const SizedBox(height: 6),
+                if (n != null)
+                  ConstrainedBox(
+                    constraints: const BoxConstraints(maxWidth: 360),
+                    child: Text(
+                      [if (n.episodeNumber != null) '第 ${n.episodeNumber} 集', n.name].join('  '),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: VText.h2.copyWith(fontSize: 26),
+                    ),
+                  ),
+                const SizedBox(height: 14),
+                Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    GestureDetector(
+                      onTap: onPlay,
+                      child: MouseRegion(
+                        cursor: SystemMouseCursors.click,
+                        child: Container(
+                          padding: const EdgeInsets.fromLTRB(18, 8, 22, 8),
+                          decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(999)),
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              SizedBox(
+                                width: 26,
+                                height: 26,
+                                child: CircularProgressIndicator(
+                                  value: seconds / total,
+                                  strokeWidth: 3,
+                                  color: const Color(0xFF0B0C10),
+                                  backgroundColor: const Color(0x260B0C10),
+                                ),
+                              ),
+                              const SizedBox(width: 10),
+                              const Text(
+                                '立即播放',
+                                style: TextStyle(fontSize: 22, fontWeight: FontWeight.w700, color: Color(0xFF0B0C10)),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 14),
+                    GestureDetector(
+                      onTap: onCancel,
+                      child: MouseRegion(
+                        cursor: SystemMouseCursors.click,
+                        child: Text(
+                          PlatformProfile.isTv ? '返回键取消' : '取消',
+                          style: VText.label.copyWith(color: VColors.textSecondary),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
 class _SkipButton extends StatelessWidget {
   const _SkipButton({super.key, required this.action, required this.onPressed});
 

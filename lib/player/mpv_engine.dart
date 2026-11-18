@@ -168,6 +168,33 @@ class MpvEngine extends PlayerEngine {
   @override
   Future<void> setRate(double rate) => _player.setRate(rate);
 
+  Future<void> _prop(String name, String value) async {
+    final native = _player.platform;
+    if (native == null) return;
+    try {
+      await (native as dynamic).setProperty(name, value);
+    } catch (e) {
+      debugPrint('mpv $name=$value failed: $e');
+    }
+  }
+
+  @override
+  bool get supportsSubtitleDelay => true;
+
+  @override
+  Future<void> setSubtitleDelay(Duration delay) => _prop('sub-delay', (delay.inMilliseconds / 1000).toStringAsFixed(3));
+
+  @override
+  Future<void> setSubtitleScale(double scale) => _prop('sub-scale', scale.toStringAsFixed(2));
+
+  final _fit = ValueNotifier(VideoFit.contain);
+
+  @override
+  Future<void> setVideoFit(VideoFit fit) async => _fit.value = fit;
+
+  @override
+  Future<void> setVolume(double volume) => _player.setVolume((volume * 100).clamp(0, 100).toDouble());
+
   @override
   Future<void> selectAudio(EngineTrack track) async {
     final t = _player.state.tracks.audio.where((a) => a.id == track.id).firstOrNull;
@@ -186,7 +213,19 @@ class MpvEngine extends PlayerEngine {
       _player.setSubtitleTrack(SubtitleTrack.uri(url.toString(), title: title, language: language));
 
   @override
-  Widget buildView() => Video(controller: _video, controls: NoVideoControls, fill: Colors.black);
+  Widget buildView() => ValueListenableBuilder<VideoFit>(
+    valueListenable: _fit,
+    builder: (context, fit, _) => Video(
+      controller: _video,
+      controls: NoVideoControls,
+      fill: Colors.black,
+      fit: switch (fit) {
+        VideoFit.contain => BoxFit.contain,
+        VideoFit.cover => BoxFit.cover,
+        VideoFit.fill => BoxFit.fill,
+      },
+    ),
+  );
 
   @override
   Future<void> dispose() async {
@@ -199,5 +238,6 @@ class MpvEngine extends PlayerEngine {
     await _errors.close();
     await _player.dispose();
     _state.dispose();
+    _fit.dispose();
   }
 }

@@ -197,6 +197,11 @@ void main() {
     expect(nextEpisodeAfter(all, ep('s1e2', 1, 2))?.id, 's2e1');
     expect(nextEpisodeAfter(all, ep('s2e1', 2, 1)), isNull);
     expect(nextEpisodeAfter(all, ep('sp1', 0, 1))?.id, 'sp2');
+    // 上一集（跨季；特别篇只在特别篇里找）
+    expect(previousEpisodeBefore(all, ep('s2e1', 2, 1))?.id, 's1e2');
+    expect(previousEpisodeBefore(all, ep('s1e2', 1, 2))?.id, 's1e1');
+    expect(previousEpisodeBefore(all, ep('s1e1', 1, 1)), isNull);
+    expect(previousEpisodeBefore(all, ep('sp2', 0, 2))?.id, 'sp1');
   });
 
   test('剧集详情默认选中：最近看的那集没看完就是它，看完了是下一集（跨季），没看过返回 null', () {

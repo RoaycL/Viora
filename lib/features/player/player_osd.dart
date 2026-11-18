@@ -55,7 +55,17 @@ class PlayerOsd extends StatelessWidget {
     required this.onRate,
     required this.onHoverControls,
     this.panelChild,
+    this.volume = 1,
+    this.muted = false,
+    this.onVolume,
+    this.onMute,
   });
+
+  /// Windows 音量（0–1）与静音；电视不显示音量控件（用遥控器调系统音量）
+  final double volume;
+  final bool muted;
+  final ValueChanged<double>? onVolume;
+  final VoidCallback? onMute;
 
   final EngineState state;
   final String title;
@@ -230,6 +240,19 @@ class PlayerOsd extends StatelessWidget {
                           iconSize: 40,
                           onPressed: hasNext ? onNext : null,
                         ),
+                      if (desktop && onMute != null) ...[
+                        OsdIconButton(
+                          icon: muted || volume == 0
+                              ? Icons.volume_off_rounded
+                              : volume < 0.5
+                              ? Icons.volume_down_rounded
+                              : Icons.volume_up_rounded,
+                          label: muted ? '取消静音' : '静音',
+                          iconSize: 34,
+                          onPressed: onMute,
+                        ),
+                        VolumeSlider(value: muted ? 0 : volume, onChanged: onVolume),
+                      ],
                       const Spacer(),
                       if (source != null) OsdTextButton(label: _qualityLabel(source!), onPressed: onSources),
                       if (isEpisode) OsdTextButton(label: '选集', onPressed: onEpisodes),
@@ -460,6 +483,69 @@ class OsdTextButton extends StatelessWidget {
               fontWeight: FontWeight.w600,
               color: focused ? const Color(0xFF0B0C10) : Colors.white,
               shadows: focused ? null : const [Shadow(color: Color(0x99000000), blurRadius: 10)],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// Windows 音量滑块：点击 / 拖动设置音量，滚轮微调。不参与键盘焦点（↑↓ 在画面上就是调音量）
+class VolumeSlider extends StatelessWidget {
+  const VolumeSlider({super.key, required this.value, this.onChanged});
+
+  final double value;
+  final ValueChanged<double>? onChanged;
+
+  static const width = 120.0;
+
+  void _at(double dx) => onChanged?.call((dx / width).clamp(0.0, 1.0));
+
+  @override
+  Widget build(BuildContext context) {
+    return ExcludeFocus(
+      child: MouseRegion(
+        cursor: SystemMouseCursors.click,
+        child: Listener(
+          onPointerSignal: (e) {
+            if (e is PointerScrollEvent) {
+              onChanged?.call((value + (e.scrollDelta.dy < 0 ? 0.05 : -0.05)).clamp(0.0, 1.0));
+            }
+          },
+          child: GestureDetector(
+            behavior: HitTestBehavior.opaque,
+            onTapDown: (d) => _at(d.localPosition.dx),
+            onHorizontalDragUpdate: (d) => _at(d.localPosition.dx),
+            child: SizedBox(
+              key: const ValueKey('volume-slider'),
+              width: width,
+              height: 40,
+              child: Center(
+                child: Stack(
+                  clipBehavior: Clip.none,
+                  alignment: Alignment.centerLeft,
+                  children: [
+                    Container(
+                      height: 5,
+                      decoration: BoxDecoration(color: const Color(0x4DFFFFFF), borderRadius: BorderRadius.circular(3)),
+                    ),
+                    Container(
+                      width: width * value.clamp(0.0, 1.0),
+                      height: 5,
+                      decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(3)),
+                    ),
+                    Positioned(
+                      left: width * value.clamp(0.0, 1.0) - 7,
+                      child: Container(
+                        width: 14,
+                        height: 14,
+                        decoration: const BoxDecoration(color: Colors.white, shape: BoxShape.circle),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
             ),
           ),
         ),

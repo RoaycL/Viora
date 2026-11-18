@@ -279,6 +279,26 @@ MediaItem? nextEpisodeAfter(List<MediaItem> episodes, MediaItem current) {
       .firstOrNull;
 }
 
+/// 上一集（跨季，特别篇只在特别篇里找）；没有返回 null
+MediaItem? previousEpisodeBefore(List<MediaItem> episodes, MediaItem current) {
+  final season = current.seasonNumber;
+  final list =
+      episodes
+          .where((e) => e.kind == MediaKind.episode && e.seasonNumber != null && e.episodeNumber != null)
+          .where((e) => season == 0 ? e.seasonNumber == 0 : e.seasonNumber != 0)
+          .toList()
+        ..sort((a, b) {
+          final s = a.seasonNumber!.compareTo(b.seasonNumber!);
+          return s != 0 ? s : a.episodeNumber!.compareTo(b.episodeNumber!);
+        });
+  final i = list.indexWhere((e) => e.id == current.id);
+  if (i >= 0) return i > 0 ? list[i - 1] : null;
+  if (season == null || current.episodeNumber == null) return null;
+  return list
+      .where((e) => e.seasonNumber! < season || (e.seasonNumber == season && e.episodeNumber! < current.episodeNumber!))
+      .lastOrNull;
+}
+
 /// 剧集详情默认选中哪一集（季号, 集号）：最近看的那集没看完就是它，看完了就是下一集；没看过返回 null
 (int, int)? pickStartEpisode(List<MediaItem> episodes) {
   final watched = episodes

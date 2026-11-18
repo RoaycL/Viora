@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
+import '../../app/platform_profile.dart';
 import '../../app/theme.dart';
 import '../focus/focusable.dart';
 import '../glass/glass.dart';
@@ -24,6 +26,7 @@ class LandscapeCard extends StatelessWidget {
     this.progress,
     this.onActivate,
     this.onMenu,
+    this.onPlay,
   });
 
   static const width = 400.0;
@@ -49,74 +52,82 @@ class LandscapeCard extends StatelessWidget {
   final VoidCallback? onActivate;
   final VoidCallback? onMenu;
 
+  /// 直接播放（跳过详情页）：电视在卡片上按遥控器播放键，Windows 悬停时点图上的 ▶
+  final VoidCallback? onPlay;
+
   @override
   Widget build(BuildContext context) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        VFocusable(
-          focusNode: node,
-          semanticLabel: title,
-          semanticValue: [?titleSuffix, ?subtitle, ?tag, ?caption].join('，'),
-          onActivate: onActivate,
-          onMenu: onMenu,
-          builder: (context, focused) => ClipRRect(
-            borderRadius: BorderRadius.circular(VRadius.card),
-            child: SizedBox(
-              width: width,
-              height: imageHeight,
-              child: Stack(
-                fit: StackFit.expand,
-                children: [
-                  image ?? ArtView(art),
-                  const DecoratedBox(
-                    decoration: BoxDecoration(
-                      gradient: LinearGradient(
-                        begin: Alignment.topCenter,
-                        end: Alignment.bottomCenter,
-                        stops: [0.5, 1],
-                        colors: [Color(0x00000000), Color(0x99000000)],
-                      ),
-                    ),
-                  ),
-                  if (tag != null)
-                    Positioned(
-                      left: 16,
-                      top: 14,
-                      child: Glass(
-                        radius: VRadius.xs,
-                        blur: 12,
-                        fill: const Color(0x59000000),
-                        border: const Color(0x00000000),
-                        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-                        child: Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            if (tagIcon != null) ...[
-                              Icon(tagIcon, size: 16, color: const Color(0xE6FFFFFF)),
-                              const SizedBox(width: 6),
-                            ],
-                            ConstrainedBox(
-                              constraints: const BoxConstraints(maxWidth: 260),
-                              child: Text(
-                                tag!,
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                                style: const TextStyle(fontSize: 16, color: Color(0xE6FFFFFF)),
-                              ),
-                            ),
-                          ],
+        PlayKeyScope(
+          onPlay: onPlay,
+          child: VFocusable(
+            focusNode: node,
+            semanticLabel: title,
+            semanticValue: [?titleSuffix, ?subtitle, ?tag, ?caption].join('，'),
+            onActivate: onActivate,
+            onMenu: onMenu,
+            builder: (context, focused) => ClipRRect(
+              borderRadius: BorderRadius.circular(VRadius.card),
+              child: SizedBox(
+                width: width,
+                height: imageHeight,
+                child: Stack(
+                  fit: StackFit.expand,
+                  children: [
+                    image ?? ArtView(art),
+                    const DecoratedBox(
+                      decoration: BoxDecoration(
+                        gradient: LinearGradient(
+                          begin: Alignment.topCenter,
+                          end: Alignment.bottomCenter,
+                          stops: [0.5, 1],
+                          colors: [Color(0x00000000), Color(0x99000000)],
                         ),
                       ),
                     ),
-                  if (caption != null)
-                    Positioned(
-                      left: 16,
-                      bottom: 24,
-                      child: Text(caption!, style: const TextStyle(fontSize: 18, color: Color(0xE0FFFFFF))),
-                    ),
-                  if (progress != null) Positioned(left: 16, right: 16, bottom: 12, child: ProgressLine(progress!)),
-                ],
+                    if (tag != null)
+                      Positioned(
+                        left: 16,
+                        top: 14,
+                        child: Glass(
+                          radius: VRadius.xs,
+                          blur: 12,
+                          fill: const Color(0x59000000),
+                          border: const Color(0x00000000),
+                          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              if (tagIcon != null) ...[
+                                Icon(tagIcon, size: 16, color: const Color(0xE6FFFFFF)),
+                                const SizedBox(width: 6),
+                              ],
+                              ConstrainedBox(
+                                constraints: const BoxConstraints(maxWidth: 260),
+                                child: Text(
+                                  tag!,
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: const TextStyle(fontSize: 16, color: Color(0xE6FFFFFF)),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                    if (caption != null)
+                      Positioned(
+                        left: 16,
+                        bottom: 24,
+                        child: Text(caption!, style: const TextStyle(fontSize: 18, color: Color(0xE0FFFFFF))),
+                      ),
+                    if (progress != null) Positioned(left: 16, right: 16, bottom: 12, child: ProgressLine(progress!)),
+                    if (onPlay != null && focused)
+                      Positioned(right: 14, top: 12, child: HoverPlayButton(onPlay: onPlay!)),
+                  ],
+                ),
               ),
             ),
           ),
@@ -168,6 +179,7 @@ class PosterCard extends StatelessWidget {
     this.onActivate,
     this.onMenu,
     this.onFocusChange,
+    this.onPlay,
   });
 
   static const width = 220.0;
@@ -188,6 +200,9 @@ class PosterCard extends StatelessWidget {
   final VoidCallback? onMenu;
   final ValueChanged<bool>? onFocusChange;
 
+  /// 直接播放（跳过详情页）：电视在卡片上按遥控器播放键，Windows 悬停时点图上的 ▶
+  final VoidCallback? onPlay;
+
   @override
   Widget build(BuildContext context) {
     // 无资源时压暗（用遮罩而不是透明度，避免背景图透过海报）；聚焦时恢复。
@@ -195,47 +210,52 @@ class PosterCard extends StatelessWidget {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        VFocusable(
-          focusNode: node,
-          semanticLabel: title,
-          semanticValue: [?subtitle, if (resources != null) resources == 0 ? '无资源' : '$resources 个资源'].join('，'),
-          onActivate: onActivate,
-          onMenu: onMenu,
-          onFocusChange: onFocusChange,
-          builder: (context, focused) => ClipRRect(
-            borderRadius: BorderRadius.circular(VRadius.card),
-            child: SizedBox(
-              width: width,
-              height: imageHeight,
-              child: Stack(
-                fit: StackFit.expand,
-                children: [
-                  image ?? ArtView(art),
-                  if (image == null)
-                    Positioned(
-                      left: 14,
-                      right: 14,
-                      bottom: 14,
-                      child: Text(
-                        title,
-                        maxLines: 2,
-                        style: const TextStyle(
-                          fontSize: 24,
-                          fontWeight: FontWeight.w900,
-                          letterSpacing: 1,
-                          shadows: [Shadow(color: Color(0x99000000), blurRadius: 12)],
+        PlayKeyScope(
+          onPlay: onPlay,
+          child: VFocusable(
+            focusNode: node,
+            semanticLabel: title,
+            semanticValue: [?subtitle, if (resources != null) resources == 0 ? '无资源' : '$resources 个资源'].join('，'),
+            onActivate: onActivate,
+            onMenu: onMenu,
+            onFocusChange: onFocusChange,
+            builder: (context, focused) => ClipRRect(
+              borderRadius: BorderRadius.circular(VRadius.card),
+              child: SizedBox(
+                width: width,
+                height: imageHeight,
+                child: Stack(
+                  fit: StackFit.expand,
+                  children: [
+                    image ?? ArtView(art),
+                    if (image == null)
+                      Positioned(
+                        left: 14,
+                        right: 14,
+                        bottom: 14,
+                        child: Text(
+                          title,
+                          maxLines: 2,
+                          style: const TextStyle(
+                            fontSize: 24,
+                            fontWeight: FontWeight.w900,
+                            letterSpacing: 1,
+                            shadows: [Shadow(color: Color(0x99000000), blurRadius: 12)],
+                          ),
                         ),
                       ),
+                    IgnorePointer(
+                      child: AnimatedOpacity(
+                        opacity: focused || resources != 0 ? 0 : 0.5,
+                        duration: VMotion.duration(context, VMotion.focus),
+                        child: const ColoredBox(color: VColors.background),
+                      ),
                     ),
-                  IgnorePointer(
-                    child: AnimatedOpacity(
-                      opacity: focused || resources != 0 ? 0 : 0.5,
-                      duration: VMotion.duration(context, VMotion.focus),
-                      child: const ColoredBox(color: VColors.background),
-                    ),
-                  ),
-                  if (resources != null) Positioned(left: 12, top: 12, child: _ResourceBadge(resources!)),
-                ],
+                    if (resources != null) Positioned(left: 12, top: 12, child: _ResourceBadge(resources!)),
+                    if (onPlay != null && focused)
+                      Positioned(right: 12, bottom: 12, child: HoverPlayButton(onPlay: onPlay!)),
+                  ],
+                ),
               ),
             ),
           ),
@@ -254,6 +274,65 @@ class PosterCard extends StatelessWidget {
           ),
         ),
       ],
+    );
+  }
+}
+
+/// 电视：焦点在卡片上时按遥控器播放键（播放 / 播放暂停）直接播放（docs/07 §2.1）
+class PlayKeyScope extends StatelessWidget {
+  const PlayKeyScope({super.key, required this.onPlay, required this.child});
+
+  final VoidCallback? onPlay;
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) {
+    final play = onPlay;
+    if (play == null) return child;
+    return Focus(
+      canRequestFocus: false,
+      skipTraversal: true,
+      onKeyEvent: (node, event) {
+        final key = event.logicalKey;
+        if (key != LogicalKeyboardKey.mediaPlay && key != LogicalKeyboardKey.mediaPlayPause) {
+          return KeyEventResult.ignored;
+        }
+        if (event is KeyDownEvent) play();
+        return KeyEventResult.handled;
+      },
+      child: child,
+    );
+  }
+}
+
+/// Windows：鼠标悬停在卡片上时图上出现的 ▶，点它直接播放（点卡片其他地方照常打开详情）
+class HoverPlayButton extends StatelessWidget {
+  const HoverPlayButton({super.key, required this.onPlay});
+
+  final VoidCallback onPlay;
+
+  @override
+  Widget build(BuildContext context) {
+    if (!PlatformProfile.isDesktop) return const SizedBox.shrink();
+    return Semantics(
+      button: true,
+      label: '直接播放',
+      child: GestureDetector(
+        onTap: onPlay,
+        child: MouseRegion(
+          cursor: SystemMouseCursors.click,
+          child: Container(
+            width: 48,
+            height: 48,
+            decoration: const BoxDecoration(
+              color: Colors.white,
+              shape: BoxShape.circle,
+              boxShadow: [BoxShadow(color: Color(0x66000000), blurRadius: 14, offset: Offset(0, 4))],
+            ),
+            child: const Icon(Icons.play_arrow_rounded, size: 32, color: Color(0xFF0B0C10)),
+          ),
+        ),
+      ),
     );
   }
 }
