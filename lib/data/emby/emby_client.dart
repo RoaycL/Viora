@@ -633,7 +633,31 @@ class EmbyClient {
   Future<void> reportStopped(MediaSourceInfo s, Duration position, String? playSessionId) =>
       _report('/Sessions/Playing/Stopped', s, position, playSessionId);
 
+  /// 还没发完的播放上报（应用内更新重启前先等它们发完，不然这次播放的进度可能没报上去）
+  static final _pendingReports = <Future<void>>{};
+
+  /// 等还没发完的播放上报，最多等 [timeout]
+  static Future<void> flushReports({Duration timeout = const Duration(seconds: 5)}) async {
+    if (_pendingReports.isEmpty) return;
+    try {
+      await Future.wait(_pendingReports.toList()).timeout(timeout);
+    } catch (_) {}
+  }
+
   Future<void> _report(
+    String path,
+    MediaSourceInfo s,
+    Duration position,
+    String? playSessionId, {
+    bool paused = false,
+    String? event,
+  }) {
+    final f = _sendReport(path, s, position, playSessionId, paused: paused, event: event);
+    _pendingReports.add(f);
+    return f.whenComplete(() => _pendingReports.remove(f));
+  }
+
+  Future<void> _sendReport(
     String path,
     MediaSourceInfo s,
     Duration position,

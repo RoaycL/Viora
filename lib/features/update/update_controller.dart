@@ -10,6 +10,7 @@ import 'package:path_provider/path_provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../../data/config/config_store.dart';
+import '../../data/emby/emby_client.dart';
 import '../../data/net/request_composer.dart';
 import 'app_version.dart';
 import 'update_source.dart';
@@ -281,6 +282,8 @@ class UpdateController extends Notifier<UpdateState> {
   }
 
   Future<void> _install(UpdateInfo info, File file) async {
+    // 刚看完视频就更新：先等播放进度报给服务器（安装会结束应用，没发完的上报就丢了）
+    await EmbyClient.flushReports();
     if (Platform.isAndroid) {
       final result = await _channel.invokeMethod<String>('installApk', {'path': file.path});
       state = UpdateInstalling(info, needsPermission: result == 'needs_permission');

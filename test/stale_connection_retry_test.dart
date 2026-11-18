@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
@@ -65,5 +66,41 @@ void main() {
       'session',
     );
     expect(connections, 2, reason: '第一次连接被断开后用新连接重发了');
+  });
+
+  test('应用内更新重启前等还没发完的播放上报（最多等 5 秒）', () async {
+    final slow = await ServerSocket.bind(InternetAddress.loopbackIPv4, 0);
+    addTearDown(slow.close);
+    var received = false;
+    slow.listen((socket) {
+      socket.listen((_) async {
+        await Future<void>.delayed(const Duration(milliseconds: 600));
+        received = true;
+        socket.write('HTTP/1.1 204 No Content\r\nConnection: close\r\n\r\n');
+        await socket.close();
+      }, onError: (_) {});
+    });
+    final client = clientForDraft(
+      const AppConfig(deviceId: 'dev'),
+      ServerConfig(
+        id: 's',
+        type: ServerType.emby,
+        name: 't',
+        username: 'me',
+        token: 'tok',
+        userId: 'uid',
+        lines: [ServerLine(id: 'l', name: 'l', url: 'http://127.0.0.1:${slow.port}')],
+      ),
+    );
+    // 播放器关闭时发出停止上报，不等它
+    unawaited(
+      client.reportStopped(
+        const MediaSourceInfo(serverId: 's', itemId: 'ep', id: 'src', container: 'mkv'),
+        const Duration(minutes: 41),
+        'session',
+      ),
+    );
+    await EmbyClient.flushReports();
+    expect(received, isTrue);
   });
 }
