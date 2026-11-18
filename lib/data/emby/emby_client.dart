@@ -1,8 +1,9 @@
-import 'dart:io' show HttpException;
+import 'dart:io' show HttpClient, HttpException;
 import 'dart:async';
 import 'dart:math';
 
 import 'package:dio/dio.dart';
+import 'package:dio/io.dart';
 import 'package:flutter/foundation.dart';
 
 import '../../core/log/load_metrics.dart';
@@ -113,7 +114,13 @@ class EmbyClient {
 
   /// 接口请求共用一个连接池（按主机复用连接）：每个请求新建客户端的话，HTTPS / 反向代理下每次都要重新握手，
   /// 详情页同时向多台服务器取播放信息时尤其慢。测速（[probe]）仍用新连接，延迟才准
-  static final Dio _shared = _dio();
+  static final Dio _shared = _dio()
+    ..httpClientAdapter = IOHttpClientAdapter(
+      // 空闲连接只留 4 秒（Dart 默认 15 秒）。反向代理 / 服务器常把空闲连接关得比这早，有的不通知客户端：
+      // 播放时每 10 秒一次的进度上报每次都会撞上已经关掉的连接，整场播放的进度都报不上去。
+      // 4 秒内的连续请求（打开详情页、首页加载）仍然复用连接
+      createHttpClient: () => HttpClient()..idleTimeout = const Duration(seconds: 4),
+    );
 
   static Dio _dio() => Dio(
     BaseOptions(
