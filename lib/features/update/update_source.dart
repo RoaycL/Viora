@@ -28,9 +28,13 @@ class UpdateInfo {
     this.size,
     this.sha256,
     this.publishedAt,
+    this.prerelease = false,
   });
 
   final AppVersion version;
+
+  /// 测试版
+  final bool prerelease;
 
   /// 展示用的版本名（如 `v0.1.1`）
   final String label;
@@ -97,9 +101,23 @@ const _androidAbis = ['arm64-v8a', 'armeabi-v7a', 'x86_64'];
 String manifestAssetKey(UpdatePlatform platform, String? abi) =>
     platform == UpdatePlatform.android && abi != null ? 'android-$abi' : platform.name;
 
-/// GitHub Releases（包含预发布版本）。仓库需要是公开的，客户端才能匿名访问。
+/// 测试版的标签前缀。测试版发布为 `beta-v<版本>`：v0.15.33 之前的旧版本解析不了这种标签，
+/// 只会更新到正式版（`v<版本>`），装上新版本后再按「检查测试版」开关决定
+const betaTagPrefix = 'beta-';
+
+/// 发布的标签 → 版本号与是否测试版（`v1.2.3` 正式版、`beta-v1.2.3` 测试版；GitHub 上标成预发布的也算测试版）
+(AppVersion, bool)? parseReleaseTag(String tag, {bool prerelease = false}) {
+  final beta = tag.startsWith(betaTagPrefix);
+  final version = AppVersion.tryParse(beta ? tag.substring(betaTagPrefix.length) : tag);
+  return version == null ? null : (version, beta || prerelease);
+}
+
+/// GitHub Releases。仓库需要是公开的，客户端才能匿名访问。
+/// [includePrerelease] 为 false 时只看正式版。
 class GitHubReleasesSource implements UpdateSource {
-  GitHubReleasesSource(this.owner, this.repo, {required this.userAgent, this.rewrite});
+  GitHubReleasesSource(this.owner, this.repo, {required this.userAgent, this.rewrite, this.includePrerelease = false});
+
+  final bool includePrerelease;
 
   final String owner;
   final String repo;
@@ -127,8 +145,10 @@ class GitHubReleasesSource implements UpdateSource {
     for (final release in (json as List).cast<Map<String, dynamic>>()) {
       if (release['draft'] == true) continue;
       final tag = release['tag_name'] as String? ?? '';
-      final version = AppVersion.tryParse(tag);
-      if (version == null) continue;
+      final parsed = parseReleaseTag(tag, prerelease: release['prerelease'] == true);
+      if (parsed == null) continue;
+      final (version, beta) = parsed;
+      if (beta && !includePrerelease) continue;
       if (best != null && !(version > best.version)) continue;
       final assets = (release['assets'] as List? ?? const []).cast<Map<String, dynamic>>();
       final index = pickPlatformAsset([for (final a in assets) a['name'] as String? ?? ''], platform, abi: abi);
@@ -137,7 +157,8 @@ class GitHubReleasesSource implements UpdateSource {
       final digest = asset['digest'] as String?;
       best = UpdateInfo(
         version: version,
-        label: tag,
+        label: beta ? '${tag.substring(tag.startsWith(betaTagPrefix) ? betaTagPrefix.length : 0)}（测试版）' : tag,
+        prerelease: beta,
         notes: (release['body'] as String? ?? '').trim(),
         downloadUrl: Uri.parse(asset['browser_download_url'] as String),
         size: asset['size'] as int?,
@@ -154,6 +175,7 @@ class GitHubReleasesSource implements UpdateSource {
 /// ```json
 /// {
 ///   "version": "0.1.1",
+///   "prerelease": false,
 ///   "notes": "更新说明",
 ///   "published_at": "2026-10-10T08:00:00Z",
 ///   "assets": {
@@ -166,7 +188,10 @@ class GitHubReleasesSource implements UpdateSource {
 /// ```
 /// Android 优先取本机架构的拆分包（可省略），没有就用通用的 `android`。
 class ManifestSource implements UpdateSource {
-  ManifestSource(this.url, {required this.userAgent, this.rewrite});
+  ManifestSource(this.url, {required this.userAgent, this.rewrite, this.includePrerelease = false});
+
+  /// 清单里 `"prerelease": true` 的是测试版，关闭「检查测试版」时不提示
+  final bool includePrerelease;
 
   final Uri url;
   final String userAgent;
@@ -183,9 +208,12 @@ class ManifestSource implements UpdateSource {
     final assets = json['assets'] as Map<String, dynamic>?;
     final asset = (assets?[manifestAssetKey(platform, abi)] ?? assets?[platform.name]) as Map<String, dynamic>?;
     if (version == null || asset == null) return null;
+    final beta = json['prerelease'] == true;
+    if (beta && !includePrerelease) return null;
     return UpdateInfo(
       version: version,
-      label: 'v${json['version']}',
+      label: 'v${json['version']}${beta ? '（测试版）' : ''}',
+      prerelease: beta,
       notes: (json['notes'] as String? ?? '').trim(),
       // 允许清单里写相对地址
       downloadUrl: url.resolve(asset['url'] as String),

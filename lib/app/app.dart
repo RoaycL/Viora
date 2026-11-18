@@ -12,6 +12,8 @@ import '../core/log/app_log.dart';
 import '../data/cache/snapshot_cache.dart';
 import '../data/tmdb/tmdb_disk_cache.dart';
 import '../data/config/config_store.dart';
+import '../data/history/pending_reports.dart';
+import '../data/cache/account_scope.dart';
 import '../data/media/server_registry.dart';
 import '../player/playback_cache.dart';
 import '../ui/widgets/cached_image.dart';
@@ -112,6 +114,8 @@ class _VioraAppState extends ConsumerState<VioraApp> with WidgetsBindingObserver
     if (autoCheckUpdatesOnLaunch) _webdav!.start();
     if (autoCheckUpdatesOnLaunch) {
       // 稍后在后台：各服务器线路测速（选最快线路、更新在线状态），再同步聚合索引（docs/04-aggregation.md §2）
+      // 上次没报到服务器的停止上报（退出播放后马上关了应用等）：补发，补完刷新继续观看
+      Future<void>.delayed(const Duration(seconds: 1), () => _flushPendingReports(container));
       Future<void>.delayed(const Duration(seconds: 1), () async {
         // 电视同时最多测 4 台，不和首页加载抢网络
         await probeAllServers(container, concurrency: PlatformProfile.isTv ? 4 : 8);
@@ -204,6 +208,22 @@ class _VioraAppState extends ConsumerState<VioraApp> with WidgetsBindingObserver
     }
     _exitArmed = Timer(exitConfirmWindow, () {});
     showToast('再按一次返回键退出 Viora');
+  }
+
+  Future<void> _flushPendingReports(ProviderContainer container) async {
+    try {
+      final sent = await PendingPlayReports.flush((r) {
+        final client = container.read(serverClientProvider(r.serverId));
+        return client != null && accountScope(client.server) == r.account ? client : null;
+      });
+      if (sent > 0) {
+        final refresh = container.read(mediaFeedRefreshProvider.notifier);
+        refresh.refresh(MediaFeedKind.resume);
+        refresh.refresh(MediaFeedKind.recentlyPlayed);
+      }
+    } catch (e) {
+      debugPrint('pending reports: $e');
+    }
   }
 
   @override

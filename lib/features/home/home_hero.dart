@@ -3,7 +3,9 @@ import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 import 'package:flutter/foundation.dart' show ValueListenable;
+import 'package:flutter/services.dart';
 
+import '../../app/input/intents.dart';
 import '../../app/platform_profile.dart';
 import '../../app/theme.dart';
 import '../../ui/focus/row_focus.dart';
@@ -135,7 +137,8 @@ class HomeHeroState extends State<HomeHero> with WidgetsBindingObserver implemen
   int get _navigationIndex => widget.pendingIndex ?? widget.index;
 
   @override
-  int get length => _actions + (_carousel ? 3 : 0);
+  /// Windows 没有左右 / 暂停按钮（右下角是小圆点，鼠标点），焦点行里只有主按钮或封面本身
+  int get length => _actions + (_carousel && !PlatformProfile.isDesktop ? 3 : 0);
 
   @override
   FocusNode nodeAt(int index) => _nodes[index < _actions ? index : index - _actions + _prev];
@@ -246,13 +249,15 @@ class HomeHeroState extends State<HomeHero> with WidgetsBindingObserver implemen
     final compact = (widget.height ?? HomeHero.heightOf(context)) < 740;
     final infoWidth = math.min(900.0, MediaQuery.sizeOf(context).width - VSpace.contentLeft - VSpace.safeH);
     final reduced = VMotion.reduced(context);
+    // Windows：能直接播放的才放「播放」按钮；TMDB 推荐没有按钮，点大图（或回车）进详情
+    final showMain = !desktop || t.onPlay != null;
     final hero = SizedBox(
       height: widget.height ?? HomeHero.heightOf(context),
       child: Stack(
         children: [
           Positioned(
             left: VSpace.contentLeft,
-            bottom: HomeHero.buttonsBottom + 76 + 24,
+            bottom: showMain ? HomeHero.buttonsBottom + 76 + 24 : HomeHero.buttonsBottom + 20,
             width: infoWidth,
             child: AnimatedSwitcher(
               duration: VMotion.duration(context, const Duration(milliseconds: 180)),
@@ -266,34 +271,46 @@ class HomeHeroState extends State<HomeHero> with WidgetsBindingObserver implemen
               child: _HeroInfo(key: ValueKey(t.key), title: t, compact: compact),
             ),
           ),
-          Positioned(
-            left: VSpace.contentLeft,
-            bottom: HomeHero.buttonsBottom,
-            child: Row(
-              children: [
-                PillButton(
-                  focusNode: _nodes[_main],
-                  autofocus: widget.autofocus,
-                  large: true,
-                  icon: t.onPlay != null ? Icons.play_arrow_rounded : Icons.info_outline_rounded,
-                  label: t.onPlay != null ? '播放' : '查看详情',
-                  onPressed: t.onPlay ?? t.onDetail,
-                ),
-                if (_actions == 2) ...[
-                  const SizedBox(width: 32),
+          if (showMain)
+            Positioned(
+              left: VSpace.contentLeft,
+              bottom: HomeHero.buttonsBottom,
+              child: Row(
+                children: [
                   PillButton(
-                    focusNode: _nodes[_detail],
-                    icon: Icons.info_outline_rounded,
-                    label: '详情',
-                    onPressed: t.onDetail,
+                    focusNode: _nodes[_main],
+                    autofocus: widget.autofocus,
+                    large: true,
+                    icon: t.onPlay != null ? Icons.play_arrow_rounded : Icons.info_outline_rounded,
+                    label: t.onPlay != null ? '播放' : '查看详情',
+                    onPressed: t.onPlay ?? t.onDetail,
                   ),
+                  if (_actions == 2) ...[
+                    const SizedBox(width: 32),
+                    PillButton(
+                      focusNode: _nodes[_detail],
+                      icon: Icons.info_outline_rounded,
+                      label: '详情',
+                      onPressed: t.onDetail,
+                    ),
+                  ],
                 ],
-              ],
+              ),
             ),
-          ),
           // 电视的服务器状态和时钟在顶部标签栏右侧
           if (!PlatformProfile.isTv) const Positioned(right: VSpace.safeH, top: VSpace.safeV, child: StatusBar()),
-          if (_carousel)
+          // Windows：右下角小圆点，当前这部是长条；点圆点切换（鼠标停在大图上时不自动轮播）
+          if (_carousel && desktop)
+            Positioned(
+              right: VSpace.safeH,
+              bottom: HomeHero.buttonsBottom + 30,
+              child: _HeroDots(
+                count: widget.items.length,
+                index: widget.pendingIndex ?? widget.index,
+                onTap: _switchTo,
+              ),
+            ),
+          if (_carousel && !desktop)
             Positioned(
               right: VSpace.safeH,
               bottom: HomeHero.buttonsBottom + 4,
@@ -376,8 +393,64 @@ class HomeHeroState extends State<HomeHero> with WidgetsBindingObserver implemen
           if (velocity > 150) _switchTo(_navigationIndex - 1);
           _armRotation();
         },
-        child: hero,
+        child: showMain
+            ? hero
+            // Windows 没有按钮时：封面本身作为这一行的焦点（键盘回车进详情）
+            : Focus(
+                focusNode: _nodes[_main],
+                autofocus: widget.autofocus,
+                onKeyEvent: (node, e) {
+                  if (e is KeyDownEvent && confirmKeys.contains(e.logicalKey)) {
+                    t.onDetail();
+                    return KeyEventResult.handled;
+                  }
+                  return KeyEventResult.ignored;
+                },
+                child: hero,
+              ),
       ),
+    );
+  }
+}
+
+/// Windows 首页大图右下角的轮播指示：一排小圆点，当前这部是长条
+class _HeroDots extends StatelessWidget {
+  const _HeroDots({required this.count, required this.index, required this.onTap});
+
+  final int count;
+  final int index;
+  final ValueChanged<int> onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        for (var i = 0; i < count; i++)
+          Semantics(
+            button: true,
+            label: '第 ${i + 1} 部推荐',
+            selected: i == index,
+            child: GestureDetector(
+              onTap: () => onTap(i),
+              child: MouseRegion(
+                cursor: SystemMouseCursors.click,
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 10),
+                  child: AnimatedContainer(
+                    duration: VMotion.scroll,
+                    width: i == index ? 36 : 8,
+                    height: 8,
+                    decoration: BoxDecoration(
+                      color: i == index ? Colors.white : const Color(0x59FFFFFF),
+                      borderRadius: BorderRadius.circular(4),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ),
+      ],
     );
   }
 }

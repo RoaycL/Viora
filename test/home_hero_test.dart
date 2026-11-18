@@ -100,8 +100,9 @@ Future<HeroHarnessState> mountHero(
   bool defer = false,
   bool longContent = false,
   bool firstPlayable = false,
+  PlatformProfile profile = PlatformProfile.tv,
 }) async {
-  PlatformProfile.debugOverride = PlatformProfile.tv;
+  PlatformProfile.debugOverride = profile;
   tester.view.physicalSize = const Size(1920, 1080);
   tester.view.devicePixelRatio = 1;
   addTearDown(tester.view.reset);
@@ -262,6 +263,31 @@ void main() {
     await mountHero(tester, longContent: true);
     expect(find.text('查看详情'), findsOneWidget);
     expect(tester.takeException(), isNull);
+    await removeHero(tester);
+  });
+
+  testWidgets('Windows：右下角小圆点（没有左右 / 暂停按钮），点圆点切换；没有播放时不放按钮，回车进详情', (tester) async {
+    final state = await mountHero(tester, autofocus: true, profile: PlatformProfile.desktop);
+    expect(find.byIcon(Icons.chevron_left_rounded), findsNothing);
+    expect(find.byIcon(Icons.pause_rounded), findsNothing);
+    expect(find.text('查看详情'), findsNothing);
+    expect(find.text('1 / 3'), findsNothing);
+    final dots = find.bySemanticsLabel(RegExp(r'^第 \d 部推荐$'));
+    expect(dots, findsNWidgets(3));
+    await tester.tap(find.bySemanticsLabel('第 3 部推荐'));
+    await tester.pump();
+    expect(state.selected.last, 2);
+    // 封面本身拿焦点：回车进详情
+    await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+    await tester.pump();
+    expect(state.opened, isNotEmpty);
+    await removeHero(tester);
+  });
+
+  testWidgets('Windows：能直接播放的作品只放「播放」按钮', (tester) async {
+    await mountHero(tester, firstPlayable: true, profile: PlatformProfile.desktop);
+    expect(find.text('播放'), findsOneWidget);
+    expect(find.text('详情'), findsNothing);
     await removeHero(tester);
   });
 }

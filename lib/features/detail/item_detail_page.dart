@@ -278,7 +278,7 @@ class _ItemDetailPageState extends ConsumerState<ItemDetailPage> {
         return;
       }
       rememberSource(item, o.serverId);
-      context.push(o.playRoute(position: fromStart ? Duration.zero : o.item.position));
+      context.push(o.playRoute(position: fromStart ? Duration.zero : o.item.position, resume: !fromStart));
     }
 
     final playLabel = switch (playTarget) {

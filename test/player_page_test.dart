@@ -16,6 +16,7 @@ import 'package:viora/data/aggregate/sources.dart';
 import 'package:viora/data/config/app_config.dart';
 import 'package:viora/data/config/config_store.dart';
 import 'package:viora/data/emby/emby_client.dart';
+import 'package:viora/data/history/pending_reports.dart';
 import 'package:viora/data/media/media_models.dart';
 import 'package:viora/data/media/server_registry.dart';
 import 'package:viora/features/player/player_page.dart';
@@ -39,13 +40,19 @@ class FakeEngine extends PlayerEngine {
   @override
   Stream<EngineError> get errors => _errors.stream;
 
+  /// 每次打开的起播位置
+  final opened = <Duration>[];
+
   @override
-  Future<void> open(EngineMedia media) async => _state.value = EngineState(
-    position: media.start,
-    duration: const Duration(minutes: 20),
-    playing: true,
-    buffering: false,
-  );
+  Future<void> open(EngineMedia media) async {
+    opened.add(media.start);
+    _state.value = EngineState(
+      position: media.start,
+      duration: const Duration(minutes: 20),
+      playing: true,
+      buffering: false,
+    );
+  }
 
   /// 内核报的下载状态
   void report({int? speed, Duration? buffered}) =>
@@ -105,8 +112,9 @@ const server = ServerConfig(
   lines: [],
 );
 
-MediaItem episode(int season, int number) => MediaItem(
+MediaItem episode(int season, int number, {Duration position = Duration.zero}) => MediaItem(
   serverId: 's',
+  position: position,
   id: 's${season}e$number',
   name: '第 $number 集',
   kind: MediaKind.episode,
@@ -131,8 +139,14 @@ class PlayerClient extends EmbyClient {
 
   final all = [for (var i = 1; i <= seasonOne; i++) episode(1, i), episode(2, 1)];
 
+  /// 服务器上这一集最新的进度（别的设备看过）
+  Duration serverPosition = Duration.zero;
   @override
-  Future<MediaItem> item(String id) async => all.firstWhere((e) => e.id == id);
+  Future<MediaItem> item(String id) async {
+    final e = all.firstWhere((e) => e.id == id);
+    return serverPosition == Duration.zero ? e : episode(e.seasonNumber!, e.episodeNumber!, position: serverPosition);
+  }
+
   @override
   Future<PlaybackInfoResult> playbackInfo(String itemId, {bool isPlayback = false}) async => (
     sources: [
@@ -159,6 +173,9 @@ class PlayerClient extends EmbyClient {
   ];
   @override
   Future<void> reportStart(MediaSourceInfo s, Duration position, String? playSessionId) async {}
+
+  /// 进度上报（事件, 位置）
+  final progress = <(String, Duration)>[];
   @override
   Future<void> reportProgress(
     MediaSourceInfo s,
@@ -166,9 +183,19 @@ class PlayerClient extends EmbyClient {
     String? playSessionId, {
     bool paused = false,
     String event = 'TimeUpdate',
-  }) async {}
+  }) async => progress.add((event, position));
+
+  /// 停止上报的位置
+  final stopped = <Duration>[];
+
+  /// 停止上报失败（服务器连不上 / 应用被关掉）
+  bool stopFails = false;
+
   @override
-  Future<void> reportStopped(MediaSourceInfo s, Duration position, String? playSessionId) async {}
+  Future<bool> reportStopped(MediaSourceInfo s, Duration position, String? playSessionId) async {
+    stopped.add(position);
+    return !stopFails;
+  }
 }
 
 class OneServer extends ConfigStore {
@@ -184,13 +211,21 @@ void appBack(GoRouter router) {
 }
 
 class Harness {
-  Harness(this.router, this.engines);
+  Harness(this.router, this.engines, this.client);
   final GoRouter router;
   final List<FakeEngine> engines;
+  final PlayerClient client;
   FakeEngine get engine => engines.last;
 }
 
-Future<Harness> pumpPlayer(WidgetTester tester, {String itemId = 's1e2', List<Override> overrides = const []}) async {
+Future<Harness> pumpPlayer(
+  WidgetTester tester, {
+  String itemId = 's1e2',
+  List<Override> overrides = const [],
+  int startMs = 0,
+  bool resume = false,
+  Duration serverPosition = Duration.zero,
+}) async {
   PlatformProfile.debugOverride = PlatformProfile.tv;
   SharedPreferences.setMockInitialValues({});
   ConfigStore.vault = MemoryVault();
@@ -202,7 +237,7 @@ Future<Harness> pumpPlayer(WidgetTester tester, {String itemId = 's1e2', List<Ov
   final engines = <FakeEngine>[];
   PlayerPage.debugEngineFactory = (_) => FakeEngine()..let(engines.add);
   addTearDown(() => PlayerPage.debugEngineFactory = null);
-  final client = PlayerClient();
+  final client = PlayerClient()..serverPosition = serverPosition;
   late final GoRouter router;
   router = GoRouter(
     initialLocation: '/',
@@ -213,7 +248,7 @@ Future<Harness> pumpPlayer(WidgetTester tester, {String itemId = 's1e2', List<Ov
       ),
       GoRoute(
         path: '/play',
-        builder: (_, _) => PlayerPage(serverId: 's', itemId: itemId),
+        builder: (_, _) => PlayerPage(serverId: 's', itemId: itemId, startMs: startMs, resume: resume),
       ),
     ],
   );
@@ -239,7 +274,7 @@ Future<Harness> pumpPlayer(WidgetTester tester, {String itemId = 's1e2', List<Ov
   await tester.pumpAndSettle();
   await tester.runAsync(() => Future<void>.delayed(const Duration(milliseconds: 200)));
   await tester.pumpAndSettle();
-  return Harness(router, engines);
+  return Harness(router, engines, client);
 }
 
 Future<void> press(WidgetTester tester, LogicalKeyboardKey key) async {
@@ -612,6 +647,84 @@ void main() {
     await tester.pump(const Duration(seconds: 1));
     // 头 1.5 秒每秒约 1 分钟、到 4 秒每秒约 4 分钟、之后每秒约 16 分钟：5 秒到片尾（20 分钟）附近
     expect(h.engine.seeks.last, greaterThan(const Duration(minutes: 15)));
+    await unmountPlayer(tester);
+  });
+
+  testWidgets('关闭播放器时内核已经停了（位置报 0）：停止上报仍用最后的播放位置，不把服务器进度清掉', (tester) async {
+    final h = await pumpPlayer(tester);
+    await h.engine.seek(const Duration(minutes: 7));
+    await tester.pump();
+    // 内核关闭 / 停下时位置变成 0
+    h.engine.report(speed: 0);
+    await h.engine.seek(Duration.zero);
+    await tester.pump();
+    await unmountPlayer(tester);
+    expect(h.client.stopped, [const Duration(minutes: 7)]);
+  });
+
+  testWidgets('内核报 0 时暂停：暂停上报也用最后的播放位置；真的拖回开头时报 0', (tester) async {
+    final h = await pumpPlayer(tester);
+    await h.engine.seek(const Duration(minutes: 7));
+    await tester.pump();
+    // 内核位置变成 0（如刚切换、停下时）后暂停
+    await h.engine.seek(Duration.zero);
+    await tester.pump();
+    await press(tester, LogicalKeyboardKey.enter);
+    expect(h.client.progress.last, ('Pause', const Duration(minutes: 7)));
+
+    // 用户真的拖回开头（数字键 0 在电视上不响应，用 ← 快退到 0）
+    await press(tester, LogicalKeyboardKey.enter); // 继续播放
+    for (var i = 0; i < 50; i++) {
+      await tester.sendKeyEvent(LogicalKeyboardKey.arrowLeft);
+    }
+    await tester.pump(const Duration(seconds: 1));
+    await press(tester, LogicalKeyboardKey.enter); // 暂停
+    expect(h.client.progress.last, ('Pause', Duration.zero));
+    await unmountPlayer(tester);
+  });
+
+  testWidgets('继续播放：别的设备看得更靠后时以服务器的最新进度为准；明确指定位置时不变', (tester) async {
+    // 卡片上（缓存）是 5 分钟，服务器上别的设备已经看到 12 分钟
+    final h = await pumpPlayer(
+      tester,
+      startMs: 5 * 60 * 1000,
+      resume: true,
+      serverPosition: const Duration(minutes: 12),
+    );
+    expect(h.engine.opened.single, const Duration(minutes: 12));
+    await unmountPlayer(tester);
+
+    // 切换资源时接着当前位置（不是继续播放）：用给的位置
+    final h2 = await pumpPlayer(tester, startMs: 5 * 60 * 1000, serverPosition: const Duration(minutes: 12));
+    expect(h2.engine.opened.single, const Duration(minutes: 5));
+    await unmountPlayer(tester);
+  });
+
+  testWidgets('退出播放后继续观看马上按本机的进度显示（不等服务器刷新）', (tester) async {
+    final h = await pumpPlayer(tester);
+    await h.engine.seek(const Duration(minutes: 7));
+    await tester.pump();
+    final container = ProviderScope.containerOf(tester.element(find.byType(PlayerPage)));
+    // 退出播放回到上一页（应用还在）
+    h.router.pop();
+    await tester.pumpAndSettle();
+    expect(find.byType(PlayerPage), findsNothing);
+    final local = container.read(localPlaysProvider)['s/s1e2']?.$1;
+    expect(local?.position, const Duration(minutes: 7));
+    expect(local?.played, isFalse);
+    await unmountPlayer(tester);
+  });
+
+  testWidgets('停止上报没报上去：存在本机等下次启动补发；报上去了就删掉', (tester) async {
+    final h = await pumpPlayer(tester);
+    await h.engine.seek(const Duration(minutes: 9));
+    await tester.pump();
+    h.client.stopFails = true;
+    h.router.pop();
+    await tester.pumpAndSettle();
+    await tester.runAsync(() => Future<void>.delayed(const Duration(milliseconds: 100)));
+    final left = await tester.runAsync(PendingPlayReports.list);
+    expect([for (final r in left!) (r.itemId, r.position)], [('s1e2', const Duration(minutes: 9))]);
     await unmountPlayer(tester);
   });
 }

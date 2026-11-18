@@ -550,7 +550,7 @@ class _HomeBodyState extends ConsumerState<_HomeBody> {
     final tmdbOn = tmdbClient != null;
     _configurePrefetch(tmdbClient);
     final serverNames = {for (final s in servers) s.id: s.displayName};
-    final resumeAsync = ref.watch(resumeProvider);
+    final resumeAsync = ref.watch(continueWatchingProvider);
     final resume = servers.isEmpty ? const <MediaItem>[] : dedupeWatched(resumeAsync.value ?? const <MediaItem>[]);
     final resumeState = ref.watch(mediaFeedStateProvider(MediaFeedKind.resume)).value;
     final recent = ref.watch(recentlyAddedProvider);
@@ -598,12 +598,15 @@ class _HomeBodyState extends ConsumerState<_HomeBody> {
     );
     final header = math.max(48.0, textScale.scale(28) * 1.5);
     double extent(double cards) => header + cards + FocusRow.focusBleed * 2 + 24;
-    final showResume =
-        servers.isNotEmpty && (resume.isNotEmpty || resumeAsync.isLoading || (resumeState?.failures ?? 0) > 0);
+    // 同步中：首次加载，或先显示了上次的数据、后台正在向服务器取最新的。同步完了标题后面什么都不显示
+    final resumeSyncing =
+        resumeAsync.isLoading ||
+        (resumeState?.refreshing ?? false) ||
+        (ref.watch(mediaFeedStateProvider(MediaFeedKind.recentlyPlayed)).value?.refreshing ?? false);
+    // 没有继续观看的内容、也不在同步时整行不显示（服务器暂时连不上也不再提示）
+    final showResume = servers.isNotEmpty && (resume.isNotEmpty || resumeAsync.isLoading);
     // 首屏给继续观看留的高度：刷新期间（已有结果、正在重新加载）沿用已有结果，不让 Hero 一缩一放、焦点按钮跳动
-    final reserveResume =
-        servers.isNotEmpty &&
-        (resume.isNotEmpty || (resumeAsync.isLoading && !resumeAsync.hasValue) || (resumeState?.failures ?? 0) > 0);
+    final reserveResume = servers.isNotEmpty && (resume.isNotEmpty || (resumeAsync.isLoading && !resumeAsync.hasValue));
     final heroHeight = HomeHero.heightOf(context, reserveBelow: reserveResume ? extent(landscapeHeight) : 0);
     final sections = <({int row, double height, WidgetBuilder build})>[
       (
@@ -689,25 +692,16 @@ class _HomeBodyState extends ConsumerState<_HomeBody> {
         (
           row: 1,
           height: extent(landscapeHeight),
-          build: _cachedRow(1, (resumeAsync, resumeState, servers, landscapeHeight), (context) {
+          build: _cachedRow(1, (resumeAsync, resumeState, resumeSyncing, servers, landscapeHeight), (context) {
             if (resume.isEmpty) {
               if (_focus.rowAt(1) is RevealableFocusRow) _focus.preserveRow(1);
-              return _HomeRowStatus(
-                row: 1,
-                title: '继续观看',
-                note: resumeAsync.isLoading ? '正在加载…' : '暂时无法刷新继续观看',
-                loading: resumeAsync.isLoading,
-                landscape: true,
-                onRetry: resumeAsync.isLoading
-                    ? null
-                    : () => ref.read(mediaFeedRefreshProvider.notifier).refresh(MediaFeedKind.resume),
-              );
+              return const _HomeRowStatus(row: 1, title: '继续观看', note: '同步中…', loading: true, landscape: true);
             }
             final keys = [for (final it in resume) '${it.serverId}/${it.id}'];
             final initial = _focus.updateItems(1, keys);
             return FocusRow(
               rowIndex: 1,
-              title: (resumeState?.failures ?? 0) == 0 ? '继续观看' : '继续观看 · 部分记录暂未刷新',
+              title: resumeSyncing ? '继续观看 · 同步中' : '继续观看',
               itemKeys: keys,
               initialIndex: initial,
               autoScrollVertical: false,
@@ -726,6 +720,8 @@ class _HomeBodyState extends ConsumerState<_HomeBody> {
                   resume[i],
                   node,
                   watchedOn: serverNames[resume[i].serverId] ?? '未知服务器',
+                  // 看完的：剧集打开整部剧并选中下一集，电影打开详情（不从头重播）
+                  onActivate: resume[i].played ? () => openWatchedItem(context, resume[i], next: true) : null,
                   onMenu: () => openWatchedItem(context, resume[i]),
                 ),
               ),

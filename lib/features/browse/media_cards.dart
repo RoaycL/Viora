@@ -15,10 +15,12 @@ void openMediaItem(BuildContext context, MediaItem item) {
 }
 
 /// 继续观看 / 观看记录里的条目：单集打开整部剧的页面并停在这一集（能直接选集、换季），其他同 [openMediaItem]
-void openWatchedItem(BuildContext context, MediaItem item) {
+///
+/// [next]：这一集看完了，打开整部剧时让详情页自己选（看完的下一集），不停在这一集
+void openWatchedItem(BuildContext context, MediaItem item, {bool next = false}) {
   final series = item.kind == MediaKind.episode ? item.seriesId : null;
   if (series == null) return openMediaItem(context, item);
-  final query = item.seasonNumber == null
+  final query = next || item.seasonNumber == null
       ? ''
       : '?season=${item.seasonNumber}${item.episodeNumber == null ? '' : '&episode=${item.episodeNumber}'}';
   context.push('/item/${item.serverId}/$series$query');
@@ -27,7 +29,7 @@ void openWatchedItem(BuildContext context, MediaItem item) {
 /// 播放条目（继续观看等）
 void playMediaItem(BuildContext context, MediaItem item, {bool fromStart = false}) {
   final pos = fromStart ? 0 : item.position.inMilliseconds;
-  context.push('/play/${item.serverId}/${item.id}?pos=$pos');
+  context.push('/play/${item.serverId}/${item.id}?pos=$pos${fromStart ? '' : '&resume=1'}');
 }
 
 String mediaSubtitle(MediaItem item) {
@@ -73,7 +75,7 @@ Widget mediaLandscapeCard(
   // 观看记录样式（[watchedOn] = 服务器名）：图上"看到 26:16"，下面"5 小时前 · 服务器"，标题后灰字"第 1 季 · 195 集"
   final watch = watchedOn != null;
   final caption = watch
-      ? (item.position > Duration.zero ? '看到 ${formatClock(item.position)}' : '')
+      ? (item.played ? '已看完' : (item.position > Duration.zero ? '看到 ${formatClock(item.position)}' : ''))
       : [
           ?item.episodeLabel,
           if (remaining != null && remaining > Duration.zero) '剩 ${formatDuration(remaining)}',
@@ -104,7 +106,7 @@ Widget mediaLandscapeCard(
     tag: tag,
     tagIcon: tagIcon,
     caption: caption.isEmpty ? null : caption,
-    progress: item.progress,
+    progress: watch && item.played ? 1 : item.progress,
     onActivate: onActivate ?? () => playMediaItem(context, item),
     onMenu: onMenu,
     onPlay: item.playable ? () => playMediaItem(context, item) : null,

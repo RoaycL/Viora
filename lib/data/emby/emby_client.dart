@@ -111,9 +111,16 @@ class EmbyClient {
 
   RequestComposer get composer => composerFor(line);
 
-  /// 接口请求共用一个连接池（按主机复用连接）：每个请求新建客户端的话，HTTPS / 反向代理下每次都要重新握手，
-  /// 详情页同时向多台服务器取播放信息时尤其慢。测速（[probe]）仍用新连接，延迟才准
-  static final Dio _shared = _dio();
+  /// 每个接口请求用一个新连接，用完关掉（v0.15.28–v0.15.34 曾改为复用连接，
+  /// 但反向代理 / 服务器会在客户端不知道的情况下关掉闲置连接，复用到这种连接时请求失败，改回每次新建）
+  static Future<T> _once<T>(Future<T> Function(Dio dio) send) async {
+    final dio = _dio();
+    try {
+      return await send(dio);
+    } finally {
+      dio.close();
+    }
+  }
 
   static Dio _dio() => Dio(
     BaseOptions(
@@ -201,10 +208,12 @@ class EmbyClient {
     final r = await LoadTrace.request(
       'media_api',
       _metricsId,
-      () => _shared.postUri<dynamic>(
-        url,
-        data: {'Username': _server.username, 'Pw': password},
-        options: Options(headers: headers, contentType: Headers.jsonContentType),
+      () => _once(
+        (dio) => dio.postUri<dynamic>(
+          url,
+          data: {'Username': _server.username, 'Pw': password},
+          options: Options(headers: headers, contentType: Headers.jsonContentType),
+        ),
       ),
       isSuccess: (r) => (r.statusCode ?? 500) < 400,
     );
@@ -237,6 +246,7 @@ class EmbyClient {
     bool auth = true,
     bool retried = false,
     bool staleRetried = false,
+    bool idempotent = false,
   }) async {
     if (auth && !_server.loggedIn) await login();
     final candidates = [line, ..._server.lines.where((l) => l.id != line.id)];
@@ -248,10 +258,16 @@ class EmbyClient {
         final r = await LoadTrace.request(
           'media_api',
           _metricsId,
-          () => _shared.requestUri<dynamic>(
-            url,
-            data: body,
-            options: Options(method: method, headers: c.headers(RequestKind.api), contentType: Headers.jsonContentType),
+          () => _once(
+            (dio) => dio.requestUri<dynamic>(
+              url,
+              data: body,
+              options: Options(
+                method: method,
+                headers: c.headers(RequestKind.api),
+                contentType: Headers.jsonContentType,
+              ),
+            ),
           ),
           isSuccess: (r) => (r.statusCode ?? 500) < 400,
         );
@@ -270,6 +286,7 @@ class EmbyClient {
             auth: auth,
             retried: true,
             staleRetried: staleRetried,
+            idempotent: idempotent,
           );
         }
         if (r.statusCode == 401) throw const MediaServerException('登录已失效，请重新登录', statusCode: 401);
@@ -282,8 +299,18 @@ class EmbyClient {
         if (e.type == DioExceptionType.badResponse) break;
         // 连接池里的空闲连接可能刚好被服务器 / 反代关掉（请求发出去才发现）：GET 在同一条线路上用新连接重试一次，
         // 不然只有一条线路时会偶尔报「网络错误」
-        if (method == 'GET' && !staleRetried && e.error is HttpException) {
-          return _request(method, path, query: query, body: body, auth: auth, retried: retried, staleRetried: true);
+        // 播放上报重复发一次也没关系（服务器按最后一次记），同样重试
+        if ((method == 'GET' || idempotent) && !staleRetried && e.error is HttpException) {
+          return _request(
+            method,
+            path,
+            query: query,
+            body: body,
+            auth: auth,
+            retried: retried,
+            staleRetried: true,
+            idempotent: idempotent,
+          );
         }
         continue; // 连接失败 / 超时：换下一条线路
       }
@@ -611,10 +638,35 @@ class EmbyClient {
     String event = 'TimeUpdate',
   }) => _report('/Sessions/Playing/Progress', s, position, playSessionId, paused: paused, event: event);
 
-  Future<void> reportStopped(MediaSourceInfo s, Duration position, String? playSessionId) =>
+  /// 返回服务器有没有收到（没收到的停止上报由 PendingPlayReports 存下来，下次启动补发）
+  Future<bool> reportStopped(MediaSourceInfo s, Duration position, String? playSessionId) =>
       _report('/Sessions/Playing/Stopped', s, position, playSessionId);
 
-  Future<void> _report(
+  /// 还没发完的播放上报（应用内更新重启前先等它们发完，不然这次播放的进度可能没报上去）
+  static final _pendingReports = <Future<bool>>{};
+
+  /// 等还没发完的播放上报，最多等 [timeout]
+  static Future<void> flushReports({Duration timeout = const Duration(seconds: 5)}) async {
+    if (_pendingReports.isEmpty) return;
+    try {
+      await Future.wait(_pendingReports.toList()).timeout(timeout);
+    } catch (_) {}
+  }
+
+  Future<bool> _report(
+    String path,
+    MediaSourceInfo s,
+    Duration position,
+    String? playSessionId, {
+    bool paused = false,
+    String? event,
+  }) {
+    final f = _sendReport(path, s, position, playSessionId, paused: paused, event: event);
+    _pendingReports.add(f);
+    return f.whenComplete(() => _pendingReports.remove(f));
+  }
+
+  Future<bool> _sendReport(
     String path,
     MediaSourceInfo s,
     Duration position,
@@ -626,6 +678,7 @@ class EmbyClient {
       await _request(
         'POST',
         path,
+        idempotent: true,
         body: {
           'ItemId': s.itemId,
           'MediaSourceId': s.id,
@@ -637,8 +690,12 @@ class EmbyClient {
           'EventName': ?event,
         },
       );
+      // 开始 / 停止写进日志（进度上报每 10 秒一次，只记失败）：服务器上进度不对时能看出有没有报上去
+      if (!path.endsWith('/Progress')) debugPrint('report $path ok ${s.itemId} @${position.inSeconds}s');
+      return true;
     } catch (e) {
       debugPrint('report $path failed: $e');
+      return false;
     }
   }
 

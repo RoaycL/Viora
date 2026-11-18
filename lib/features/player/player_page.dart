@@ -13,6 +13,7 @@ import '../../app/input/intents.dart';
 import '../../app/platform_profile.dart';
 import '../../app/theme.dart';
 import '../../app/window_frame.dart';
+import '../../core/log/app_log.dart';
 import '../../data/aggregate/sources.dart';
 import '../../data/cache/account_scope.dart';
 import '../../data/config/app_config.dart';
@@ -20,6 +21,7 @@ import '../../data/config/config_store.dart';
 import '../../data/danmaku/danmaku_client.dart';
 import '../../data/danmaku/danmaku_models.dart';
 import '../../data/emby/emby_client.dart';
+import '../../data/history/pending_reports.dart';
 import '../../data/history/play_history.dart';
 import '../../data/index/index_sync.dart';
 import '../../data/index/media_index.dart';
@@ -71,11 +73,17 @@ class PlayerPage extends ConsumerStatefulWidget {
     this.startMs = 0,
     this.sourceId,
     this.triedSources = const [],
+    this.resume = false,
   });
 
   final String serverId;
   final String itemId;
   final int startMs;
+
+  /// 继续播放：起播前向服务器取这一集最新的进度，从那里开始（[startMs] 只在取不到时用）。
+  /// 卡片 / 详情页上的进度可能是缓存的旧数据，别的设备看到了更后面时，从旧位置播放、上报会把服务器进度覆盖回去。
+  /// 「从头播放」、切换资源时接着当前位置等明确指定了位置的不设
+  final bool resume;
   final String? sourceId;
 
   /// 自动换源时已经试过、打不开的版本（「服务器/版本 ID」），换到其他服务器时带过去，避免来回切
@@ -297,7 +305,7 @@ class _PlayerPageState extends ConsumerState<PlayerPage> with WidgetsBindingObse
     final next = _nextEpisode;
     if (next == null || !mounted) return;
     if (auto) _arrivingByAutoPlay = true;
-    _handoffTo('/play/${widget.serverId}/${next.id}?pos=0');
+    _handoffTo('/play/${widget.serverId}/${next.id}?pos=0&resume=1');
   }
 
   /// 连续自动播放 3 集没人操作：暂停，问还在不在看
@@ -381,8 +389,19 @@ class _PlayerPageState extends ConsumerState<PlayerPage> with WidgetsBindingObse
     if (mounted) setState(() {});
   }
 
+  /// 最后一次确定的播放位置：起播时是续播位置，播放中跟着内核走，拖动 / 快进后是目标位置。
+  /// 内核刚起播还没跳到续播位置、关闭 / 停下时会报 0：上报不能用这个 0
+  /// （用 0 上报会把服务器上这一集的进度清掉，继续观看里就没有了，连之前的记录也一起没了）
+  Duration _lastPosition = Duration.zero;
+
+  /// 上报给服务器的位置：内核报 0 时用 [_lastPosition]（真的拖回开头时 [_lastPosition] 也是 0）
+  Duration get _reportPosition => _state.position > Duration.zero ? _state.position : _lastPosition;
+
   void _onEngineState() {
     final s = _state;
+    if (s.position > Duration.zero && (s.duration <= Duration.zero || s.position <= s.duration)) {
+      _lastPosition = s.position;
+    }
     // 开始播放前内核报的位置可能还是 0（续播时还没跳到上次的位置），不能拿来判断片头
     if (_started || s.playing) _segments?.onPosition(s.position);
     if (!_nextPreloading &&
@@ -465,9 +484,27 @@ class _PlayerPageState extends ConsumerState<PlayerPage> with WidgetsBindingObse
     final engine = _engine;
     if (req == null || engine == null) return;
     final headers = {...req.headers}..remove('User-Agent');
+    _lastPosition = at;
     await engine.open(EngineMedia(url: req.url, headers: headers, userAgent: req.userAgent, start: at));
     if (PlatformProfile.isDesktop) await engine.setVolume(_muted ? 0 : _volume);
     await _applyDisplay(engine);
+  }
+
+  /// 起播位置。继续播放（[PlayerPage.resume]）时用服务器上这一集最新的进度：
+  /// 卡片上的进度可能是缓存的旧数据，别的设备看得更靠后时以服务器为准；已经看完的（服务器进度为 0）从头播。
+  /// 取不到最新数据（服务器慢、出错）时用卡片带来的位置，最多等 3 秒，不拖慢起播
+  Future<Duration> _resumeFrom(Future<MediaItem> fresh) async {
+    final fallback = Duration(milliseconds: widget.startMs);
+    if (!widget.resume) return fallback;
+    try {
+      final item = await fresh.timeout(const Duration(seconds: 3));
+      if (item.position != fallback) {
+        AppLog.add('[play] 续播位置以服务器为准：${formatClock(item.position)}（卡片上是 ${formatClock(fallback)}）');
+      }
+      return item.position;
+    } catch (_) {
+      return fallback;
+    }
   }
 
   // ───────────────────────── 音量（Windows） ─────────────────────────
@@ -533,7 +570,7 @@ class _PlayerPageState extends ConsumerState<PlayerPage> with WidgetsBindingObse
         _error = null;
       });
       await engineReady;
-      await _openCurrent(at ?? Duration(milliseconds: widget.startMs));
+      await _openCurrent(at ?? await _resumeFrom(itemFuture));
       _item = await itemFuture;
       if (mounted) setState(() {});
       unawaited(_beginSegments());
@@ -552,7 +589,7 @@ class _PlayerPageState extends ConsumerState<PlayerPage> with WidgetsBindingObse
   void _report({bool start = false, String event = 'TimeUpdate'}) {
     final client = _client, source = _source;
     if (client == null || source == null || _stopped) return;
-    final pos = _state.position;
+    final pos = _reportPosition;
     // 本机也记一份上次播放时间（部分服务器的继续观看不带 LastPlayedDate）。只在开始和停止时记：
     // 每次进度上报（10 秒一次）都记的话，安卓上每次都要把整个设置文件重写到闪存，低端盒子会卡一下
     if (start) PlayHistory.record(widget.serverId, widget.itemId, scope: accountScope(client.server));
@@ -563,20 +600,58 @@ class _PlayerPageState extends ConsumerState<PlayerPage> with WidgetsBindingObse
     }
   }
 
-  void _reportStopped() {
+  /// [completed]：播到了结尾（按片长上报，服务器据此标记为已看）
+  void _reportStopped({bool completed = false}) {
     if (_stopped) return;
     _stopped = true;
     final client = _client, source = _source;
     if (client != null && source != null && _started) {
+      // 位置在这里取好：后面是异步的，那时播放器可能已经关了，读到的是 0
+      final duration = _state.duration > Duration.zero ? _state.duration : (source.duration ?? Duration.zero);
+      final position = completed && duration > Duration.zero ? duration : _reportPosition;
+      AppLog.add(
+        '[play] 停止上报 ${widget.itemId} 位置 ${formatClock(position)} / ${formatClock(duration)}${completed ? '（播完）' : ''}',
+      );
       PlayHistory.record(widget.serverId, widget.itemId, scope: accountScope(client.server));
+      // 继续观看先按本机的进度显示（不等服务器刷新回来）；看到 90% 以上服务器会标为已看，这里也移出。
+      // 这里常在页面销毁过程中，不能马上改 provider：放到下一轮再写
+      final item = _item;
+      if (item != null && (item.kind == MediaKind.movie || item.kind == MediaKind.episode)) {
+        final watched =
+            completed || (duration > Duration.zero && position.inMilliseconds >= duration.inMilliseconds * 0.9);
+        final local = item.withPlayState(position: position, played: watched, lastPlayed: DateTime.now());
+        final container = _container;
+        Future(() {
+          try {
+            container?.read(localPlaysProvider.notifier).record(local);
+          } on StateError catch (_) {}
+        });
+      }
       // 页面销毁时不能再用 ref（Riverpod 会抛错并打断后续的关闭播放器），用提前保存的容器；
       // 等服务器记下进度后再刷新继续观看 / 详情
       final container = _container;
       final key = (serverId: widget.serverId, itemId: widget.itemId);
-      Future(() => client.reportStopped(source, _state.position, _playSessionId)).catchError((_) {}).whenComplete(() {
+      // 先在本机存一份，服务器收到后删掉：上报发完之前应用就被关掉（退出后马上关应用、更新）时，下次启动补发
+      final pending = PendingPlayReport(
+        serverId: widget.serverId,
+        account: accountScope(client.server),
+        itemId: widget.itemId,
+        sourceId: source.id,
+        position: position,
+        at: DateTime.now(),
+        playSessionId: _playSessionId,
+      );
+      final session = _playSessionId;
+      Future(() async {
+        await PendingPlayReports.add(pending);
+        if (await client.reportStopped(source, position, session)) await PendingPlayReports.done(pending);
+      }).catchError((Object _) {}).whenComplete(() {
         // 应用正在关闭（容器已销毁）时不再刷新
         try {
-          container?.read(mediaFeedRefreshProvider.notifier).refresh(MediaFeedKind.resume);
+          final refresh = container?.read(mediaFeedRefreshProvider.notifier);
+          refresh?.refresh(MediaFeedKind.resume);
+          // 播完的集会从继续观看移到观看记录：两边都刷新
+          refresh?.refresh(MediaFeedKind.recentlyPlayed);
           container?.invalidate(itemProvider(key));
         } on StateError catch (_) {}
       });
@@ -995,7 +1070,7 @@ class _PlayerPageState extends ConsumerState<PlayerPage> with WidgetsBindingObse
   }
 
   Future<void> _onCompleted() async {
-    _reportStopped();
+    _reportStopped(completed: true);
     final item = _item, client = _client;
     if (item == null || client == null || !mounted) return;
     // 剧集自动播放下一集（季末接着播下一季第一集）
@@ -1004,7 +1079,7 @@ class _PlayerPageState extends ConsumerState<PlayerPage> with WidgetsBindingObse
     if (next != null) {
       _arrivingByAutoPlay = true;
       _countdownTimer?.cancel();
-      _handoffTo('/play/${widget.serverId}/${next.id}?pos=0');
+      _handoffTo('/play/${widget.serverId}/${next.id}?pos=0&resume=1');
       return;
     }
     context.pop();
@@ -1112,7 +1187,10 @@ class _PlayerPageState extends ConsumerState<PlayerPage> with WidgetsBindingObse
     _seekTimer?.cancel();
     _seekTimer = Timer(const Duration(milliseconds: 800), () {
       final t = _pendingSeek;
-      if (t != null) _engine?.seek(t);
+      if (t != null) {
+        _lastPosition = t;
+        _engine?.seek(t);
+      }
       if (mounted) setState(() => _pendingSeek = null);
       _report();
     });
@@ -1223,7 +1301,7 @@ class _PlayerPageState extends ConsumerState<PlayerPage> with WidgetsBindingObse
         showToast('已经是第一集');
         return;
       }
-      _handoffTo('/play/${widget.serverId}/${prev.id}?pos=0');
+      _handoffTo('/play/${widget.serverId}/${prev.id}?pos=0&resume=1');
     } catch (e) {
       if (mounted) showToast('获取集列表失败');
     }
@@ -1232,6 +1310,7 @@ class _PlayerPageState extends ConsumerState<PlayerPage> with WidgetsBindingObse
   /// 进度条点击 / 拖动（Windows）
   void _seekTo(Duration to) {
     _seekTimer?.cancel();
+    _lastPosition = to;
     setState(() => _pendingSeek = null);
     _engine?.seek(to);
     _showOsd();
@@ -1434,7 +1513,7 @@ class _PlayerPageState extends ConsumerState<PlayerPage> with WidgetsBindingObse
       if (_item?.kind == MediaKind.episode) showToast('已经是最后一集');
       return;
     }
-    _handoffTo('/play/${widget.serverId}/${next.id}?pos=0');
+    _handoffTo('/play/${widget.serverId}/${next.id}?pos=0&resume=1');
   }
 
   void _cycleAudio() {
@@ -1852,7 +1931,7 @@ class _PlayerPageState extends ConsumerState<PlayerPage> with WidgetsBindingObse
       _armOsdTimer();
       return;
     }
-    _handoffTo('/play/${widget.serverId}/${e.id}?pos=${e.position.inMilliseconds}');
+    _handoffTo('/play/${widget.serverId}/${e.id}?pos=${e.position.inMilliseconds}&resume=1');
   }
 
   // ───────────────────────── 界面 ─────────────────────────

@@ -16,7 +16,9 @@ class MediaFeedResult {
   List<MediaItem> get items => [for (final s in snapshot.sources) ...?s.value];
   int get failures => snapshot.failures;
   bool get refreshing => snapshot.refreshing;
-  String get note => failures > 0 ? '$failures 台服务器暂未刷新' : (refreshing ? '更新中…' : '');
+
+  /// 标题后面的状态：正在向服务器取最新的数据时「同步中」，同步完了（包括个别服务器暂时连不上）什么都不显示
+  String get note => refreshing ? '同步中' : '';
 }
 
 Future<MediaFeedResult> loadMediaFeed(

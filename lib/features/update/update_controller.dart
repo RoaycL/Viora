@@ -10,6 +10,7 @@ import 'package:path_provider/path_provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../../data/config/config_store.dart';
+import '../../data/emby/emby_client.dart';
 import '../../data/net/request_composer.dart';
 import 'app_version.dart';
 import 'update_source.dart';
@@ -20,9 +21,17 @@ const defaultUpdateRepo = 'Viora';
 
 /// 更新设置（持久化在 shared_preferences）。
 class UpdateSettings {
-  const UpdateSettings({this.autoCheck = true, this.manifestUrl, this.useProxy = false});
+  const UpdateSettings({
+    this.autoCheck = true,
+    this.manifestUrl,
+    this.useProxy = false,
+    this.includePrerelease = false,
+  });
 
   final bool autoCheck;
+
+  /// 检查测试版：打开时测试版和正式版都检查（取最新的），关闭时只检查正式版
+  final bool includePrerelease;
 
   /// 非空时使用自定义清单地址，否则使用 GitHub Releases
   final String? manifestUrl;
@@ -34,13 +43,20 @@ class UpdateSettings {
   static const _kAutoCheck = 'update.autoCheck';
   static const _kManifest = 'update.manifestUrl';
   static const _kProxy = 'update.useProxy';
+  static const _kPrerelease = 'update.includePrerelease';
 
-  UpdateSettings copyWith({bool? autoCheck, String? manifestUrl, bool clearManifest = false, bool? useProxy}) =>
-      UpdateSettings(
-        autoCheck: autoCheck ?? this.autoCheck,
-        manifestUrl: clearManifest ? null : (manifestUrl ?? this.manifestUrl),
-        useProxy: useProxy ?? this.useProxy,
-      );
+  UpdateSettings copyWith({
+    bool? autoCheck,
+    String? manifestUrl,
+    bool clearManifest = false,
+    bool? useProxy,
+    bool? includePrerelease,
+  }) => UpdateSettings(
+    autoCheck: autoCheck ?? this.autoCheck,
+    manifestUrl: clearManifest ? null : (manifestUrl ?? this.manifestUrl),
+    useProxy: useProxy ?? this.useProxy,
+    includePrerelease: includePrerelease ?? this.includePrerelease,
+  );
 
   static Future<UpdateSettings> load() async {
     final prefs = await SharedPreferences.getInstance();
@@ -49,6 +65,7 @@ class UpdateSettings {
       autoCheck: prefs.getBool(_kAutoCheck) ?? true,
       manifestUrl: url == null || url.isEmpty ? null : url,
       useProxy: prefs.getBool(_kProxy) ?? false,
+      includePrerelease: prefs.getBool(_kPrerelease) ?? false,
     );
   }
 
@@ -57,6 +74,7 @@ class UpdateSettings {
     await prefs.setBool(_kAutoCheck, autoCheck);
     await prefs.setString(_kManifest, manifestUrl ?? '');
     await prefs.setBool(_kProxy, useProxy);
+    await prefs.setBool(_kPrerelease, includePrerelease);
   }
 }
 
@@ -135,8 +153,17 @@ class UpdateController extends Notifier<UpdateState> {
     final ua = 'Viora/${p.version} (${Platform.operatingSystem})';
     final rewrite = (viaProxy ?? _viaProxy) ? _proxyRewrite : null;
     final manifest = settings.manifestUrl;
-    if (manifest != null) return ManifestSource(Uri.parse(manifest), userAgent: ua, rewrite: rewrite);
-    return GitHubReleasesSource(defaultUpdateOwner, defaultUpdateRepo, userAgent: ua, rewrite: rewrite);
+    final beta = settings.includePrerelease;
+    if (manifest != null) {
+      return ManifestSource(Uri.parse(manifest), userAgent: ua, rewrite: rewrite, includePrerelease: beta);
+    }
+    return GitHubReleasesSource(
+      defaultUpdateOwner,
+      defaultUpdateRepo,
+      userAgent: ua,
+      rewrite: rewrite,
+      includePrerelease: beta,
+    );
   }
 
   /// 项目主页
@@ -255,6 +282,8 @@ class UpdateController extends Notifier<UpdateState> {
   }
 
   Future<void> _install(UpdateInfo info, File file) async {
+    // 刚看完视频就更新：先等播放进度报给服务器（安装会结束应用，没发完的上报就丢了）
+    await EmbyClient.flushReports();
     if (Platform.isAndroid) {
       final result = await _channel.invokeMethod<String>('installApk', {'path': file.path});
       state = UpdateInstalling(info, needsPermission: result == 'needs_permission');
