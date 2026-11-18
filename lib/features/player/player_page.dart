@@ -7,6 +7,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
+import '../../app/desktop_prefs.dart';
 import '../../app/desktop_tray.dart';
 import '../../app/input/back_handler.dart';
 import '../../app/input/intents.dart';
@@ -136,6 +137,13 @@ class _PlayerPageState extends ConsumerState<PlayerPage> with WidgetsBindingObse
   bool _failingOver = false;
 
   bool _osd = true;
+
+  /// Windows：「跳过片头」按钮出现 3 秒后收起（控制层显示时再出现），不一直挡着画面
+  bool _skipFaded = false;
+  Timer? _skipFadeTimer;
+  static const skipButtonSeconds = 3;
+
+  bool get _skipVisible => _skipPrompt != null && (PlatformProfile.isTv || !_skipFaded || _osd);
   bool _info = false;
   Timer? _osdTimer;
   Timer? _progressTimer;
@@ -226,6 +234,7 @@ class _PlayerPageState extends ConsumerState<PlayerPage> with WidgetsBindingObse
   /// 鼠标停在控制栏上（Windows）
   bool _hoverControls = false;
   final _playNode = FocusNode(debugLabel: 'osd-play');
+  final _topNode = FocusNode(debugLabel: 'osd-top');
 
   /// 累加快进 / 快退（连续按键 0.8 秒后才真正 seek）
   Duration? _pendingSeek;
@@ -250,12 +259,25 @@ class _PlayerPageState extends ConsumerState<PlayerPage> with WidgetsBindingObse
       IndexSyncGate.hold();
     }
     WidgetsBinding.instance.addObserver(this);
-    _autoArrived; // 读取「是不是自动连播过来的」
+    _autoArrived;
+    // Windows「开始播放时全屏」：退出播放后恢复（连播下一集、换服务器时保持全屏）
+    if (isDesktopWindow && DesktopPrefs.instance.fullScreenOnPlay.value && !MiniPlayerWindow.active.value) {
+      final enter = !windowFullScreen.value;
+      _autoFullScreenPending = enter || _autoFullScreenCarried;
+      _autoFullScreenCarried = false;
+      if (enter) unawaited(toggleFullScreen());
+    } // 读取「是不是自动连播过来的」
     // Windows 关闭到托盘时暂停（窗口看不见了，不在后台继续放）
     DesktopTray.instance.hiddenToTray.addListener(_onHiddenToTray);
   }
 
   bool _holdsIndexSync = false;
+
+  /// 这次播放是不是自动进的全屏（退出播放时恢复窗口）
+  bool _autoFullScreenPending = false;
+
+  /// 连播 / 换服务器到下一个播放页：全屏是上一个播放页自动进的，下一个退出时也要恢复
+  static bool _autoFullScreenCarried = false;
 
   /// 这一集是自动连播过来的
   late final bool _autoArrived = () {
@@ -273,13 +295,20 @@ class _PlayerPageState extends ConsumerState<PlayerPage> with WidgetsBindingObse
   int? _nextCountdown;
   bool _autoNextPending = false;
   Timer? _countdownTimer;
-  static const nextCountdownSeconds = 5;
+
+  /// 片尾自动下一集：先显示 3 秒「下一集」按钮，再倒计时 3 秒，然后播放下一集
+  static const nextButtonSeconds = 3;
+  static const nextCountdownSeconds = 3;
 
   /// 片尾自动模式：先倒计时，OK / 回车立即播放，返回取消（docs/07 §3.3）
   void _startNextCountdown() {
     if (_nextEpisode == null || _nextCountdown != null) return;
-    setState(() => _nextCountdown = nextCountdownSeconds);
+    setState(() => _nextCountdown = nextButtonSeconds + nextCountdownSeconds);
     _countdownTimer?.cancel();
+    _skipFadeTimer?.cancel();
+    if (_autoFullScreenPending && windowFullScreen.value) unawaited(toggleFullScreen());
+    // 销毁过程中不能让别的组件重建：这一帧结束后再恢复标题栏
+    scheduleMicrotask(() => windowImmersive.value = false);
     _countdownTimer = Timer.periodic(const Duration(seconds: 1), (t) {
       if (!mounted) return t.cancel();
       final left = (_nextCountdown ?? 0) - 1;
@@ -317,6 +346,7 @@ class _PlayerPageState extends ConsumerState<PlayerPage> with WidgetsBindingObse
     await _menu(
       () => showContextMenu(
         context,
+        anchored: true,
         title: '还在观看吗？已经连续自动播放了 $_autoPlayStreak 集',
         actions: [
           MenuAction('继续观看', Icons.play_arrow_rounded, () {
@@ -404,9 +434,12 @@ class _PlayerPageState extends ConsumerState<PlayerPage> with WidgetsBindingObse
     }
     // 开始播放前内核报的位置可能还是 0（续播时还没跳到上次的位置），不能拿来判断片头
     if (_started || s.playing) _segments?.onPosition(s.position);
+    // 预加载下一集：看到 85%，或离片尾开始不到 1 分钟（片尾比较长的剧 85% 时可能已经在片尾里）
+    final credits = _segmentList.where((x) => x.type == SegmentType.credits).firstOrNull;
     if (!_nextPreloading &&
         s.duration > Duration.zero &&
-        s.position.inMilliseconds > s.duration.inMilliseconds * 0.85) {
+        (s.position.inMilliseconds > s.duration.inMilliseconds * 0.85 ||
+            (credits != null && s.position >= credits.start - const Duration(minutes: 1)))) {
       _preloadNext();
     }
     if (s.playing != _wasPlaying) {
@@ -733,7 +766,16 @@ class _PlayerPageState extends ConsumerState<PlayerPage> with WidgetsBindingObse
             },
             onPrompt: (action) {
               if (!mounted || _samePrompt(action, _skipPrompt)) return;
-              setState(() => _skipPrompt = action);
+              setState(() {
+                _skipPrompt = action;
+                _skipFaded = false;
+              });
+              _skipFadeTimer?.cancel();
+              if (action != null && PlatformProfile.isDesktop) {
+                _skipFadeTimer = Timer(const Duration(seconds: skipButtonSeconds), () {
+                  if (mounted) setState(() => _skipFaded = true);
+                });
+              }
             },
             onResolution: (r) {
               // 写进日志：没跳过时能看出是没查到数据、来源出错，还是查到了但模式是「显示按钮」
@@ -749,7 +791,7 @@ class _PlayerPageState extends ConsumerState<PlayerPage> with WidgetsBindingObse
               if (action.kind == SegmentSkipActionKind.nextEpisode) {
                 _autoNextPending = true;
               } else {
-                showToast(_autoSkipText(action));
+                showToast(_autoSkipText(action), duration: const Duration(seconds: 4));
               }
             },
             onActionError: (e) => debugPrint('segments: $e'),
@@ -838,7 +880,7 @@ class _PlayerPageState extends ConsumerState<PlayerPage> with WidgetsBindingObse
   Future<void> _openDanmakuMenu() async {
     if (_danmakuReady() == null) return;
     // 每次显示时重新生成：二级菜单里改了样式，回到这一级显示新的值
-    await showContextMenu(context, title: _danmakuTitle, actionsBuilder: _danmakuItems);
+    await showContextMenu(context, anchored: true, title: _danmakuTitle, actionsBuilder: _danmakuItems);
     if (mounted) _focus.requestFocus();
   }
 
@@ -973,6 +1015,7 @@ class _PlayerPageState extends ConsumerState<PlayerPage> with WidgetsBindingObse
     }
     await showContextMenu(
       context,
+      anchored: true,
       title: '选择作品 · ${animes.length} 个结果',
       actions: [
         for (final a in animes.take(40))
@@ -1020,6 +1063,7 @@ class _PlayerPageState extends ConsumerState<PlayerPage> with WidgetsBindingObse
     if (eps.length == 1) return choose(0);
     await showContextMenu(
       context,
+      anchored: true,
       title: '选择集 · ${anime.title}',
       actions: [
         for (var i = 0; i < eps.length; i++)
@@ -1043,9 +1087,9 @@ class _PlayerPageState extends ConsumerState<PlayerPage> with WidgetsBindingObse
 
   static String _autoSkipText(SegmentSkipAction a) => switch (a.segment.type) {
     _ when a.kind == SegmentSkipActionKind.nextEpisode => '片尾：已自动播放下一集',
-    SegmentType.intro => '已自动跳过片头',
-    SegmentType.recap => '已自动跳过前情提要',
-    SegmentType.credits => '已自动跳过片尾',
+    SegmentType.intro => '已为您跳过片头，如需调整请到「设置 → 片头片尾」',
+    SegmentType.recap => '已为您跳过前情提要，如需调整请到「设置 → 片头片尾」',
+    SegmentType.credits => '已为您跳过片尾，如需调整请到「设置 → 片头片尾」',
     SegmentType.preview => '已自动跳过预告',
   };
 
@@ -1056,6 +1100,11 @@ class _PlayerPageState extends ConsumerState<PlayerPage> with WidgetsBindingObse
 
   void _handoffTo(String route) {
     _handoff = true;
+    // 自动进的全屏交给下一个播放页（新页面先建好、这一页后销毁，所以在这里交接）
+    if (_autoFullScreenPending) {
+      _autoFullScreenCarried = true;
+      _autoFullScreenPending = false;
+    }
     context.pushReplacement(route);
   }
 
@@ -1129,6 +1178,7 @@ class _PlayerPageState extends ConsumerState<PlayerPage> with WidgetsBindingObse
     _focus.removeListener(_keepFocus);
     _focus.dispose();
     _playNode.dispose();
+    _topNode.dispose();
     // 退出播放时恢复窗口；连播下一集 / 换服务器时保持小窗
     if (!handoff) MiniPlayerWindow.exit();
     super.dispose();
@@ -1161,17 +1211,21 @@ class _PlayerPageState extends ConsumerState<PlayerPage> with WidgetsBindingObse
   }
 
   /// 电视按 ↓：显示控制层，焦点落在播放 / 暂停按钮上
-  void _focusControls() {
+  /// 电视按 ↑：显示控制层，焦点落在右上角第一个按钮（弹幕）上
+  void _focusTop() => _focusControls(node: _topNode);
+
+  void _focusControls({FocusNode? node}) {
+    final target = node ?? _playNode;
     final visible = _osd;
     _showOsd();
     // 控制层已经显示：直接移焦点。还没显示：等它画出来（按钮不再被排除在焦点外）再移。
     // 只加帧后回调不会触发新的一帧——暂停时画面不变，焦点就一直移不过去，所以要确保有下一帧
     if (visible) {
-      _playNode.requestFocus();
+      target.requestFocus();
       return;
     }
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (mounted) _playNode.requestFocus();
+      if (mounted) target.requestFocus();
     });
     WidgetsBinding.instance.ensureVisualUpdate();
   }
@@ -1457,7 +1511,7 @@ class _PlayerPageState extends ConsumerState<PlayerPage> with WidgetsBindingObse
       _setVolume(_volume - 0.05);
     } else if (repeat) {
       return KeyEventResult.handled;
-    } else if (confirmKeys.contains(key) && _skipPrompt != null) {
+    } else if (confirmKeys.contains(key) && _skipVisible) {
       // 出现"跳过片头 / 下一集"按钮时，OK 键执行跳过（空格仍是暂停）
       _activateSkip();
     } else if (confirmKeys.contains(key) ||
@@ -1477,7 +1531,8 @@ class _PlayerPageState extends ConsumerState<PlayerPage> with WidgetsBindingObse
     } else if (key == LogicalKeyboardKey.keyM && PlatformProfile.isDesktop) {
       _toggleMute();
     } else if (key == LogicalKeyboardKey.arrowUp) {
-      _showOsd();
+      // 电视：↑ 直接到右上角的按钮（弹幕、音轨、字幕、更多）
+      _focusTop();
     } else if (key == LogicalKeyboardKey.arrowDown) {
       // 电视：焦点移到底部按钮行
       _focusControls();
@@ -1561,7 +1616,7 @@ class _PlayerPageState extends ConsumerState<PlayerPage> with WidgetsBindingObse
       showToast('没有可选的音轨');
       return Future.value();
     }
-    return showContextMenu(context, title: '音轨', actionsBuilder: _audioItems);
+    return showContextMenu(context, anchored: true, title: '音轨', actionsBuilder: _audioItems);
   });
 
   List<MenuAction> _audioItems() {
@@ -1577,7 +1632,7 @@ class _PlayerPageState extends ConsumerState<PlayerPage> with WidgetsBindingObse
   }
 
   Future<void> _openSubtitleMenu() =>
-      _menu(() => showContextMenu(context, title: '字幕', actionsBuilder: _subtitleItems));
+      _menu(() => showContextMenu(context, anchored: true, title: '字幕', actionsBuilder: _subtitleItems));
 
   List<MenuAction> _subtitleItems() {
     final s = _state;
@@ -1658,6 +1713,7 @@ class _PlayerPageState extends ConsumerState<PlayerPage> with WidgetsBindingObse
     await _menu(
       () => showContextMenu(
         context,
+        anchored: true,
         title: '$label字幕 · ${list.length} 个结果',
         actions: [
           for (final r in list.take(40))
@@ -1826,7 +1882,8 @@ class _PlayerPageState extends ConsumerState<PlayerPage> with WidgetsBindingObse
     }
   }
 
-  Future<void> _openRateMenu() => _menu(() => showContextMenu(context, title: '倍速', actionsBuilder: _rateItems));
+  Future<void> _openRateMenu() =>
+      _menu(() => showContextMenu(context, anchored: true, title: '倍速', actionsBuilder: _rateItems));
 
   List<MenuAction> _rateItems() {
     final rate = _state.rate;
@@ -1838,7 +1895,7 @@ class _PlayerPageState extends ConsumerState<PlayerPage> with WidgetsBindingObse
 
   /// 「更多」：完整的播放设置菜单
   Future<void> _openMenu() => _menu(() {
-    return showContextMenu(context, title: '播放设置', actionsBuilder: _moreItems);
+    return showContextMenu(context, anchored: true, title: '播放设置', actionsBuilder: _moreItems);
   });
 
   List<MenuAction> _moreItems() {
@@ -1955,6 +2012,13 @@ class _PlayerPageState extends ConsumerState<PlayerPage> with WidgetsBindingObse
   Widget build(BuildContext context) {
     final engine = _engine;
     final isEpisode = _item?.kind == MediaKind.episode;
+    // Windows 沉浸：控制层隐藏时标题栏的窗口按钮也隐藏（不能在 build 里改，画完这一帧再改）
+    final immersive = PlatformProfile.isDesktop && !_osd && _error == null;
+    if (windowImmersive.value != immersive) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) windowImmersive.value = immersive;
+      });
+    }
     // 面板在这里建好（页面状态变化时才重建），下面随进度每秒重建 4 次的控制层只是把同一个对象传下去：
     // 不然面板里几十张集卡片每秒跟着重建 4 次，电视上选集 / 选资源时卡得动不了
     final Widget? panelChild = switch (_panel) {
@@ -2099,6 +2163,7 @@ class _PlayerPageState extends ConsumerState<PlayerPage> with WidgetsBindingObse
                                           panel: _panel,
                                           panelChild: panelChild,
                                           playNode: _playNode,
+                                          topNode: _topNode,
                                           onBack: () => context.pop(),
                                           onPlayPause: _togglePlay,
                                           onNext: _playNext,
@@ -2129,7 +2194,10 @@ class _PlayerPageState extends ConsumerState<PlayerPage> with WidgetsBindingObse
                                   bottom: _osd ? (_panel == OsdPanel.none ? 250 : 420) : 110,
                                   child: AnimatedSwitcher(
                                     duration: VMotion.focus,
-                                    child: _nextCountdown != null
+                                    child: _nextCountdown != null && _nextCountdown! > nextCountdownSeconds
+                                        // 先是「下一集」按钮（OK / 回车 / 点击立即播放）
+                                        ? _NextButton(key: const ValueKey('next-button'), onPressed: _playNextNow)
+                                        : _nextCountdown != null
                                         ? _NextCountdownCard(
                                             key: const ValueKey('next-countdown'),
                                             seconds: _nextCountdown!,
@@ -2138,7 +2206,7 @@ class _PlayerPageState extends ConsumerState<PlayerPage> with WidgetsBindingObse
                                             onPlay: _playNextNow,
                                             onCancel: _cancelNextCountdown,
                                           )
-                                        : _skipPrompt == null
+                                        : !_skipVisible
                                         ? const SizedBox.shrink()
                                         : _SkipButton(
                                             key: ValueKey('${_skipPrompt!.segment.type}${_skipPrompt!.segment.start}'),
@@ -2345,6 +2413,44 @@ class _ErrorPanel extends StatelessWidget {
 }
 
 /// 跳过片头 / 前情提要 / 片尾、下一集（电视上按 OK，电脑上点击或按回车）
+/// 片尾自动下一集的第一步：白色「下一集」按钮（和「跳过片头」一样），3 秒后变成倒计时卡片
+class _NextButton extends StatelessWidget {
+  const _NextButton({super.key, required this.onPressed});
+
+  final VoidCallback onPressed;
+
+  @override
+  Widget build(BuildContext context) {
+    return ExcludeFocus(
+      child: GestureDetector(
+        onTap: onPressed,
+        child: MouseRegion(
+          cursor: SystemMouseCursors.click,
+          child: Container(
+            padding: const EdgeInsets.fromLTRB(30, 16, 24, 16),
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(999),
+              boxShadow: const [BoxShadow(color: Color(0x66000000), blurRadius: 30, offset: Offset(0, 8))],
+            ),
+            child: const Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(
+                  '下一集',
+                  style: TextStyle(fontSize: 26, fontWeight: FontWeight.w700, color: Color(0xFF0B0C10)),
+                ),
+                SizedBox(width: 8),
+                Icon(Icons.skip_next_rounded, size: 30, color: Color(0xFF0B0C10)),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 /// 片尾自动下一集的倒计时卡片：下一集的缩略图、名称，倒计时圆环；OK / 点击立即播放，返回取消
 class _NextCountdownCard extends StatelessWidget {
   const _NextCountdownCard({

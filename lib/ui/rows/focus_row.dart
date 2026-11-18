@@ -126,11 +126,61 @@ class _FocusRowState extends State<FocusRow> implements RevealableFocusRow {
       initialScrollOffset: _remembered * (widget.itemExtent + widget.gap),
       keepScrollOffset: widget.itemKeys == null,
     );
+    if (_reveal) {
+      _scroll.addListener(_revealVisible);
+      WidgetsBinding.instance.addPostFrameCallback((_) => _revealVisible(initial: true));
+    }
+  }
+
+  // ───────── 浏览动画：横向滚动时，新进入画面的卡片从下往上依次浮现 ─────────
+  // Windows 和关掉低配模式的电视做；电视低配模式不做
+
+  late final bool _reveal = !PerfMode.lite;
+
+  /// 第一次布局前先按屏幕宽度估计哪些卡片在画面里（它们直接显示，不闪一下），布局后再按实际宽度校正
+  void _estimateRevealed() {
+    if (!_reveal || _revealed.value >= 0 || widget.itemCount == 0) return;
+    final stride = widget.itemExtent + widget.gap;
+    final offset = _remembered * stride;
+    _revealed.value = ((offset + MediaQuery.sizeOf(context).width - widget.leading) / stride).floor().clamp(
+      0,
+      widget.itemCount - 1,
+    );
+  }
+
+  /// 已经出现过的最后一张卡片（之后的卡片进入画面时播放浮现动画）；-1 = 还没布局
+  final _revealed = ValueNotifier(-1);
+
+  /// 每张卡片开始浮现的时间（依次错开）
+  final _revealAt = <int, Duration>{};
+  final _revealClock = Stopwatch()..start();
+
+  static const _revealStagger = Duration(milliseconds: 55);
+
+  void _revealVisible({bool initial = false}) {
+    if (!mounted || !_scroll.hasClients || !_scroll.position.hasViewportDimension) return;
+    final p = _scroll.position;
+    final last = ((p.pixels + p.viewportDimension - widget.leading) / (widget.itemExtent + widget.gap)).floor().clamp(
+      -1,
+      widget.itemCount - 1,
+    );
+    // 第一次显示（页面打开）时屏幕上的卡片直接显示，不做动画
+    if (initial || _revealed.value < 0 || VMotion.reduced(context)) {
+      if (last > _revealed.value) _revealed.value = last;
+      return;
+    }
+    if (last <= _revealed.value) return;
+    final now = _revealClock.elapsed;
+    for (var i = _revealed.value + 1, k = 0; i <= last; i++, k++) {
+      _revealAt[i] = now + _revealStagger * k;
+    }
+    _revealed.value = last;
   }
 
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
+    _estimateRevealed();
     final controller = RowFocusScope.of(context);
     if (!identical(controller, _controller)) {
       _controller?.unregister(widget.rowIndex, this);
@@ -141,6 +191,8 @@ class _FocusRowState extends State<FocusRow> implements RevealableFocusRow {
   @override
   void didUpdateWidget(FocusRow oldWidget) {
     super.didUpdateWidget(oldWidget);
+    // 数据后到（卡片数从 0 变成 N）：同样先估计哪些卡片在画面里
+    if (oldWidget.itemCount == 0) _estimateRevealed();
     if (oldWidget.rowIndex != widget.rowIndex) {
       _controller?.unregister(oldWidget.rowIndex, this);
       _controller?.register(widget.rowIndex, this);
@@ -177,7 +229,9 @@ class _FocusRowState extends State<FocusRow> implements RevealableFocusRow {
     for (final node in _nodes.values) {
       node.dispose();
     }
+    _scroll.removeListener(_revealVisible);
     _scroll.dispose();
+    _revealed.dispose();
     super.dispose();
   }
 
@@ -269,7 +323,15 @@ class _FocusRowState extends State<FocusRow> implements RevealableFocusRow {
                 itemBuilder: (context, index) => SizedBox(
                   key: widget.itemKeys == null ? null : ValueKey(widget.itemKeys![index]),
                   width: widget.itemExtent,
-                  child: widget.itemBuilder(context, index, nodeAt(index)),
+                  child: _reveal
+                      ? _RiseIn(
+                          index: index,
+                          revealed: _revealed,
+                          startAt: () => _revealAt[index],
+                          clock: _revealClock,
+                          child: widget.itemBuilder(context, index, nodeAt(index)),
+                        )
+                      : widget.itemBuilder(context, index, nodeAt(index)),
                 ),
               ),
             ),
@@ -290,4 +352,88 @@ class _LeftEdgeClipper extends CustomClipper<Rect> {
 
   @override
   bool shouldReclip(_LeftEdgeClipper oldClipper) => oldClipper.left != left;
+}
+
+/// Windows 浏览动画：卡片还没进入画面时隐藏，进入画面时从下往上浮现（依次错开）。
+/// 打开页面时屏幕上已有的卡片、系统减少动画时直接显示
+class _RiseIn extends StatefulWidget {
+  const _RiseIn({
+    required this.index,
+    required this.revealed,
+    required this.startAt,
+    required this.clock,
+    required this.child,
+  });
+
+  final int index;
+  final ValueListenable<int> revealed;
+  final Duration? Function() startAt;
+  final Stopwatch clock;
+  final Widget child;
+
+  @override
+  State<_RiseIn> createState() => _RiseInState();
+}
+
+class _RiseInState extends State<_RiseIn> with SingleTickerProviderStateMixin {
+  late final _c = AnimationController(vsync: this, duration: const Duration(milliseconds: 420));
+  late final _curve = CurvedAnimation(parent: _c, curve: Curves.easeOutCubic);
+
+  @override
+  void initState() {
+    super.initState();
+    if (widget.revealed.value < 0) {
+      // 还没布局：等第一次布局决定
+      widget.revealed.addListener(_onReveal);
+    } else if (widget.index <= widget.revealed.value) {
+      _start();
+    } else {
+      widget.revealed.addListener(_onReveal);
+    }
+  }
+
+  void _onReveal() {
+    if (widget.index > widget.revealed.value) return;
+    widget.revealed.removeListener(_onReveal);
+    _start();
+  }
+
+  void _start() {
+    final at = widget.startAt();
+    if (at == null) {
+      _c.value = 1; // 打开页面时就在画面里：直接显示
+      return;
+    }
+    final wait = at - widget.clock.elapsed;
+    if (wait <= Duration.zero) {
+      _c.forward();
+    } else {
+      Future<void>.delayed(wait, () {
+        if (mounted) _c.forward();
+      });
+    }
+  }
+
+  @override
+  void dispose() {
+    widget.revealed.removeListener(_onReveal);
+    _c.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AnimatedBuilder(
+      animation: _curve,
+      child: widget.child,
+      // 结构始终不变（动画结束后也包着 Opacity / Transform）：换结构会让卡片重建、丢掉焦点和正在进行的点击
+      builder: (context, child) {
+        final t = _curve.value;
+        return Opacity(
+          opacity: t,
+          child: Transform.translate(offset: Offset(0, (1 - t) * 36), child: child),
+        );
+      },
+    );
+  }
 }

@@ -1,6 +1,7 @@
 import 'dart:io';
 
 import 'package:flutter/foundation.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 /// 运行平台的操作方式（docs/07-input-control.md §0）。
 ///
@@ -20,4 +21,35 @@ enum PlatformProfile {
 
   static bool get isTv => current == tv;
   static bool get isDesktop => current == desktop;
+}
+
+/// 电视「流畅优先」（设置 → 通用与关于，默认开，只存在本机）。
+///
+/// 开着时关掉弱 GPU 吃不消的视觉效果：毛玻璃实时模糊、骨架屏呼吸、弹幕每秒 60 帧、卡片浮现动画、
+/// 光晕模糊。关掉后电视和 Windows 一样显示完整效果（适合性能好的电视盒子）。
+/// 图片解码尺寸、缓存大小、并发数、播放缓冲这些和内存、稳定性有关的限制不受它影响，电视上始终保留。
+abstract final class PerfMode {
+  static const _key = 'viora.tv.liteMode';
+
+  /// 设置值（Windows 上不起作用）
+  static final liteSetting = ValueNotifier(true);
+
+  /// 现在是不是低配：电视且开着低配模式
+  static bool get lite => PlatformProfile.isTv && liteSetting.value;
+
+  static Future<void> load() async {
+    try {
+      liteSetting.value = (await SharedPreferences.getInstance()).getBool(_key) ?? true;
+    } catch (_) {}
+  }
+
+  static Future<void> set(bool value) async {
+    liteSetting.value = value;
+    try {
+      await (await SharedPreferences.getInstance()).setBool(_key, value);
+    } catch (_) {}
+  }
+
+  @visibleForTesting
+  static set debugLite(bool v) => liteSetting.value = v;
 }

@@ -19,9 +19,10 @@ void main() {
 
   test('default skip policies and optional-key providers follow the specification', () {
     final settings = SegmentSettings.defaults();
-    expect(settings.intro, SegmentSkipMode.button);
+    // 片头、片尾默认自动跳过；前情提要默认显示按钮
+    expect(settings.intro, SegmentSkipMode.auto);
     expect(settings.recap, SegmentSkipMode.button);
-    expect(settings.credits, SegmentSkipMode.button);
+    expect(settings.credits, SegmentSkipMode.auto);
     expect(settings.firstEpisodeException, isTrue);
     expect(settings.providers.map((p) => p.id), ['theintrodb', 'introdb', 'publicmetadb']);
     expect(settings.providers.last.enabled, isFalse);
@@ -74,7 +75,7 @@ void main() {
     SharedPreferences.setMockInitialValues({'segments.settings.v1': '[1,2]'});
     FlutterSecureStorage.setMockInitialValues({'segments.key.introdb': 'preserved'});
     final loaded = await SegmentSettingsStore().load();
-    expect(loaded.intro, SegmentSkipMode.button);
+    expect(loaded.intro, SegmentSkipMode.auto);
     expect(loaded.providers[1].apiKey, 'preserved');
   });
 
@@ -125,6 +126,18 @@ void main() {
       ],
     });
     expect(proxied.providers.firstWhere((p) => p.id == 'theintrodb').baseUrl, 'https://my-proxy.example/theintrodb/v3');
+  });
+
+  test('旧版本保存的「显示按钮」（当时的默认值）升级为自动跳过，只改一次；用户之后再选的保留', () {
+    final old = SegmentSettings.fromJson({'intro': 'button', 'recap': 'button', 'credits': 'button'});
+    expect(old.intro, SegmentSkipMode.auto);
+    expect(old.credits, SegmentSkipMode.auto);
+    expect(old.recap, SegmentSkipMode.button);
+    final off = SegmentSettings.fromJson({'intro': 'off', 'credits': 'off'});
+    expect(off.intro, SegmentSkipMode.off, reason: '主动关掉的不改');
+    // 升级后用户又改回「显示按钮」：保存时带上版本号，下次读不再改
+    final again = SegmentSettings.fromJson(old.copyWith(intro: SegmentSkipMode.button).toJson());
+    expect(again.intro, SegmentSkipMode.button);
   });
 }
 

@@ -4,10 +4,23 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../app/theme.dart';
+import '../../data/config/app_config.dart';
 import '../../data/config/config_store.dart';
 import '../glass/glass.dart';
 
+/// 服务器在线状态：最近一次测速有线路可达即算在线。全部在线绿、部分在线橙、都不在线红
+({int online, int total, Color color}) serverStatusOf(List<ServerConfig> servers) {
+  final online = servers.where((s) => s.lines.any((l) => l.latencyMs != null)).length;
+  final color = online == servers.length
+      ? VColors.ok
+      : online == 0
+      ? VColors.bad
+      : VColors.warn;
+  return (online: online, total: servers.length, color: color);
+}
+
 /// 右上角：服务器在线状态（最近一次测速有线路可达即算在线）+ 时钟。
+/// 紧凑样式（状态点 + 时间）：电视放在顶部标签栏右侧，Windows 放在页面右上角（[TopRightBar]）
 class StatusBar extends ConsumerStatefulWidget {
   const StatusBar({super.key, this.compact = false});
 

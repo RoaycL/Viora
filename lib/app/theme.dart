@@ -40,7 +40,11 @@ abstract final class VSpace {
   static double get contentLeft => PlatformProfile.isTv ? safeH : 176.0;
 
   /// 页面标题的上边距。电视顶部有标签栏（[topBarBottom] 以上），页面从它下面开始
-  static double get pageTop => PlatformProfile.isTv ? topBarBottom + 36 : safeV;
+  /// 页面内容的顶端：电视在顶部标签栏下面；Windows 留出右上角搜索、服务器状态那一条
+  static double get pageTop => PlatformProfile.isTv ? topBarBottom + 36 : safeV + desktopTopBar;
+
+  /// Windows 页面顶部给右上角（服务器状态、时间、搜索）留的高度
+  static const desktopTopBar = 76.0;
 
   /// 电视顶部标签栏底边的位置
   static const topBarBottom = 108.0;

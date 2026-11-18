@@ -36,13 +36,17 @@ class MenuAction {
 /// 上下文菜单：从右侧滑入的磨砂玻璃面板（docs/07-input-control.md §3.4）。
 /// ↑↓ 选择，OK 执行，返回 / ← 关闭。
 ///
+/// [anchored]：电视上也像 Windows 一样贴着当前按钮弹出下拉菜单（播放页的按钮用），
+/// 不从屏幕右边滑出面板（离按钮很远，看不出是哪个按钮打开的）。
+///
 /// [actionsBuilder]：菜单项随状态变化时（二级菜单里改了值，回来要显示新值）传它代替 [actions]。
 Future<void> showContextMenu(
   BuildContext context, {
   required String title,
   List<MenuAction> actions = const [],
   List<MenuAction> Function()? actionsBuilder,
-}) => _showMenu(context, title: title, actions: actionsBuilder ?? () => actions, depth: 0);
+  bool anchored = false,
+}) => _showMenu(context, title: title, actions: actionsBuilder ?? () => actions, depth: 0, popup: anchored);
 
 Future<void> _showMenu(
   BuildContext context, {
@@ -50,8 +54,9 @@ Future<void> _showMenu(
   required List<MenuAction> Function() actions,
   required int depth,
   Rect? item,
+  bool popup = false,
 }) {
-  if (PlatformProfile.isDesktop) {
+  if (PlatformProfile.isDesktop || (popup && (item != null || _focusedIsButton()))) {
     return _showPopupMenu(context, title: title, actions: actions, depth: depth, item: item);
   }
   return showGeneralDialog<void>(
@@ -73,14 +78,28 @@ Future<void> _showMenu(
 }
 
 /// 选中一项：普通项关闭这一级再执行；二级菜单项打开下一级，关闭后刷新这一级
-Future<void> _select(BuildContext context, MenuAction action, int depth, VoidCallback refresh, {Rect? item}) async {
+Future<void> _select(
+  BuildContext context,
+  MenuAction action,
+  int depth,
+  VoidCallback refresh, {
+  Rect? item,
+  bool popup = false,
+}) async {
   final items = action.submenu;
   if (items == null) {
     Navigator.of(context).pop();
     action.onSelected();
     return;
   }
-  await _showMenu(context, title: action.submenuTitle ?? action.label, actions: items, depth: depth + 1, item: item);
+  await _showMenu(
+    context,
+    title: action.submenuTitle ?? action.label,
+    actions: items,
+    depth: depth + 1,
+    item: item,
+    popup: popup,
+  );
   refresh();
 }
 
@@ -204,6 +223,7 @@ Future<void> _showPopupMenu(
   final overlay = Navigator.of(context).overlay!.context.findRenderObject() as RenderBox;
   Offset? anchor;
   double? altX;
+  Rect? target;
   // 二级菜单：放在上一级那一项的右边，放不下时放到上一级的左边（不盖住上一级）
   if (item != null) {
     anchor = overlay.globalToLocal(item.topRight + const Offset(6, -10));
@@ -214,6 +234,11 @@ Future<void> _showPopupMenu(
     final focused = FocusManager.instance.primaryFocus?.context?.findRenderObject();
     if (focused is RenderBox && focused.attached) {
       anchor = overlay.globalToLocal(focused.localToGlobal(Offset(focused.size.width, 0)));
+      // 电视：贴着按的那个按钮弹出（下面放不下就放到按钮上面），一眼看出是哪个按钮的菜单
+      if (!PlatformProfile.isDesktop) {
+        final topLeft = overlay.globalToLocal(focused.localToGlobal(Offset.zero));
+        target = topLeft & focused.size;
+      }
     }
   }
   return showGeneralDialog<void>(
@@ -223,18 +248,31 @@ Future<void> _showPopupMenu(
     barrierColor: const Color(0x00000000),
     transitionDuration: const Duration(milliseconds: 120),
     pageBuilder: (context, _, _) => CustomSingleChildLayout(
-      delegate: _PopupLayout(anchor ?? Offset(overlay.size.width / 2, overlay.size.height / 3), altX: altX),
+      delegate: _PopupLayout(
+        anchor ?? Offset(overlay.size.width / 2, overlay.size.height / 3),
+        altX: altX,
+        target: target,
+      ),
       child: _PopupMenu(title: title, actions: actions, depth: depth),
     ),
     transitionBuilder: (context, animation, _, child) => FadeTransition(opacity: animation, child: child),
   );
 }
 
+/// 电视上焦点在一个按钮上（不是整个播放画面之类的大块区域）：才贴着它弹出，否则还是从右边滑出面板
+bool _focusedIsButton() {
+  final box = FocusManager.instance.primaryFocus?.context?.findRenderObject();
+  return box is RenderBox && box.attached && box.hasSize && box.size.width < 400 && box.size.height < 200;
+}
+
 /// 菜单左上角放在锚点，超出窗口时往回收
 class _PopupLayout extends SingleChildLayoutDelegate {
-  _PopupLayout(this.anchor, {this.altX});
+  _PopupLayout(this.anchor, {this.altX, this.target});
 
   final Offset anchor;
+
+  /// 打开菜单的按钮：菜单放在它下面、左边对齐（右边放不下就右边对齐）；下面放不下放到上面
+  final Rect? target;
 
   /// 右边放不下时菜单右边缘放在这里（二级菜单翻到上一级左边）
   final double? altX;
@@ -246,6 +284,20 @@ class _PopupLayout extends SingleChildLayoutDelegate {
   @override
   Offset getPositionForChild(Size size, Size child) {
     const margin = 16.0;
+    final t = target;
+    if (t != null) {
+      const gap = 10.0;
+      var x = t.left;
+      if (x + child.width > size.width - margin) x = t.right - child.width;
+      var y = t.bottom + gap;
+      if (y + child.height > size.height - margin && t.top - gap - child.height >= margin) {
+        y = t.top - gap - child.height;
+      }
+      return Offset(
+        x.clamp(margin, size.width - child.width - margin),
+        y.clamp(margin, size.height - child.height - margin),
+      );
+    }
     var x = anchor.dx;
     var y = anchor.dy;
     if (x + child.width > size.width - margin) x = (altX ?? anchor.dx) - child.width;
@@ -254,7 +306,7 @@ class _PopupLayout extends SingleChildLayoutDelegate {
   }
 
   @override
-  bool shouldRelayout(_PopupLayout old) => old.anchor != anchor || old.altX != altX;
+  bool shouldRelayout(_PopupLayout old) => old.anchor != anchor || old.altX != altX || old.target != target;
 }
 
 class _PopupMenu extends StatefulWidget {
@@ -318,6 +370,7 @@ class _PopupMenuState extends State<_PopupMenu> {
                             widget.depth,
                             () => mounted ? setState(() {}) : null,
                             item: _rectOf(_itemContexts[i] ?? context),
+                            popup: true,
                           ),
                           builder: (context, focused) => AnimatedContainer(
                             key: _itemKey(i),
@@ -342,7 +395,7 @@ class _PopupMenuState extends State<_PopupMenu> {
                                   ),
                                 ),
                                 if (actions[i].submenu != null)
-                                  const Icon(Icons.chevron_right_rounded, size: 22, color: Color(0x99FFFFFF)),
+                                  Icon(Icons.chevron_right_rounded, size: 22, color: const Color(0x99FFFFFF)),
                               ],
                             ),
                           ),

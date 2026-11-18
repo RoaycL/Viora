@@ -5,6 +5,8 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:window_manager/window_manager.dart';
 
+import 'desktop_prefs.dart';
+
 /// Windows 沉浸式窗口：去掉系统标题栏，内容铺到窗口顶端，
 /// 顶部透明条用于拖动（双击最大化），右上角为自绘的窗口按钮。
 bool get isDesktopWindow => !kIsWeb && Platform.isWindows;
@@ -20,14 +22,24 @@ Future<void> initDesktopWindow() async {
     title: 'Viora',
     titleBarStyle: TitleBarStyle.hidden,
   );
+  // 本机设置（启动全屏、图标、系统代理）在显示窗口前读好
+  await DesktopPrefs.instance.load();
+  await SystemProxy.apply(DesktopPrefs.instance.followSystemProxy.value);
   await windowManager.waitUntilReadyToShow(options, () async {
     await windowManager.show();
     await windowManager.focus();
+    if (DesktopPrefs.instance.fullScreenOnLaunch.value) {
+      await windowManager.setFullScreen(true);
+      windowFullScreen.value = true;
+    }
   });
 }
 
 /// 窗口当前是否全屏（标题栏监听窗口事件更新；播放器的全屏按钮、Esc 键用它）
 final windowFullScreen = ValueNotifier(false);
+
+/// 沉浸：播放页控制层隐藏时，标题栏的窗口按钮也隐藏（鼠标一动控制层出来，标题栏跟着出来）
+final windowImmersive = ValueNotifier(false);
 
 Future<void> toggleFullScreen() async {
   if (!isDesktopWindow) return;
@@ -160,9 +172,10 @@ class _WindowTitleBarState extends State<WindowTitleBar> with WindowListener {
   Widget build(BuildContext context) {
     // 全屏时完全隐藏（鼠标移到顶部也不出现），按 F11 / Esc 退出全屏；
     // 播放器小窗时也隐藏（小窗自己的悬停按钮负责拖动、还原、关闭）
-    return ValueListenableBuilder<bool>(
-      valueListenable: MiniPlayerWindow.active,
-      builder: (context, mini, _) => _fullScreen || mini ? const SizedBox.shrink() : _bar(),
+    return ListenableBuilder(
+      listenable: Listenable.merge([MiniPlayerWindow.active, windowImmersive]),
+      builder: (context, _) =>
+          _fullScreen || MiniPlayerWindow.active.value || windowImmersive.value ? const SizedBox.shrink() : _bar(),
     );
   }
 

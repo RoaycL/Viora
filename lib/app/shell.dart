@@ -5,6 +5,7 @@ import 'package:go_router/go_router.dart';
 
 import '../ui/focus/shell_focus.dart';
 import '../ui/nav/side_nav_rail.dart';
+import '../ui/nav/top_right_bar.dart';
 import '../ui/nav/top_tab_bar.dart';
 import 'platform_profile.dart';
 import 'theme.dart';
@@ -227,6 +228,13 @@ class _AppShellState extends State<AppShell> {
               },
               child: FocusScope(node: _railScope, child: nav),
             ),
+            // Windows：右上角服务器状态、时间和搜索按钮（电视的在顶部标签栏里）
+            if (!_topBar)
+              Positioned(
+                right: VSpace.safeH,
+                top: VSpace.safeV,
+                child: TopRightBar(searchActive: _active == NavItem.search, onSearch: () => _select(NavItem.search)),
+              ),
           ],
         ),
       ),

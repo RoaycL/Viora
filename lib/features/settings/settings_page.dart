@@ -4,6 +4,7 @@ import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../app/desktop_prefs.dart';
 import '../../app/desktop_tray.dart';
 import '../../app/platform_profile.dart';
 import '../../app/theme.dart';
@@ -579,6 +580,27 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
           ),
           const SizedBox(height: 24),
           ..._proxyUsers(config, updater),
+          // 仅 Windows：跟随系统代理（Clash 等工具开的系统代理），只存在本机
+          if (isDesktopWindow) ...[
+            const SizedBox(height: 36),
+            const _Subtitle('系统代理'),
+            ValueListenableBuilder<bool>(
+              valueListenable: DesktopPrefs.instance.followSystemProxy,
+              builder: (context, on, _) => VToggle(
+                label: '跟随 Windows 系统代理',
+                subtitle: on
+                    ? (SystemProxy.current == null
+                          ? '已打开，但系统现在没有开代理：照常直连'
+                          : '经过 ${SystemProxy.current}：应用里所有请求和视频播放都走它，局域网地址直连')
+                    : '打开后应用里所有请求和视频播放都走系统代理（设置 → 网络和 Internet → 代理）',
+                value: on,
+                onChanged: (v) async {
+                  await DesktopPrefs.instance.setFollowSystemProxy(v);
+                  if (mounted) setState(() {});
+                },
+              ),
+            ),
+          ],
           const SizedBox(height: 36),
           const _Subtitle('TMDB（元数据、推荐、中文标题）'),
           Text(
@@ -623,8 +645,62 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
       _Section(
         title: '通用与关于',
         children: [
+          // 仅电视：低配模式（默认开，只存在本机）
+          if (PlatformProfile.isTv) ...[
+            ValueListenableBuilder<bool>(
+              valueListenable: PerfMode.liteSetting,
+              builder: (context, lite, _) => VToggle(
+                label: '流畅优先',
+                subtitle: lite
+                    ? '已开启：关掉毛玻璃模糊、加载动画、卡片浮现动画，弹幕每秒 30 帧，2GB 内存的电视盒子也流畅'
+                    : '已关闭：显示完整的动画和毛玻璃效果（适合性能好的电视盒子）。卡顿时请重新打开（重新进入页面后生效）',
+                value: lite,
+                onChanged: (v) async {
+                  await PerfMode.set(v);
+                  if (mounted) setState(() {});
+                },
+              ),
+            ),
+            const SizedBox(height: 24),
+          ],
           // 仅 Windows：关闭窗口时退出还是隐藏到托盘（默认隐藏到托盘）
           if (isDesktopWindow) ...[
+            ValueListenableBuilder<bool>(
+              valueListenable: DesktopPrefs.instance.fullScreenOnLaunch,
+              builder: (context, v, _) =>
+                  VToggle(label: '打开软件时全屏', value: v, onChanged: DesktopPrefs.instance.setFullScreenOnLaunch),
+            ),
+            const SizedBox(height: 12),
+            ValueListenableBuilder<bool>(
+              valueListenable: DesktopPrefs.instance.fullScreenOnPlay,
+              builder: (context, v, _) => VToggle(
+                label: '开始播放时全屏',
+                subtitle: '退出播放后恢复原来的窗口；连播下一集时保持全屏',
+                value: v,
+                onChanged: DesktopPrefs.instance.setFullScreenOnPlay,
+              ),
+            ),
+            const SizedBox(height: 12),
+            ValueListenableBuilder<AppIconStyle>(
+              valueListenable: DesktopPrefs.instance.iconStyle,
+              builder: (context, v, _) => VChoice<AppIconStyle>(
+                label: '桌面图标（任务栏、桌面和开始菜单的快捷方式；应用里的图标不变）',
+                options: [for (final s in AppIconStyle.values) (s, s.label)],
+                value: v,
+                onChanged: DesktopPrefs.instance.setIconStyle,
+              ),
+            ),
+            const SizedBox(height: 24),
+            ValueListenableBuilder<bool>(
+              valueListenable: DesktopPrefs.instance.navCompact,
+              builder: (context, compact, _) => VChoice<bool>(
+                label: '左侧导航栏',
+                options: const [(false, '默认（一长条）'), (true, '紧凑（上下居中）')],
+                value: compact,
+                onChanged: DesktopPrefs.instance.setNavCompact,
+              ),
+            ),
+            const SizedBox(height: 24),
             ValueListenableBuilder<bool>(
               valueListenable: DesktopTray.instance.closeToTray,
               builder: (context, toTray, _) => VToggle(

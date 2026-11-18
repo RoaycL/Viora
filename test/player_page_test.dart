@@ -12,6 +12,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:viora/app/input/back_handler.dart';
 import 'package:viora/app/input/intents.dart';
 import 'package:viora/app/platform_profile.dart';
+import 'package:viora/app/window_frame.dart';
 import 'package:viora/data/aggregate/sources.dart';
 import 'package:viora/data/config/app_config.dart';
 import 'package:viora/data/config/config_store.dart';
@@ -141,6 +142,13 @@ class PlayerClient extends EmbyClient {
 
   /// 服务器上这一集最新的进度（别的设备看过）
   Duration serverPosition = Duration.zero;
+
+  /// Emby 章节上的片尾标记（片尾开始的位置）
+  Duration? creditsStart;
+  @override
+  Future<List<ServerChapter>> chapters(String itemId) async => [
+    if (creditsStart != null) ServerChapter(name: '片尾', start: creditsStart!, marker: 'CreditsStart'),
+  ];
   @override
   Future<MediaItem> item(String id) async {
     final e = all.firstWhere((e) => e.id == id);
@@ -225,6 +233,7 @@ Future<Harness> pumpPlayer(
   int startMs = 0,
   bool resume = false,
   Duration serverPosition = Duration.zero,
+  Duration? creditsStart,
 }) async {
   PlatformProfile.debugOverride = PlatformProfile.tv;
   SharedPreferences.setMockInitialValues({});
@@ -237,7 +246,9 @@ Future<Harness> pumpPlayer(
   final engines = <FakeEngine>[];
   PlayerPage.debugEngineFactory = (_) => FakeEngine()..let(engines.add);
   addTearDown(() => PlayerPage.debugEngineFactory = null);
-  final client = PlayerClient()..serverPosition = serverPosition;
+  final client = PlayerClient()
+    ..serverPosition = serverPosition
+    ..creditsStart = creditsStart;
   late final GoRouter router;
   router = GoRouter(
     initialLocation: '/',
@@ -249,6 +260,11 @@ Future<Harness> pumpPlayer(
       GoRoute(
         path: '/play',
         builder: (_, _) => PlayerPage(serverId: 's', itemId: itemId, startMs: startMs, resume: resume),
+      ),
+      // 连播下一集（片尾自动下一集、上一集 / 下一集）
+      GoRoute(
+        path: '/play/:sid/:id',
+        builder: (_, state) => PlayerPage(serverId: 's', itemId: state.pathParameters['id']!),
       ),
     ],
   );
@@ -352,6 +368,36 @@ void main() {
     expect(h.engine.state.value.rate, 0.5);
     expect(find.text('0.5x'), findsOneWidget);
     expect(FocusManager.instance.primaryFocus!.rect.top, greaterThan(900));
+    await unmountPlayer(tester);
+  });
+
+  testWidgets('电视：画面上直接按 ↑ 选中顶部按钮；菜单贴着按下的按钮弹出', (tester) async {
+    await pumpPlayer(tester);
+    await press(tester, LogicalKeyboardKey.arrowUp);
+    expect(FocusManager.instance.primaryFocus!.debugLabel, 'osd-top');
+    // 顶部的「更多」：菜单在按钮下面
+    for (var i = 0; i < 3; i++) {
+      await press(tester, LogicalKeyboardKey.arrowRight);
+    }
+    final button = FocusManager.instance.primaryFocus!.rect;
+    await press(tester, LogicalKeyboardKey.enter);
+    final menu = FocusManager.instance.primaryFocus!.rect;
+    expect(menu.top, greaterThan(button.bottom));
+    expect(menu.top - button.bottom, lessThan(150));
+    expect(menu.left <= button.right && menu.right >= button.left, isTrue, reason: '菜单和按钮上下对齐');
+    await press(tester, LogicalKeyboardKey.escape);
+    // 底部的倍速按钮：菜单在按钮上面
+    await press(tester, LogicalKeyboardKey.arrowDown);
+    await press(tester, LogicalKeyboardKey.arrowDown);
+    for (var i = 0; i < 4; i++) {
+      await press(tester, LogicalKeyboardKey.arrowRight);
+    }
+    final rate = FocusManager.instance.primaryFocus!.rect;
+    await press(tester, LogicalKeyboardKey.enter);
+    expect(find.text('倍速'), findsWidgets);
+    final item = FocusManager.instance.primaryFocus!.rect;
+    expect(item.bottom, lessThan(rate.top));
+    expect(item.left <= rate.right && item.right >= rate.left, isTrue, reason: '菜单和按钮上下对齐');
     await unmountPlayer(tester);
   });
 
@@ -725,6 +771,44 @@ void main() {
     await tester.runAsync(() => Future<void>.delayed(const Duration(milliseconds: 100)));
     final left = await tester.runAsync(PendingPlayReports.list);
     expect([for (final r in left!) (r.itemId, r.position)], [('s1e2', const Duration(minutes: 9))]);
+    await unmountPlayer(tester);
+  });
+
+  testWidgets('Windows 沉浸：控制层隐藏时窗口按钮也隐藏，控制层出来时一起出来，退出播放恢复', (tester) async {
+    await pumpPlayer(tester);
+    PlatformProfile.debugOverride = PlatformProfile.desktop;
+    await tester.pump(const Duration(seconds: 6)); // 播放中 5 秒后控制层隐藏
+    await tester.pump();
+    expect(windowImmersive.value, isTrue);
+    await press(tester, LogicalKeyboardKey.arrowRight); // 有操作：控制层出来
+    await tester.pump();
+    expect(windowImmersive.value, isFalse);
+    await unmountPlayer(tester);
+    await tester.pump();
+    expect(windowImmersive.value, isFalse);
+  });
+
+  testWidgets('片尾自动下一集（默认）：先显示 3 秒「下一集」按钮，再倒计时 3 秒，然后播放下一集', (tester) async {
+    final h = await pumpPlayer(tester, creditsStart: const Duration(minutes: 18));
+    // 片头片尾在起播后后台解析（第三方数据库在测试里很快失败）
+    for (var i = 0; i < 5; i++) {
+      await tester.runAsync(() => Future<void>.delayed(const Duration(milliseconds: 200)));
+      await tester.pump();
+    }
+    await h.engine.seek(const Duration(minutes: 18, seconds: 2));
+    await tester.pump();
+    await tester.pump();
+    expect(find.text('下一集'), findsWidgets, reason: '先显示「下一集」按钮');
+    expect(find.textContaining('秒后播放下一集'), findsNothing);
+    await tester.pump(const Duration(seconds: 1));
+    await tester.pump(const Duration(seconds: 1));
+    await tester.pump(const Duration(seconds: 1));
+    expect(find.text('3 秒后播放下一集'), findsOneWidget, reason: '3 秒后变成 3 秒倒计时');
+    await tester.pump(const Duration(seconds: 1));
+    await tester.pump(const Duration(seconds: 1));
+    await tester.pump(const Duration(seconds: 1));
+    await tester.pumpAndSettle();
+    expect(h.router.state.uri.path, '/play/s/s1e3', reason: '倒计时结束播放下一集');
     await unmountPlayer(tester);
   });
 }

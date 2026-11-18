@@ -34,7 +34,10 @@ const credits = Segment(
 
 void main() {
   test('default button mode uses half-open intervals; off never offers an action', () {
-    final controller = SegmentSkipController(query: episode, settings: SegmentSettings.defaults())..segments = [intro];
+    final controller = SegmentSkipController(
+      query: episode,
+      settings: SegmentSettings.defaults().copyWith(intro: SegmentSkipMode.button),
+    )..segments = [intro];
     expect(controller.at(const Duration(seconds: 9)), isNull);
     expect(controller.at(const Duration(seconds: 10))!.automatic, isFalse);
     expect(controller.at(const Duration(seconds: 70)), isNull);

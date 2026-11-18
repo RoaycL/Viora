@@ -28,7 +28,6 @@ import '../../ui/widgets/cached_image.dart';
 import '../../ui/widgets/end_of_page.dart';
 import '../../ui/widgets/image_sizing.dart';
 import '../../ui/widgets/server_image.dart';
-import '../../ui/widgets/status_bar.dart';
 import '../../ui/widgets/tmdb_image.dart';
 import '../browse/media_cards.dart';
 import '../collections/collections_pages.dart';
@@ -1059,7 +1058,7 @@ class _Welcome extends StatelessWidget {
       child: Stack(
         children: [
           // 电视的服务器状态和时钟在顶部标签栏右侧
-          if (!PlatformProfile.isTv) const Positioned(right: VSpace.safeH, top: VSpace.safeV, child: StatusBar()),
+          // Windows 的服务器状态和时钟在左侧导航栏里，电视在顶部标签栏里
           Positioned(
             left: VSpace.contentLeft,
             bottom: HomeHero.buttonsBottom,
@@ -1171,7 +1170,7 @@ class _HomeRowStatus extends StatelessWidget {
                   title: title,
                   landscape: landscape,
                   circle: circle,
-                  animate: !PlatformProfile.isTv && !VMotion.reduced(context),
+                  animate: !PerfMode.lite && !VMotion.reduced(context),
                   wrapFirst: (b) => _anchor(b, circle ? 999 : VRadius.card),
                 ),
         )
@@ -1231,7 +1230,7 @@ class _HeroSkeleton extends StatelessWidget {
       child: Stack(
         children: [
           // 电视的服务器状态和时钟在顶部标签栏右侧
-          if (!PlatformProfile.isTv) const Positioned(right: VSpace.safeH, top: VSpace.safeV, child: StatusBar()),
+          // Windows 的服务器状态和时钟在左侧导航栏里，电视在顶部标签栏里
           Positioned(
             left: VSpace.contentLeft,
             bottom: HomeHero.buttonsBottom,
@@ -1359,7 +1358,7 @@ class _ShimmerState extends State<_Shimmer> with SingleTickerProviderStateMixin 
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
-    if (PlatformProfile.isTv || VMotion.reduced(context)) {
+    if (PerfMode.lite || VMotion.reduced(context)) {
       _c.stop();
       _c.value = 0.6;
     } else if (!_c.isAnimating) {
