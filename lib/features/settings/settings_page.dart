@@ -414,6 +414,13 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
             value: config.playback.clearCacheOnExit,
             onChanged: (v) => _updatePlayback((p) => p.copyWith(clearCacheOnExit: v)),
           ),
+          const SizedBox(height: 20),
+          VToggle(
+            label: '连续自动播放 3 集后询问「还在观看吗？」',
+            subtitle: '中间没有任何按键 / 点击时暂停并询问，避免睡着了一直播下去',
+            value: config.playback.askStillWatching,
+            onChanged: (v) => _updatePlayback((p) => p.copyWith(askStillWatching: v)),
+          ),
           const SizedBox(height: 16),
           PillButton(
             icon: Icons.cleaning_services_outlined,

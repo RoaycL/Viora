@@ -51,6 +51,8 @@ Widget mediaPosterCard(BuildContext context, MediaItem item, FocusNode node, {Vo
       resources: resources,
       onActivate: () => openMediaItem(context, item),
       onMenu: onMenu,
+      // 电影 / 单集可以直接播放（从上次的位置接着播）；剧集要先选集，不提供
+      onPlay: item.playable ? () => playMediaItem(context, item) : null,
     ),
   );
 }
@@ -105,6 +107,7 @@ Widget mediaLandscapeCard(
     progress: item.progress,
     onActivate: onActivate ?? () => playMediaItem(context, item),
     onMenu: onMenu,
+    onPlay: item.playable ? () => playMediaItem(context, item) : null,
   );
 }
 

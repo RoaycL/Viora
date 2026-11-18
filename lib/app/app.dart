@@ -240,6 +240,8 @@ class _VioraAppState extends ConsumerState<VioraApp> with WidgetsBindingObserver
           },
         ),
         SearchIntent: CallbackAction<SearchIntent>(onInvoke: (_) => _router.go('/search')),
+        SlashSearchIntent: SlashSearchAction(() => _router.go('/search')),
+        PageIntent: PageAction(),
         FullScreenIntent: CallbackAction<FullScreenIntent>(onInvoke: (_) => toggleFullScreen()),
       },
       // Material 提供默认文字样式（否则文字会以调试样式渲染）。
