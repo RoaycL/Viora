@@ -371,6 +371,36 @@ void main() {
     await unmountPlayer(tester);
   });
 
+  testWidgets('电视：画面上直接按 ↑ 选中顶部按钮；菜单贴着按下的按钮弹出', (tester) async {
+    await pumpPlayer(tester);
+    await press(tester, LogicalKeyboardKey.arrowUp);
+    expect(FocusManager.instance.primaryFocus!.debugLabel, 'osd-top');
+    // 顶部的「更多」：菜单在按钮下面
+    for (var i = 0; i < 3; i++) {
+      await press(tester, LogicalKeyboardKey.arrowRight);
+    }
+    final button = FocusManager.instance.primaryFocus!.rect;
+    await press(tester, LogicalKeyboardKey.enter);
+    final menu = FocusManager.instance.primaryFocus!.rect;
+    expect(menu.top, greaterThan(button.bottom));
+    expect(menu.top - button.bottom, lessThan(150));
+    expect(menu.left <= button.right && menu.right >= button.left, isTrue, reason: '菜单和按钮上下对齐');
+    await press(tester, LogicalKeyboardKey.escape);
+    // 底部的倍速按钮：菜单在按钮上面
+    await press(tester, LogicalKeyboardKey.arrowDown);
+    await press(tester, LogicalKeyboardKey.arrowDown);
+    for (var i = 0; i < 4; i++) {
+      await press(tester, LogicalKeyboardKey.arrowRight);
+    }
+    final rate = FocusManager.instance.primaryFocus!.rect;
+    await press(tester, LogicalKeyboardKey.enter);
+    expect(find.text('倍速'), findsWidgets);
+    final item = FocusManager.instance.primaryFocus!.rect;
+    expect(item.bottom, lessThan(rate.top));
+    expect(item.left <= rate.right && item.right >= rate.left, isTrue, reason: '菜单和按钮上下对齐');
+    await unmountPlayer(tester);
+  });
+
   testWidgets('电视：选集面板可以切换季，默认是正在看的那一季', (tester) async {
     await pumpPlayer(tester);
     await press(tester, LogicalKeyboardKey.arrowDown);

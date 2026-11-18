@@ -41,6 +41,7 @@ class PlayerOsd extends StatelessWidget {
     required this.hasNext,
     required this.panel,
     required this.playNode,
+    this.topNode,
     required this.onBack,
     required this.onPlayPause,
     required this.onNext,
@@ -80,6 +81,9 @@ class PlayerOsd extends StatelessWidget {
 
   /// 播放 / 暂停按钮的焦点（电视按 ↓ 时焦点落在这里）
   final FocusNode playNode;
+
+  /// 右上角第一个按钮（弹幕）的焦点（电视按 ↑ 时焦点落在这里）
+  final FocusNode? topNode;
 
   final VoidCallback onBack;
   final VoidCallback onPlayPause;
@@ -156,6 +160,7 @@ class PlayerOsd extends StatelessWidget {
                   children: [
                     // 点击打开弹幕设置（开关、区域、字号……）；长按 / 右键直接开关
                     OsdIconButton(
+                      focusNode: topNode,
                       label: danmakuOn ? '弹幕设置（弹幕：开）' : '弹幕设置（弹幕：关）',
                       onPressed: onDanmakuMenu,
                       onMenu: onDanmaku,

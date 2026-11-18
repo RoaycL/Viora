@@ -234,6 +234,7 @@ class _PlayerPageState extends ConsumerState<PlayerPage> with WidgetsBindingObse
   /// 鼠标停在控制栏上（Windows）
   bool _hoverControls = false;
   final _playNode = FocusNode(debugLabel: 'osd-play');
+  final _topNode = FocusNode(debugLabel: 'osd-top');
 
   /// 累加快进 / 快退（连续按键 0.8 秒后才真正 seek）
   Duration? _pendingSeek;
@@ -345,6 +346,7 @@ class _PlayerPageState extends ConsumerState<PlayerPage> with WidgetsBindingObse
     await _menu(
       () => showContextMenu(
         context,
+        anchored: true,
         title: '还在观看吗？已经连续自动播放了 $_autoPlayStreak 集',
         actions: [
           MenuAction('继续观看', Icons.play_arrow_rounded, () {
@@ -878,7 +880,7 @@ class _PlayerPageState extends ConsumerState<PlayerPage> with WidgetsBindingObse
   Future<void> _openDanmakuMenu() async {
     if (_danmakuReady() == null) return;
     // 每次显示时重新生成：二级菜单里改了样式，回到这一级显示新的值
-    await showContextMenu(context, title: _danmakuTitle, actionsBuilder: _danmakuItems);
+    await showContextMenu(context, anchored: true, title: _danmakuTitle, actionsBuilder: _danmakuItems);
     if (mounted) _focus.requestFocus();
   }
 
@@ -1013,6 +1015,7 @@ class _PlayerPageState extends ConsumerState<PlayerPage> with WidgetsBindingObse
     }
     await showContextMenu(
       context,
+      anchored: true,
       title: '选择作品 · ${animes.length} 个结果',
       actions: [
         for (final a in animes.take(40))
@@ -1060,6 +1063,7 @@ class _PlayerPageState extends ConsumerState<PlayerPage> with WidgetsBindingObse
     if (eps.length == 1) return choose(0);
     await showContextMenu(
       context,
+      anchored: true,
       title: '选择集 · ${anime.title}',
       actions: [
         for (var i = 0; i < eps.length; i++)
@@ -1174,6 +1178,7 @@ class _PlayerPageState extends ConsumerState<PlayerPage> with WidgetsBindingObse
     _focus.removeListener(_keepFocus);
     _focus.dispose();
     _playNode.dispose();
+    _topNode.dispose();
     // 退出播放时恢复窗口；连播下一集 / 换服务器时保持小窗
     if (!handoff) MiniPlayerWindow.exit();
     super.dispose();
@@ -1206,17 +1211,21 @@ class _PlayerPageState extends ConsumerState<PlayerPage> with WidgetsBindingObse
   }
 
   /// 电视按 ↓：显示控制层，焦点落在播放 / 暂停按钮上
-  void _focusControls() {
+  /// 电视按 ↑：显示控制层，焦点落在右上角第一个按钮（弹幕）上
+  void _focusTop() => _focusControls(node: _topNode);
+
+  void _focusControls({FocusNode? node}) {
+    final target = node ?? _playNode;
     final visible = _osd;
     _showOsd();
     // 控制层已经显示：直接移焦点。还没显示：等它画出来（按钮不再被排除在焦点外）再移。
     // 只加帧后回调不会触发新的一帧——暂停时画面不变，焦点就一直移不过去，所以要确保有下一帧
     if (visible) {
-      _playNode.requestFocus();
+      target.requestFocus();
       return;
     }
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (mounted) _playNode.requestFocus();
+      if (mounted) target.requestFocus();
     });
     WidgetsBinding.instance.ensureVisualUpdate();
   }
@@ -1522,7 +1531,8 @@ class _PlayerPageState extends ConsumerState<PlayerPage> with WidgetsBindingObse
     } else if (key == LogicalKeyboardKey.keyM && PlatformProfile.isDesktop) {
       _toggleMute();
     } else if (key == LogicalKeyboardKey.arrowUp) {
-      _showOsd();
+      // 电视：↑ 直接到右上角的按钮（弹幕、音轨、字幕、更多）
+      _focusTop();
     } else if (key == LogicalKeyboardKey.arrowDown) {
       // 电视：焦点移到底部按钮行
       _focusControls();
@@ -1606,7 +1616,7 @@ class _PlayerPageState extends ConsumerState<PlayerPage> with WidgetsBindingObse
       showToast('没有可选的音轨');
       return Future.value();
     }
-    return showContextMenu(context, title: '音轨', actionsBuilder: _audioItems);
+    return showContextMenu(context, anchored: true, title: '音轨', actionsBuilder: _audioItems);
   });
 
   List<MenuAction> _audioItems() {
@@ -1622,7 +1632,7 @@ class _PlayerPageState extends ConsumerState<PlayerPage> with WidgetsBindingObse
   }
 
   Future<void> _openSubtitleMenu() =>
-      _menu(() => showContextMenu(context, title: '字幕', actionsBuilder: _subtitleItems));
+      _menu(() => showContextMenu(context, anchored: true, title: '字幕', actionsBuilder: _subtitleItems));
 
   List<MenuAction> _subtitleItems() {
     final s = _state;
@@ -1703,6 +1713,7 @@ class _PlayerPageState extends ConsumerState<PlayerPage> with WidgetsBindingObse
     await _menu(
       () => showContextMenu(
         context,
+        anchored: true,
         title: '$label字幕 · ${list.length} 个结果',
         actions: [
           for (final r in list.take(40))
@@ -1871,7 +1882,8 @@ class _PlayerPageState extends ConsumerState<PlayerPage> with WidgetsBindingObse
     }
   }
 
-  Future<void> _openRateMenu() => _menu(() => showContextMenu(context, title: '倍速', actionsBuilder: _rateItems));
+  Future<void> _openRateMenu() =>
+      _menu(() => showContextMenu(context, anchored: true, title: '倍速', actionsBuilder: _rateItems));
 
   List<MenuAction> _rateItems() {
     final rate = _state.rate;
@@ -1883,7 +1895,7 @@ class _PlayerPageState extends ConsumerState<PlayerPage> with WidgetsBindingObse
 
   /// 「更多」：完整的播放设置菜单
   Future<void> _openMenu() => _menu(() {
-    return showContextMenu(context, title: '播放设置', actionsBuilder: _moreItems);
+    return showContextMenu(context, anchored: true, title: '播放设置', actionsBuilder: _moreItems);
   });
 
   List<MenuAction> _moreItems() {
@@ -2151,6 +2163,7 @@ class _PlayerPageState extends ConsumerState<PlayerPage> with WidgetsBindingObse
                                           panel: _panel,
                                           panelChild: panelChild,
                                           playNode: _playNode,
+                                          topNode: _topNode,
                                           onBack: () => context.pop(),
                                           onPlayPause: _togglePlay,
                                           onNext: _playNext,
