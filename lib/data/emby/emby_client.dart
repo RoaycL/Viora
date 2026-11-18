@@ -1,9 +1,8 @@
-import 'dart:io' show HttpClient, HttpException;
+import 'dart:io' show HttpException;
 import 'dart:async';
 import 'dart:math';
 
 import 'package:dio/dio.dart';
-import 'package:dio/io.dart';
 import 'package:flutter/foundation.dart';
 
 import '../../core/log/load_metrics.dart';
@@ -112,15 +111,16 @@ class EmbyClient {
 
   RequestComposer get composer => composerFor(line);
 
-  /// 接口请求共用一个连接池（按主机复用连接）：每个请求新建客户端的话，HTTPS / 反向代理下每次都要重新握手，
-  /// 详情页同时向多台服务器取播放信息时尤其慢。测速（[probe]）仍用新连接，延迟才准
-  static final Dio _shared = _dio()
-    ..httpClientAdapter = IOHttpClientAdapter(
-      // 空闲连接只留 4 秒（Dart 默认 15 秒）。反向代理 / 服务器常把空闲连接关得比这早，有的不通知客户端：
-      // 播放时每 10 秒一次的进度上报每次都会撞上已经关掉的连接，整场播放的进度都报不上去。
-      // 4 秒内的连续请求（打开详情页、首页加载）仍然复用连接
-      createHttpClient: () => HttpClient()..idleTimeout = const Duration(seconds: 4),
-    );
+  /// 每个接口请求用一个新连接，用完关掉（v0.15.28–v0.15.34 曾改为复用连接，
+  /// 但反向代理 / 服务器会在客户端不知道的情况下关掉闲置连接，复用到这种连接时请求失败，改回每次新建）
+  static Future<T> _once<T>(Future<T> Function(Dio dio) send) async {
+    final dio = _dio();
+    try {
+      return await send(dio);
+    } finally {
+      dio.close();
+    }
+  }
 
   static Dio _dio() => Dio(
     BaseOptions(
@@ -208,10 +208,12 @@ class EmbyClient {
     final r = await LoadTrace.request(
       'media_api',
       _metricsId,
-      () => _shared.postUri<dynamic>(
-        url,
-        data: {'Username': _server.username, 'Pw': password},
-        options: Options(headers: headers, contentType: Headers.jsonContentType),
+      () => _once(
+        (dio) => dio.postUri<dynamic>(
+          url,
+          data: {'Username': _server.username, 'Pw': password},
+          options: Options(headers: headers, contentType: Headers.jsonContentType),
+        ),
       ),
       isSuccess: (r) => (r.statusCode ?? 500) < 400,
     );
@@ -256,10 +258,16 @@ class EmbyClient {
         final r = await LoadTrace.request(
           'media_api',
           _metricsId,
-          () => _shared.requestUri<dynamic>(
-            url,
-            data: body,
-            options: Options(method: method, headers: c.headers(RequestKind.api), contentType: Headers.jsonContentType),
+          () => _once(
+            (dio) => dio.requestUri<dynamic>(
+              url,
+              data: body,
+              options: Options(
+                method: method,
+                headers: c.headers(RequestKind.api),
+                contentType: Headers.jsonContentType,
+              ),
+            ),
           ),
           isSuccess: (r) => (r.statusCode ?? 500) < 400,
         );
