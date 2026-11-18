@@ -19,7 +19,7 @@ class DesktopTray with TrayListener, WindowListener {
   final closeToTray = ValueNotifier(true);
 
   /// 窗口隐藏到托盘时为 true（播放器据此暂停）
-  final hiddenToTray = ValueNotifier(false);
+  final hiddenToTray = TrayHiddenFlag();
 
   bool _trayShown = false;
 
@@ -95,9 +95,8 @@ class DesktopTray with TrayListener, WindowListener {
     // 托盘图标创建失败时不能隐藏（否则窗口找不回来），直接退出
     if (closeToTray.value && _trayShown) {
       // 窗口可能不是经 restore() 显示的（比如再次打开 exe 时由已有实例的原生代码直接显示），
-      // 标志还停在 true；先清掉，保证这次一定通知到播放器暂停
-      hiddenToTray.value = false;
-      hiddenToTray.value = true;
+      // 标志还停在 true：照样通知一次，保证播放器暂停（不再先设 false，免得多触发一次「恢复」）
+      hiddenToTray.hide();
       await windowManager.hide();
     } else {
       await quit();
@@ -123,6 +122,19 @@ class DesktopTray with TrayListener, WindowListener {
         restore();
       case 'exit':
         quit();
+    }
+  }
+}
+
+/// 「已关到托盘」标志：[hide] 在已经是 true 时也通知一次（再次打开 exe 后没经过 restore 又关到托盘，播放器要暂停）
+class TrayHiddenFlag extends ValueNotifier<bool> {
+  TrayHiddenFlag() : super(false);
+
+  void hide() {
+    if (value) {
+      notifyListeners();
+    } else {
+      value = true;
     }
   }
 }

@@ -482,7 +482,7 @@ class _HeroInfo extends StatelessWidget {
             const SizedBox(width: 4),
             Text(
               t.rating!.toStringAsFixed(1),
-              style: const TextStyle(color: VColors.rating, fontWeight: FontWeight.w600),
+              style: numericStyle(const TextStyle(color: VColors.rating, fontWeight: FontWeight.w600)),
             ),
           ],
         ),

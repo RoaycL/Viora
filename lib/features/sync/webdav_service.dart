@@ -259,26 +259,43 @@ class WebDavSync {
       await _saveState(await _localHash(), rev);
       return '已从$source下载：$message';
     }
-    // 没有强 ETag 就无法安全覆盖已存在的文件；仍允许下载和显式「覆盖云端」。
-    final etag = remoteFile.etag;
-    if (localChanged) {
-      if (etag == null || !etag.startsWith('"') || !etag.endsWith('"')) {
-        throw const WebDavException('WebDAV 未提供强 ETag，无法安全自动上传；请更换服务或手动选择「用本机覆盖云端」');
-      }
+    // 有强 ETag：用 If-Match 条件写入，读取之后云端被别的设备改过时服务器拒绝（412）。
+    // 没有 ETag 或只有弱 ETag（部分服务器、nginx 开 gzip 时）：上传前再读一次云端的 rev，
+    // 和刚才读到的不一样就按冲突处理（重新合并再传）。读和写之间仍有极短的窗口，但不会因此完全无法自动上传
+    final strong = _strongEtag(remoteFile.etag);
+    Future<void> checkUnchanged() async {
+      if (strong != null) return;
+      if (await _remoteRev(client, config) != rev) throw const WebDavConflict();
     }
+
     if (remoteChanged && localChanged) {
       // 两边都改过：合并（不删除任何一边的服务器），再把合并结果传上去
       final message = await _apply(remote, replaceServers: false);
       final merged = await _payload();
-      await _upload(client, config, merged, hashOf(merged), etag: etag);
+      await checkUnchanged();
+      await _upload(client, config, merged, hashOf(merged), etag: strong);
       return '已合并$source的配置并上传：$message';
     }
     if (localChanged) {
-      await _upload(client, config, local, localHash, etag: etag);
+      await checkUnchanged();
+      await _upload(client, config, local, localHash, etag: strong);
       return '已上传本机的修改';
     }
     await _saveState(localHash, rev);
     return '已是最新';
+  }
+
+  /// 只认强 ETag（带引号、不以 W/ 开头）：弱 ETag 不能用于 If-Match
+  static String? _strongEtag(String? etag) =>
+      etag != null && etag.length >= 2 && etag.startsWith('"') && etag.endsWith('"') ? etag : null;
+
+  /// 重新读一次云端文件的 rev（没有文件时为 null）
+  Future<String?> _remoteRev(WebDavClient client, WebDavConfig config) async {
+    final file = await client.readFile();
+    if (file == null) return null;
+    var remote = jsonDecode(file.content) as Map<String, dynamic>;
+    if (WebDavCrypto.isEncrypted(remote)) remote = await WebDavCrypto.decrypt(remote, config.passphrase);
+    return remote['rev'] as String?;
   }
 
   Future<String> _apply(Map<String, dynamic> remote, {required bool replaceServers}) async {
