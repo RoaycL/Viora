@@ -148,6 +148,12 @@ class ExoEngine extends PlayerEngine {
   Future<void> setRate(double rate) => _call('setRate', {'rate': rate});
 
   @override
+  Future<void> setSubtitleScale(double scale) => _call('setSubtitleScale', {'scale': scale});
+
+  @override
+  Future<void> setVideoFit(VideoFit fit) => _call('setVideoFit', {'fit': fit.name});
+
+  @override
   Future<void> selectAudio(EngineTrack track) => _call('selectTrack', {'type': 'audio', 'track': track.id});
 
   @override

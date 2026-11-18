@@ -32,6 +32,19 @@ import kotlin.math.roundToInt
  */
 class ExoPlugin(private val activity: Activity, engine: FlutterEngine) {
     private val players = mutableMapOf<Int, ExoController>()
+
+    /** 每个播放器的画面视图和显示设置（视图可能晚于设置创建，创建时补上） */
+    private val views = mutableMapOf<Int, PlayerView>()
+    private val resizeModes = mutableMapOf<Int, Int>()
+    private val subtitleScales = mutableMapOf<Int, Float>()
+
+    private fun applyView(id: Int) {
+        val view = views[id] ?: return
+        view.resizeMode = resizeModes[id] ?: AspectRatioFrameLayout.RESIZE_MODE_FIT
+        view.subtitleView?.setFractionalTextSize(
+            androidx.media3.ui.SubtitleView.DEFAULT_TEXT_SIZE_FRACTION * (subtitleScales[id] ?: 1f)
+        )
+    }
     private var nextId = 1
     private var sink: EventChannel.EventSink? = null
     private var frameRateSwitch = false
@@ -87,6 +100,24 @@ class ExoPlugin(private val activity: Activity, engine: FlutterEngine) {
                         p?.selectTrack(type, call.argument<String>("track"))
                         result.success(null)
                     }
+                    "setVideoFit" -> {
+                        if (id != null) {
+                            resizeModes[id] = when (call.argument<String>("fit")) {
+                                "cover" -> AspectRatioFrameLayout.RESIZE_MODE_ZOOM
+                                "fill" -> AspectRatioFrameLayout.RESIZE_MODE_FILL
+                                else -> AspectRatioFrameLayout.RESIZE_MODE_FIT
+                            }
+                            applyView(id)
+                        }
+                        result.success(null)
+                    }
+                    "setSubtitleScale" -> {
+                        if (id != null) {
+                            subtitleScales[id] = (call.argument<Number>("scale") ?: 1.0).toFloat()
+                            applyView(id)
+                        }
+                        result.success(null)
+                    }
                     "addSubtitle" -> {
                         p?.addSubtitle(call.argument<String>("url")!!, call.argument("title"), call.argument("language"))
                         result.success(null)
@@ -94,6 +125,8 @@ class ExoPlugin(private val activity: Activity, engine: FlutterEngine) {
                     "dispose" -> {
                         p?.release()
                         players.remove(id)
+                        resizeModes.remove(id)
+                        subtitleScales.remove(id)
                         updateKeepScreenOn()
                         if (players.isEmpty()) restoreDisplayMode()
                         result.success(null)
@@ -194,11 +227,16 @@ class ExoPlugin(private val activity: Activity, engine: FlutterEngine) {
                 subtitleView?.setApplyEmbeddedStyles(true)
                 player = id?.let { players[it]?.player }
             }
+            if (id != null) {
+                views[id] = view
+                applyView(id)
+            }
             return object : PlatformView {
                 override fun getView(): View = view
 
                 override fun dispose() {
                     view.player = null
+                    if (id != null && views[id] === view) views.remove(id)
                 }
             }
         }

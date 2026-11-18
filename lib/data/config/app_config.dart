@@ -245,7 +245,17 @@ class PlaybackConfig {
     this.pinnedServerId,
     this.volume = 1.0,
     this.muted = false,
+    this.subtitleScale = 1.0,
+    this.askStillWatching = true,
   });
+
+  /// 字幕大小倍数（播放页「字幕 → 字幕大小」）
+  final double subtitleScale;
+
+  static const subtitleScales = [(0.75, '小'), (1.0, '标准'), (1.25, '大'), (1.5, '特大')];
+
+  /// 连续自动播放 3 集没有任何操作时问「还在观看吗？」
+  final bool askStillWatching;
 
   /// Windows 播放音量（0–1）与静音，下次播放沿用
   final double volume;
@@ -313,6 +323,8 @@ class PlaybackConfig {
     String? pinnedServerId,
     double? volume,
     bool? muted,
+    double? subtitleScale,
+    bool? askStillWatching,
   }) => PlaybackConfig(
     userAgent: userAgent ?? this.userAgent,
     uaForApi: uaForApi ?? this.uaForApi,
@@ -330,6 +342,8 @@ class PlaybackConfig {
     pinnedServerId: pinnedServerId ?? this.pinnedServerId,
     volume: volume ?? this.volume,
     muted: muted ?? this.muted,
+    subtitleScale: subtitleScale ?? this.subtitleScale,
+    askStillWatching: askStillWatching ?? this.askStillWatching,
   );
 
   Map<String, dynamic> toJson() => {
@@ -349,6 +363,8 @@ class PlaybackConfig {
     'pinnedServerId': pinnedServerId,
     'volume': volume,
     'muted': muted,
+    'subtitleScale': subtitleScale,
+    'askStillWatching': askStillWatching,
   };
 
   factory PlaybackConfig.fromJson(Map<String, dynamic> j) => PlaybackConfig(
@@ -368,6 +384,8 @@ class PlaybackConfig {
     pinnedServerId: j['pinnedServerId'] as String?,
     volume: ((j['volume'] as num?)?.toDouble() ?? 1.0).clamp(0.0, 1.0),
     muted: j['muted'] as bool? ?? false,
+    subtitleScale: ((j['subtitleScale'] as num?)?.toDouble() ?? 1.0).clamp(0.5, 2.0),
+    askStillWatching: j['askStillWatching'] as bool? ?? true,
   );
 }
 

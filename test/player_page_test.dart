@@ -66,6 +66,14 @@ class FakeEngine extends PlayerEngine {
 
   /// 最后设置的音量（0–1）
   double volume = 1;
+  Duration subtitleDelay = Duration.zero;
+  VideoFit fit = VideoFit.contain;
+  @override
+  bool get supportsSubtitleDelay => true;
+  @override
+  Future<void> setSubtitleDelay(Duration delay) async => subtitleDelay = delay;
+  @override
+  Future<void> setVideoFit(VideoFit fit) async => this.fit = fit;
   @override
   Future<void> setVolume(double volume) async => this.volume = volume;
   @override
@@ -554,6 +562,56 @@ void main() {
     await tester.pump(const Duration(seconds: 1));
     final container = ProviderScope.containerOf(tester.element(find.byType(PlayerPage)));
     expect(container.read(configProvider).playback.volume, closeTo(0.5, 0.01));
+    await unmountPlayer(tester);
+  });
+
+  testWidgets('数字键跳到 N0%；Windows：Shift+→ 60 秒、[ ] \\ 调倍速、Ctrl+→ 字幕推后', (tester) async {
+    final h = await pumpPlayer(tester);
+    // 电视数字键 5 → 50%（总长 20 分钟）
+    await press(tester, LogicalKeyboardKey.digit5);
+    await tester.pump(const Duration(seconds: 1));
+    expect(h.engine.seeks.last, const Duration(minutes: 10));
+
+    PlatformProfile.debugOverride = PlatformProfile.desktop;
+    await tester.sendKeyDownEvent(LogicalKeyboardKey.shiftLeft);
+    await press(tester, LogicalKeyboardKey.arrowRight);
+    await tester.sendKeyUpEvent(LogicalKeyboardKey.shiftLeft);
+    await tester.pump(const Duration(seconds: 1));
+    expect(h.engine.seeks.last, const Duration(minutes: 11));
+
+    await press(tester, LogicalKeyboardKey.bracketRight);
+    expect(h.engine.state.value.rate, 1.25);
+    await press(tester, LogicalKeyboardKey.bracketLeft);
+    await press(tester, LogicalKeyboardKey.bracketLeft);
+    expect(h.engine.state.value.rate, 0.75);
+    await press(tester, LogicalKeyboardKey.backslash);
+    expect(h.engine.state.value.rate, 1);
+
+    await tester.sendKeyDownEvent(LogicalKeyboardKey.controlLeft);
+    await press(tester, LogicalKeyboardKey.arrowRight);
+    await press(tester, LogicalKeyboardKey.arrowRight);
+    await tester.sendKeyUpEvent(LogicalKeyboardKey.controlLeft);
+    expect(h.engine.subtitleDelay, const Duration(milliseconds: 200));
+    // Ctrl+→ 不快进
+    await tester.pump(const Duration(seconds: 1));
+    expect(h.engine.seeks.last, const Duration(minutes: 11));
+    await unmountPlayer(tester);
+  });
+
+  testWidgets('电视：按住 → 越按越快（按时间算，不按连发次数）', (tester) async {
+    final h = await pumpPlayer(tester);
+    PlayerPage.debugNow = () => tester.binding.clock.now();
+    addTearDown(() => PlayerPage.debugNow = DateTime.now);
+    await tester.sendKeyDownEvent(LogicalKeyboardKey.arrowRight);
+    // 模拟按住 5 秒，每 100 毫秒一次连发
+    for (var i = 0; i < 50; i++) {
+      await tester.pump(const Duration(milliseconds: 100));
+      await tester.sendKeyRepeatEvent(LogicalKeyboardKey.arrowRight);
+    }
+    await tester.sendKeyUpEvent(LogicalKeyboardKey.arrowRight);
+    await tester.pump(const Duration(seconds: 1));
+    // 头 1.5 秒每秒约 1 分钟、到 4 秒每秒约 4 分钟、之后每秒约 16 分钟：5 秒到片尾（20 分钟）附近
+    expect(h.engine.seeks.last, greaterThan(const Duration(minutes: 15)));
     await unmountPlayer(tester);
   });
 }

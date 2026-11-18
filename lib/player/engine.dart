@@ -164,6 +164,21 @@ class EngineOptions {
   final bool tunneling;
 }
 
+/// 画面比例
+enum VideoFit {
+  /// 完整显示，保持比例（有黑边）
+  contain('适应'),
+
+  /// 铺满屏幕，保持比例（裁掉多出的部分）
+  cover('填满'),
+
+  /// 铺满屏幕，不保持比例
+  fill('拉伸');
+
+  const VideoFit(this.label);
+  final String label;
+}
+
 abstract class PlayerEngine {
   EngineKind get kind;
 
@@ -182,6 +197,18 @@ abstract class PlayerEngine {
 
   /// 播放器音量 0–1（Windows 播放页调节；电视用系统音量，ExoPlayer 不需要实现）
   Future<void> setVolume(double volume) async {}
+
+  /// 字幕延迟（正数 = 字幕推后）。ExoPlayer 不支持，只有 mpv 实现
+  Future<void> setSubtitleDelay(Duration delay) async {}
+
+  /// 字幕大小倍数（1 = 默认）
+  Future<void> setSubtitleScale(double scale) async {}
+
+  /// 画面比例：适应 / 填满（裁切）/ 拉伸
+  Future<void> setVideoFit(VideoFit fit) async {}
+
+  /// 这个内核能不能调字幕延迟
+  bool get supportsSubtitleDelay => false;
   Future<void> selectAudio(EngineTrack track);
 
   /// null = 关闭字幕
