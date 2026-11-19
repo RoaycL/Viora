@@ -722,6 +722,9 @@ class _PlayerPageState extends ConsumerState<PlayerPage> with WidgetsBindingObse
         if (skipTo != null && mounted) {
           from = skipTo.end;
           _startupSkipped = skipTo;
+          debugPrint(
+            'segments: 起播直接跳过片头（自动模式）${skipTo.start.inSeconds}-${skipTo.end.inSeconds}s，从 ${skipTo.end.inSeconds}s 打开',
+          );
           showToast('已为您跳过片头，如需调整请到「设置 → 片头片尾」', duration: const Duration(seconds: 4));
         }
       }
@@ -950,6 +953,7 @@ class _PlayerPageState extends ConsumerState<PlayerPage> with WidgetsBindingObse
             },
             onPrompt: (action) {
               if (!mounted || _samePrompt(action, _skipPrompt)) return;
+              if (action != null) debugPrint('segments: 显示跳过按钮 ${_describeSkip(action)}');
               setState(() {
                 _skipPrompt = action;
                 _skipFaded = false;
@@ -967,11 +971,13 @@ class _PlayerPageState extends ConsumerState<PlayerPage> with WidgetsBindingObse
                 'segments: ${item.name} tmdb=${query.tmdbId} imdb=${query.imdbId} '
                 's${query.season}e${query.episode} ${duration.inSeconds}s → '
                 '${r.segments.isEmpty ? '没有片段' : r.segments.map((s) => '${s.type.name}@${s.provider} ${s.start.inSeconds}-${s.end.inSeconds}s').join(', ')}'
-                '${r.fromCache ? '（缓存）' : ''}${r.failures.isEmpty ? '' : ' 失败：${r.failures.map((k, v) => MapEntry(k, v.name))}'}',
+                '${r.fromCache ? '（缓存）' : ''}${r.failures.isEmpty ? '' : ' 失败：${r.failures.map((k, v) => MapEntry(k, v.name))}'}'
+                ' 模式：片头=${settings.intro.name} 片尾=${settings.credits.name}',
               );
               if (mounted) setState(() => _segmentList = r.segments);
             },
             onAutoSkip: (action) {
+              debugPrint('segments: 自动跳过 ${_describeSkip(action)}');
               if (action.kind == SegmentSkipActionKind.nextEpisode) {
                 _autoNextPending = true;
               } else {
@@ -979,6 +985,7 @@ class _PlayerPageState extends ConsumerState<PlayerPage> with WidgetsBindingObse
               }
             },
             onActionError: (e) => debugPrint('segments: $e'),
+            onLog: (m) => debugPrint('segments: $m'),
           )..begin(
             query,
             settings,
@@ -1291,8 +1298,16 @@ class _PlayerPageState extends ConsumerState<PlayerPage> with WidgetsBindingObse
 
   void _activateSkip() {
     final action = _skipPrompt;
-    if (action != null) _segments?.activate(action);
+    if (action == null) return;
+    debugPrint('segments: 手动跳过 ${_describeSkip(action)}');
+    _segments?.activate(action);
   }
+
+  /// 写日志用：片段类型、范围、当前位置和动作
+  String _describeSkip(SegmentSkipAction a) =>
+      '${a.segment.type.name} ${a.segment.start.inSeconds}-${a.segment.end.inSeconds}s '
+      '@${_state.position.inSeconds}s → '
+      '${a.kind == SegmentSkipActionKind.nextEpisode ? '下一集' : '${a.target.inSeconds}s'}';
 
   void _handoffTo(String route) {
     _handoff = true;

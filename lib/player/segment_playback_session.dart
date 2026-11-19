@@ -14,6 +14,7 @@ class SegmentPlaybackSession {
     required this.onPrompt,
     this.onResolution,
     this.onActionError,
+    this.onLog,
     this.onAutoSkip,
     DateTime Function()? now,
   }) : _now = now ?? DateTime.now;
@@ -24,6 +25,9 @@ class SegmentPlaybackSession {
   final void Function(SegmentSkipAction?) onPrompt;
   final void Function(SegmentResolution)? onResolution;
   final void Function(Object)? onActionError;
+
+  /// 跳转结果（生效 / 重发），写进日志排查「没跳过」
+  final void Function(String)? onLog;
 
   /// 自动跳过发生时（界面提示"已跳过片头"）
   final void Function(SegmentSkipAction)? onAutoSkip;
@@ -166,6 +170,11 @@ class SegmentPlaybackSession {
     // 到了目标附近，或用户自己拖走了：完成
     if (position >= action.target - const Duration(seconds: 1) || !segment.contains(position)) {
       _verifying = null;
+      onLog?.call(
+        position >= action.target - const Duration(seconds: 1)
+            ? '跳过${segment.type.name}已生效：第 $_seekAttempts 次跳转后位置 ${position.inSeconds}s'
+            : '跳过${segment.type.name}期间位置移到 ${position.inSeconds}s（片段外），不再确认',
+      );
       return false;
     }
     if (_now().difference(_seekSentAt) < seekRetryAfter) return true;
@@ -176,6 +185,7 @@ class SegmentPlaybackSession {
     }
     _seekAttempts++;
     _seekSentAt = _now();
+    onLog?.call('跳过${segment.type.name}还没生效（位置 ${position.inSeconds}s），第 $_seekAttempts 次重发跳转');
     final generation = _generation;
     _inFlight = true;
     seek(action.target)
