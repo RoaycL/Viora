@@ -53,7 +53,7 @@ import '../danmaku/danmaku_service.dart';
 import '../segments/segment_service.dart';
 import 'mini_player.dart';
 import 'player_osd.dart';
-import 'subtitle_position_adjuster.dart';
+import 'slider_adjuster.dart';
 
 /// 连续自动播放（片尾倒计时结束、播完自动下一集，中间没有任何按键 / 点击）了几集：到 3 集时问「还在观看吗？」
 int _autoPlayStreak = 0;
@@ -928,7 +928,7 @@ class _PlayerPageState extends ConsumerState<PlayerPage> with WidgetsBindingObse
     if (_danmakuReady() == null) return;
     // 每次显示时重新生成：二级菜单里改了样式，回到这一级显示新的值
     await showContextMenu(context, anchored: true, title: _danmakuTitle, actionsBuilder: _danmakuItems);
-    if (mounted) _focus.requestFocus();
+    if (mounted && _adjusting == null) _focus.requestFocus();
   }
 
   /// 弹幕服务器和要找弹幕的那一集；没配置服务器时提示并返回 null
@@ -982,6 +982,13 @@ class _PlayerPageState extends ConsumerState<PlayerPage> with WidgetsBindingObse
       ),
       MenuAction('搜索「${target.title}」并选择', Icons.manage_search_rounded, () => _searchDanmaku(target.title)),
       MenuAction('按关键词搜索…', Icons.keyboard_rounded, () => _searchDanmakuByKeyword(target.title)),
+      if (PlatformProfile.isDesktop)
+        MenuAction(
+          '时间偏移 · ${SliderSpec.danmakuShift.format(shift / 1000)}',
+          Icons.schedule_rounded,
+          () => _startAdjust(_Adjusting.danmakuShift),
+        )
+      else
       MenuAction.submenu(
         '时间偏移 · ${shift == 0 ? '无' : '${shift > 0 ? '+' : ''}${(shift / 1000).toStringAsFixed(1)} 秒'}',
         Icons.schedule_rounded,
@@ -1253,7 +1260,7 @@ class _PlayerPageState extends ConsumerState<PlayerPage> with WidgetsBindingObse
 
   void _showOsd({bool sticky = false}) {
     // 调整字幕位置时控制层不出来，免得挡住画面
-    if (_adjustingSubtitle) return;
+    if (_adjusting != null) return;
     _osdTimer?.cancel();
     if (!_osd && mounted) setState(() => _osd = true);
     if (!sticky) _armOsdTimer();
@@ -1399,34 +1406,76 @@ class _PlayerPageState extends ConsumerState<PlayerPage> with WidgetsBindingObse
     ref.read(configProvider.notifier).update((c) => c.copyWith(playback: c.playback.copyWith(subtitleScale: scale)));
   }
 
-  /// 正在调整字幕位置（画面上显示位置预览框和百分比滑块，控制层收起）
-  bool _adjustingSubtitle = false;
+  // ───────────────────────── 滑块调整（Windows）─────────────────────────
 
-  /// 调整中、还没保存的位置（返回键完成时用）
-  int? _pendingSubtitlePosition;
+  /// 正在用滑块调整的一项（字幕位置 / 字幕延迟 / 弹幕时间）；null = 没在调整。调整时控制层收起
+  _Adjusting? _adjusting;
 
-  void _previewSubtitlePosition(int position) {
-    _pendingSubtitlePosition = position;
-    _engine?.setSubtitlePosition(position);
-  }
+  /// 调整中、还没保存的值（返回键完成时用）
+  double? _adjustValue;
 
-  void _startSubtitleAdjust() {
+  /// 关掉所有菜单（包括上一级的「播放设置」），打开滑块面板
+  void _startAdjust(_Adjusting what) {
+    Navigator.of(context).popUntil((r) => r is! PopupRoute);
     _osdTimer?.cancel();
     setState(() {
-      _adjustingSubtitle = true;
-      _pendingSubtitlePosition = null;
+      _adjusting = what;
+      _adjustValue = null;
       _panel = OsdPanel.none;
       _osd = false;
     });
   }
 
-  /// 调整完成：保存位置，焦点回到播放器
-  void _finishSubtitleAdjust(int position) {
+  double get _adjustInitial => switch (_adjusting) {
+    _Adjusting.subtitlePosition => SubtitleLift.fromPosition(ref.read(configProvider).playback.subtitlePosition)
+        .toDouble(),
+    _Adjusting.subtitleDelay => _subDelay.inMilliseconds / 1000,
+    _Adjusting.danmakuShift => _danmakuChoice.shiftMs / 1000,
+    null => 0,
+  };
+
+  /// 拖动中：实时作用到画面上（字幕位置、字幕延迟直接改内核；弹幕偏移直接改显示）
+  void _previewAdjust(double v) {
+    _adjustValue = v;
+    switch (_adjusting) {
+      case _Adjusting.subtitlePosition:
+        _engine?.setSubtitlePosition(SubtitleLift.toPosition(v.round()));
+      case _Adjusting.subtitleDelay:
+        _subDelay = Duration(milliseconds: (v * 1000).round());
+        _engine?.setSubtitleDelay(_subDelay);
+      case _Adjusting.danmakuShift:
+        setState(() => _danmakuChoice = _danmakuChoice.copyWith(shiftMs: (v * 1000).round()));
+      case null:
+    }
+  }
+
+  /// 调整完成：保存，焦点回到播放器
+  void _finishAdjust(double v) {
+    final what = _adjusting;
+    _previewAdjust(v);
+    _adjustValue = null;
+    setState(() => _adjusting = null);
+    _focus.requestFocus();
+    switch (what) {
+      case _Adjusting.subtitlePosition:
+        final position = SubtitleLift.toPosition(v.round());
+        ref
+            .read(configProvider.notifier)
+            .update((c) => c.copyWith(playback: c.playback.copyWith(subtitlePosition: position)));
+      case _Adjusting.danmakuShift:
+        final target = _danmakuTarget;
+        if (target != null) unawaited(DanmakuChoiceStore.set(target.key, _danmakuChoice));
+      case _Adjusting.subtitleDelay || null:
+    }
+  }
+
+  /// 电视：字幕上下微调（菜单里每次 5%）。delta 为正往上移，null = 恢复默认
+  void _moveSubtitle(int? delta) {
+    final current = ref.read(configProvider).playback.subtitlePosition;
+    final position = delta == null ? 100 : SubtitleLift.toPosition(SubtitleLift.fromPosition(current) + delta);
     _engine?.setSubtitlePosition(position);
     ref.read(configProvider.notifier).update((c) => c.copyWith(playback: c.playback.copyWith(subtitlePosition: position)));
-    _pendingSubtitlePosition = null;
-    setState(() => _adjustingSubtitle = false);
-    _focus.requestFocus();
+    showToast('字幕位置：${SubtitleLift.label(position)}');
   }
 
   /// 起播 / 换源后把当前的显示设置交给内核（换源会新开媒体，内核可能是新的）
@@ -1487,8 +1536,8 @@ class _PlayerPageState extends ConsumerState<PlayerPage> with WidgetsBindingObse
   /// 键盘 Esc 等由 [_onKey] 调这里
   bool _handleBack() {
     if (!mounted) return false;
-    if (_adjustingSubtitle) {
-      _finishSubtitleAdjust(_pendingSubtitlePosition ?? ref.read(configProvider).playback.subtitlePosition);
+    if (_adjusting != null) {
+      _finishAdjust(_adjustValue ?? _adjustInitial);
       return true;
     }
     if (_nextCountdown != null) {
@@ -1693,7 +1742,8 @@ class _PlayerPageState extends ConsumerState<PlayerPage> with WidgetsBindingObse
     final restore = FocusManager.instance.primaryFocus;
     _showOsd(sticky: true);
     await show();
-    if (!mounted) return;
+    // 菜单里选了滑块调整：焦点交给滑块面板，不还给原来的按钮
+    if (!mounted || _adjusting != null) return;
     // Windows 用鼠标操作、菜单关闭时鼠标已不在控制栏上：焦点回到画面，按钮不保持高亮
     final pointerAway = PlatformProfile.isDesktop && InputMode.pointer && !_hoverControls;
     (!pointerAway && restore != null && restore.context != null && restore.context!.mounted ? restore : _focus)
@@ -1774,13 +1824,31 @@ class _PlayerPageState extends ConsumerState<PlayerPage> with WidgetsBindingObse
             MenuAction('$label${v == scale ? '  ✓' : ''}', Icons.format_size_rounded, () => _setSubtitleScale(v)),
         ],
       ),
-      if (_engine?.supportsSubtitlePosition ?? false)
+      // Windows：打开滑块精确调整；电视：仍是菜单，每次 5%
+      if ((_engine?.supportsSubtitlePosition ?? false) && PlatformProfile.isDesktop)
         MenuAction(
           '字幕位置 · ${SubtitleLift.label(position)}',
           Icons.vertical_align_center_rounded,
-          _startSubtitleAdjust,
+          () => _startAdjust(_Adjusting.subtitlePosition),
+        )
+      else if (_engine?.supportsSubtitlePosition ?? false)
+        MenuAction.submenu(
+          '字幕位置 · ${SubtitleLift.label(position)}',
+          Icons.vertical_align_center_rounded,
+          title: '字幕位置',
+          items: () => [
+            MenuAction('上移 5%', Icons.arrow_upward_rounded, () => _moveSubtitle(5)),
+            MenuAction('下移 5%', Icons.arrow_downward_rounded, () => _moveSubtitle(-5)),
+            MenuAction('恢复默认', Icons.restart_alt_rounded, () => _moveSubtitle(null)),
+          ],
         ),
-      if (_engine?.supportsSubtitleDelay ?? false)
+      if ((_engine?.supportsSubtitleDelay ?? false) && PlatformProfile.isDesktop)
+        MenuAction(
+          '字幕延迟 · ${SliderSpec.subtitleDelay.format(_subDelay.inMilliseconds / 1000)}',
+          Icons.schedule_rounded,
+          () => _startAdjust(_Adjusting.subtitleDelay),
+        )
+      else if (_engine?.supportsSubtitleDelay ?? false)
         MenuAction.submenu(
           '字幕延迟 · ${_subDelay == Duration.zero ? '无' : '${_subDelay.isNegative ? '' : '+'}${(_subDelay.inMilliseconds / 1000).toStringAsFixed(1)} 秒'}',
           Icons.schedule_rounded,
@@ -2417,14 +2485,22 @@ class _PlayerPageState extends ConsumerState<PlayerPage> with WidgetsBindingObse
                               ],
                             ),
                     ),
-                  // 调整字幕位置：盖在最上层（画面上的位置预览框 + 百分比滑块）
-                  if (engine != null && _adjustingSubtitle && !mini)
+                  // 滑块调整（Windows）：盖在最上层；调字幕位置时画面上还有位置预览框
+                  if (engine != null && _adjusting != null && !mini)
                     Positioned.fill(
-                      child: SubtitlePositionAdjuster(
-                        position: ref.read(configProvider).playback.subtitlePosition,
-                        scale: ref.read(configProvider).playback.subtitleScale,
-                        onChanged: _previewSubtitlePosition,
-                        onDone: _finishSubtitleAdjust,
+                      child: SliderAdjuster(
+                        key: ValueKey(_adjusting),
+                        spec: switch (_adjusting!) {
+                          _Adjusting.subtitlePosition => SliderSpec.subtitleLift,
+                          _Adjusting.subtitleDelay => SliderSpec.subtitleDelay,
+                          _Adjusting.danmakuShift => SliderSpec.danmakuShift,
+                        },
+                        value: _adjustInitial,
+                        subtitleScale: _adjusting == _Adjusting.subtitlePosition
+                            ? ref.read(configProvider).playback.subtitleScale
+                            : null,
+                        onChanged: _previewAdjust,
+                        onDone: _finishAdjust,
                       ),
                     ),
                 ],
@@ -2726,3 +2802,6 @@ class _SkipButton extends StatelessWidget {
     );
   }
 }
+
+/// 播放页里用滑块调整的项（Windows）
+enum _Adjusting { subtitlePosition, subtitleDelay, danmakuShift }
