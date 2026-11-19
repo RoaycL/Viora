@@ -322,7 +322,7 @@ class AssrtClient implements OnlineSubtitleProvider {
       final r = await _dio.get<Object>(
         '$_baseUrl$path',
         queryParameters: {'token': token, ...query},
-        options: Options(responseType: ResponseType.plain, headers: {'User-Agent': 'Viora v$subtitleClientVersion'}),
+        options: Options(headers: {'User-Agent': 'Viora v$subtitleClientVersion'}),
       );
       body = r.data;
     } on DioException catch (e) {
@@ -330,11 +330,13 @@ class AssrtClient implements OnlineSubtitleProvider {
       body = e.response?.data;
       if (body == null) throw OnlineSubtitleException('射手网（伪）请求失败：${_dioMessage(e)}');
     }
-    Object? j;
-    try {
-      j = jsonDecode(body?.toString() ?? '{}');
-    } on FormatException {
-      j = null;
+    Object? j = body;
+    if (body is String) {
+      try {
+        j = jsonDecode(body);
+      } on FormatException {
+        j = null;
+      }
     }
     if (j is! Map<String, dynamic>) throw const OnlineSubtitleException('射手网（伪）返回格式不对');
     final status = (j['status'] as num?)?.toInt() ?? 0;
