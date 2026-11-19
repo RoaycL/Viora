@@ -5,6 +5,7 @@ import '../../data/media/media_models.dart';
 import '../../data/media/server_registry.dart';
 import 'art.dart';
 import 'cached_image.dart';
+import 'image_fade_in.dart';
 import 'image_sizing.dart';
 
 /// 媒体服务器上的图片：地址经过线路 / 代理改写，请求带 UA。
@@ -51,19 +52,8 @@ class ServerImage extends ConsumerWidget {
       alignment: alignment,
       gaplessPlayback: true,
       filterQuality: FilterQuality.medium,
-      frameBuilder: (context, child, frame, sync) => sync
-          ? child
-          : Stack(
-              fit: StackFit.expand,
-              children: [
-                fallback,
-                AnimatedOpacity(
-                  opacity: frame == null ? 0 : 1,
-                  duration: const Duration(milliseconds: 250),
-                  child: child,
-                ),
-              ],
-            ),
+      frameBuilder: (context, child, frame, sync) =>
+          sync ? child : ImageFadeIn(loaded: frame != null, placeholder: fallback, child: child),
       errorBuilder: (_, _, _) => errorFallback ?? fallback,
     );
   }

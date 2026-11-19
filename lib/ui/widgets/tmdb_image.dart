@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../data/tmdb/tmdb_client.dart';
 import 'art.dart';
 import 'cached_image.dart';
+import 'image_fade_in.dart';
 import 'image_sizing.dart';
 import 'server_image.dart';
 
@@ -83,21 +84,12 @@ class TmdbImage extends ConsumerWidget {
       filterQuality: FilterQuality.medium,
       frameBuilder: (context, child, frame, sync) => sync
           ? child
-          : Stack(
-              fit: StackFit.expand,
-              children: [
-                // 透明图（Logo）加载完成后隐藏占位，避免文字标题和 Logo 叠在一起
-                AnimatedOpacity(
-                  opacity: frame != null && this.fallback != null ? 0 : 1,
-                  duration: const Duration(milliseconds: 250),
-                  child: fallback,
-                ),
-                AnimatedOpacity(
-                  opacity: frame == null ? 0 : 1,
-                  duration: const Duration(milliseconds: 250),
-                  child: child,
-                ),
-              ],
+          // 透明图（Logo）加载完成后隐藏占位，避免文字标题和 Logo 叠在一起
+          : ImageFadeIn(
+              loaded: frame != null,
+              placeholder: fallback,
+              fadeOutPlaceholder: this.fallback != null,
+              child: child,
             ),
       errorBuilder: (_, _, _) => errorFallback ?? fallback,
     );
