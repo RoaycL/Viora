@@ -5,6 +5,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../app/theme.dart';
+import '../../core/net/error_text.dart';
 import '../../data/aggregate/sources.dart';
 import '../../data/aggregate/tmdb_link.dart';
 import '../../data/config/config_store.dart';
@@ -26,7 +27,7 @@ import '../metadata/external_ratings.dart';
 import 'tmdb_cards.dart';
 
 /// TMDB 作品详情：媒体库里没有的作品（首页推荐、人物作品、相似推荐点进来）。
-/// 进入后才到各服务器搜索资源（[tmdbLibrarySearchProvider]），找到时可直接播放或选择资源。
+/// 进入后才到各服务器搜索资源（[tmdbLibrarySearchProvider]），找到时可直接播放，资源列在下方。
 class TmdbDetailPage extends ConsumerWidget {
   const TmdbDetailPage({super.key, required this.isTv, required this.id});
 
@@ -42,7 +43,7 @@ class TmdbDetailPage extends ConsumerWidget {
         AsyncData(value: final t?) => _TmdbDetail(t),
         AsyncData() => const _Message('没有配置 TMDB'),
         AsyncError(:final error) => _Message(
-          '加载失败：$error',
+          '加载失败：${errorText(error)}',
           onRetry: () => ref.invalidate(tmdbTitleProvider((isTv: isTv, id: id))),
         ),
         _ => DetailLoading(seed: '${isTv ? 'tv' : 'movie'}/$id', onBack: () => context.pop()),
@@ -121,7 +122,17 @@ class _TmdbDetailState extends ConsumerState<_TmdbDetail> {
     final optionsAsync = t.isTv
         ? ref.watch(tmdbEpisodeSourcesProvider((title: key, season: season, episode: episode)))
         : ref.watch(tmdbSourceOptionsProvider(key));
-    final options = visibleSourceOptions(ref.read(configProvider), optionsAsync.value ?? const <SourceOption>[]);
+    // 各服务器的版本谁先返回先显示（逐台补上），全部返回后换成完整列表
+    final partial = optionsAsync.hasValue
+        ? null
+        : ref.watch(
+            partialSourcesProvider(
+              t.isTv
+                  ? tmdbEpisodeSourcesKey((title: key, season: season, episode: episode))
+                  : tmdbSourcesKey(key),
+            ),
+          );
+    final options = visibleSourceOptions(ref.read(configProvider), optionsAsync.value ?? partial ?? const []);
     final loading = search.isLoading || (libraryEpisodes?.isLoading ?? false) || optionsAsync.isLoading;
     final selected = options.where((o) => sourceKeyOf(o) == _sourceKey).firstOrNull ?? options.firstOrNull;
     final hasServers = ref.watch(configProvider.select((c) => c.servers.isNotEmpty));
@@ -136,7 +147,7 @@ class _TmdbDetailState extends ConsumerState<_TmdbDetail> {
     final resumeAt = selected?.item.position ?? Duration.zero;
     final epLabel = 'S${season}E$episode';
     String playLabel() {
-      if (!found) return loading ? '正在加载' : '暂无可播放资源';
+      if (!found) return loading ? '正在获取资源' : '暂无可播放资源';
       final what = t.isTv ? ' $epLabel' : '';
       return resumeAt > Duration.zero ? '继续$what · ${formatClock(resumeAt)}' : '播放$what';
     }
@@ -235,7 +246,6 @@ class _TmdbDetailState extends ConsumerState<_TmdbDetail> {
             itemKeys: [
               'play',
               if (selected != null && resumeAt > Duration.zero) 'restart',
-              'resources',
               if (t.overview.isNotEmpty) 'overview',
               if (copies.isNotEmpty) 'library',
             ],
@@ -256,12 +266,6 @@ class _TmdbDetailState extends ConsumerState<_TmdbDetail> {
                   label: '从头播放',
                   onPressed: () => _play(selected, fromStart: true),
                 ),
-              (node) => PillButton(
-                focusNode: node,
-                icon: Icons.video_library_outlined,
-                label: '选择资源',
-                onPressed: () => _sources.currentState?.reveal(),
-              ),
               if (t.overview.isNotEmpty)
                 (node) => PillButton(
                   focusNode: node,
@@ -276,7 +280,7 @@ class _TmdbDetailState extends ConsumerState<_TmdbDetail> {
                   tooltip: '媒体库详情',
                   onPressed: () {
                     final c = copies.where((c) => c.serverId == selected?.serverId).firstOrNull ?? copies.first;
-                    context.push('/item/${c.serverId}/${c.id}');
+                    openMediaItem(context, c);
                   },
                 ),
             ],

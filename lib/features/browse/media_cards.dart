@@ -5,12 +5,14 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../data/media/media_models.dart';
+import '../../data/media/server_registry.dart';
 import '../../data/tmdb/tmdb_client.dart';
 import '../../ui/rows/cards.dart';
 import '../../ui/widgets/server_image.dart';
 
 /// 打开条目：可播放的条目（电影 / 单集）进详情页，剧集进详情页，文件夹进网格。
 void openMediaItem(BuildContext context, MediaItem item) {
+  ItemSeeds.remember(item);
   context.push('/item/${item.serverId}/${item.id}');
 }
 

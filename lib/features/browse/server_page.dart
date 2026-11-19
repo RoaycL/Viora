@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../app/theme.dart';
+import '../../core/net/error_text.dart';
 import '../../data/config/config_store.dart';
 import '../../data/media/media_models.dart';
 import '../../data/media/server_registry.dart';
@@ -55,7 +56,7 @@ class ServerPage extends ConsumerWidget {
             ),
             switch (libraries) {
               AsyncError(:final error) => _ErrorBox(
-                message: error.toString(),
+                message: errorText(error),
                 onRetry: () => ref.invalidate(librariesProvider(serverId)),
               ),
               AsyncData(value: final libs) => Column(

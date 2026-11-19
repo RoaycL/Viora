@@ -35,6 +35,7 @@ import '../segments/segment_settings_section.dart';
 import '../sync/sync_settings_section.dart';
 import '../update/update_controller.dart';
 import '../update/update_dialog.dart';
+import 'online_subtitle_settings_section.dart';
 import 'support_actions.dart';
 
 /// 设置（docs/06-ui-design.md §9）：播放、片头片尾、弹幕、媒体服务器、接口与网络、同步与备份、通用与关于。
@@ -674,6 +675,9 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
           const _Subtitle('评分（OMDb / Trakt / MDBList）'),
           const RatingsSettingsSection(),
           const SizedBox(height: 36),
+          const _Subtitle('在线字幕'),
+          const OnlineSubtitleSettingsSection(),
+          const SizedBox(height: 36),
           const _Subtitle('片头片尾数据库'),
           const SegmentSettingsSection(apiSources: true),
           const SizedBox(height: 36),
@@ -736,7 +740,7 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
             ValueListenableBuilder<AppIconStyle>(
               valueListenable: DesktopPrefs.instance.iconStyle,
               builder: (context, v, _) => VChoice<AppIconStyle>(
-                label: '桌面图标（任务栏、桌面和开始菜单的快捷方式；应用里的图标不变）',
+                label: '桌面图标',
                 options: [for (final s in AppIconStyle.values) (s, s.label)],
                 value: v,
                 onChanged: DesktopPrefs.instance.setIconStyle,
@@ -747,7 +751,7 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
               valueListenable: DesktopPrefs.instance.navCompact,
               builder: (context, compact, _) => VChoice<bool>(
                 label: '左侧导航栏',
-                options: const [(false, '默认（一长条）'), (true, '紧凑（上下居中）')],
+                options: const [(false, '默认'), (true, '居中')],
                 value: compact,
                 onChanged: DesktopPrefs.instance.setNavCompact,
               ),
@@ -929,6 +933,7 @@ const _settingIndex = <_SettingIndexEntry>[
   _SettingIndexEntry('跟随 Windows 系统代理', _Category.network, '系统代理 Clash VPN proxy'),
   _SettingIndexEntry('TMDB API', _Category.network, 'TMDB API Key 元数据 推荐 中文标题'),
   _SettingIndexEntry('评分', _Category.network, 'OMDb Trakt MDBList IMDb 烂番茄'),
+  _SettingIndexEntry('在线字幕', _Category.network, '字幕 射手网 assrt OpenSubtitles 下载 token 账号'),
   _SettingIndexEntry('片头片尾数据库', _Category.network, 'TheIntroDB 代理'),
   _SettingIndexEntry('自定义更新地址', _Category.network, 'latest.json GitHub 更新'),
   // 同步与备份

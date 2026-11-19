@@ -7,6 +7,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import '../config/config_store.dart';
 import '../config/app_config.dart';
 import '../cache/account_scope.dart';
+import '../emby/emby_client.dart';
 import '../index/index_sync.dart';
 import '../index/media_index.dart';
 import '../media/media_models.dart';
@@ -133,13 +134,71 @@ class PreferredServers {
 
 typedef SourcesKey = ({String serverId, String itemId});
 
+/// 详情页「逐台显示」：各服务器的版本陆续返回时的中间结果（已排序）。
+/// 查找还没结束时页面先显示这里的版本，全部返回后改用完整结果。键见 [itemSourcesKey] 等。
+final partialSourcesProvider = NotifierProvider.autoDispose.family<PartialSources, List<SourceOption>?, String>(
+  PartialSources.new,
+);
+
+class PartialSources extends Notifier<List<SourceOption>?> {
+  PartialSources(this.key);
+
+  final String key;
+
+  @override
+  List<SourceOption>? build() => null;
+
+  void publish(List<SourceOption> options) => state = options;
+}
+
+/// 逐台返回的中间结果 + 当前服务器自己的版本（中间结果里还没有的接在后面）
+List<SourceOption> mergeSourceOptions(List<SourceOption>? partial, List<SourceOption>? home) {
+  if (partial == null || partial.isEmpty) return home ?? const [];
+  String id(SourceOption o) => '${o.serverId}/${o.item.id}/${o.source.id}';
+  final seen = {for (final o in partial) id(o)};
+  return [...partial, ...?home?.where((o) => seen.add(id(o)))];
+}
+
+String itemSourcesKey(SourcesKey k) => 'item:${k.serverId}/${k.itemId}';
+String libraryEpisodeSourcesKey(LibraryEpisodeKey k) =>
+    'lib:${k.series.home.serverId}/${k.series.home.itemId}/${k.season}/${k.episode}';
+String tmdbSourcesKey(TmdbSearchKey k) => 'tmdb:${k.isTv}/${k.id}';
+String tmdbEpisodeSourcesKey(TmdbEpisodeKey k) => 'tmdbep:${k.title.id}/${k.season}/${k.episode}';
+
+/// 收集陆续返回的版本，每来一批就排好序发布到 [partialSourcesProvider]
+class _Collector {
+  _Collector(this.ref, this.key, this.rank);
+
+  final Ref ref;
+  final String key;
+  final List<SourceOption> Function(List<SourceOption>) rank;
+  final _all = <SourceOption>[];
+
+  void add(List<SourceOption> options) {
+    if (options.isEmpty || !ref.mounted) return;
+    _all.addAll(options);
+    ref.read(partialSourcesProvider(key).notifier).publish(rank(List.of(_all)));
+  }
+}
+
+/// 取条目详情；这台服务器出错时用打开详情页时卡片上的信息（[ItemSeeds]），都没有才报错
+Future<MediaItem> _itemOrSeed(EmbyClient client, String serverId, String itemId) async {
+  try {
+    return await client.item(itemId);
+  } catch (_) {
+    final seed = ItemSeeds.of(serverId, itemId);
+    if (seed == null) rethrow;
+    return seed;
+  }
+}
+
 /// 某个电影 / 单集在所有服务器上的可播放版本（已排序）。
 final sourceOptionsProvider = FutureProvider.family<List<SourceOption>, SourcesKey>((ref, key) async {
   ref.watch(mediaFeedScopeProvider);
   ref.watch(indexRevisionProvider);
   final home = ref.watch(serverClientProvider(key.serverId));
   if (home == null) return const [];
-  final target = await home.item(key.itemId);
+  final target = await _itemOrSeed(home, key.serverId, key.itemId);
   final index = await ref.read(mediaIndexProvider.future);
 
   // 1. 找到每台服务器上对应的条目：本地索引 + 到参与聚合搜索的服务器上实时搜索（索引里没对上的也能找到）
@@ -164,14 +223,28 @@ final sourceOptionsProvider = FutureProvider.family<List<SourceOption>, SourcesK
     return found.values.toList();
   }
 
-  final perServer = <MediaItem>[target];
   MediaItem titleItem = target;
   if (target.kind == MediaKind.episode && target.seriesId != null) {
-    final series = await home.item(target.seriesId!);
-    titleItem = series;
-    final copies = await copiesOf(series);
+    final seriesId = target.seriesId!;
+    titleItem = await _itemOrSeed(home, target.serverId, seriesId).catchError(
+      (Object _) => MediaItem(
+        serverId: target.serverId,
+        id: seriesId,
+        kind: MediaKind.series,
+        name: target.seriesName ?? target.name,
+      ),
+    );
+  }
+  final preferred = await PreferredServers.get(titleKeyOf(titleItem));
+  final collector = _Collector(ref, itemSourcesKey(key), (o) => _rank(ref, o, preferred, home: target.serverId));
+
+  // 2. 当前服务器的版本先查（不等其他服务器搜索），各服务器的版本谁先返回先显示
+  final own = _optionsOf(ref, [target], onEach: collector.add);
+  final copies = <MediaItem>[];
+  if (target.kind == MediaKind.episode && target.seriesId != null) {
+    final series = await copiesOf(titleItem);
     final found = await Future.wait(
-      copies.map((c) async {
+      series.map((c) async {
         final client = ref.read(serverClientProvider(c.serverId));
         if (client == null) return null;
         try {
@@ -184,22 +257,27 @@ final sourceOptionsProvider = FutureProvider.family<List<SourceOption>, SourcesK
         }
       }),
     );
-    perServer.addAll(found.whereType<MediaItem>());
+    copies.addAll(found.whereType<MediaItem>());
   } else if (target.kind == MediaKind.movie) {
-    perServer.addAll(await copiesOf(target));
+    copies.addAll(await copiesOf(target));
   }
 
   // 每台服务器只取一个条目（同一台服务器上重复入库的也保留，作为不同版本）
-  final seen = <String>{};
-  final targets = perServer.where((it) => seen.add('${it.serverId}/${it.id}')).toList();
+  final seen = <String>{'${target.serverId}/${target.id}'};
+  final rest = copies.where((it) => seen.add('${it.serverId}/${it.id}')).toList();
 
-  final options = await _optionsOf(ref, targets);
-  final preferred = await PreferredServers.get(titleKeyOf(titleItem));
+  // 先把其他服务器的请求发出去再等：当前服务器慢时不拖住其他服务器
+  final restOptions = _optionsOf(ref, rest, onEach: collector.add);
+  final options = [...await own, ...await restOptions];
   return _rank(ref, options, preferred, home: target.serverId);
 });
 
 /// 并发获取每个条目的播放信息，展开成可播放版本；单台超时 / 失败不拖累整体
-Future<List<SourceOption>> _optionsOf(Ref ref, List<MediaItem> targets) async {
+Future<List<SourceOption>> _optionsOf(
+  Ref ref,
+  List<MediaItem> targets, {
+  void Function(List<SourceOption>)? onEach,
+}) async {
   final config = ref.read(configProvider);
   final results = await Future.wait(
     targets.map((it) async {
@@ -209,7 +287,7 @@ Future<List<SourceOption>> _optionsOf(Ref ref, List<MediaItem> targets) async {
       try {
         final info = await PlaybackPreloader.info(client, it.serverId, it.id).timeout(const Duration(seconds: 8));
         final latency = client.line.latencyMs;
-        return [
+        final options = [
           for (final s in info.sources)
             SourceOption(
               item: it,
@@ -220,6 +298,8 @@ Future<List<SourceOption>> _optionsOf(Ref ref, List<MediaItem> targets) async {
               view: mediaViewScope(config),
             ),
         ];
+        onEach?.call(options);
+        return options;
       } catch (e) {
         debugPrint('playbackInfo ${server.name} failed: $e');
         return const <SourceOption>[];
@@ -235,11 +315,23 @@ final tmdbSourceOptionsProvider = FutureProvider.autoDispose.family<List<SourceO
   key,
 ) async {
   ref.watch(mediaFeedScopeProvider);
+  if (key.isTv) return const [];
+  // 本地索引里已对上的副本先查版本（不等各服务器实时搜索），谁先返回先显示
+  final indexed = ref
+      .read(libraryCopiesProvider((isTv: key.isTv, id: key.id)))
+      .where((c) => ref.read(configProvider).aggregateServerIds.contains(c.serverId))
+      .toList();
+  final preferred = indexed.isEmpty ? null : await PreferredServers.get(titleKeyOf(indexed.first));
+  final collector = _Collector(ref, tmdbSourcesKey(key), (o) => _rank(ref, o, preferred));
+  final early = _optionsOf(ref, indexed, onEach: collector.add);
   final copies = await ref.watch(tmdbLibrarySearchProvider(key).future);
-  if (key.isTv || copies.isEmpty) return const [];
-  final options = await _optionsOf(ref, copies);
-  final preferred = await PreferredServers.get(titleKeyOf(copies.first));
-  return _rank(ref, options, preferred);
+  final seen = {for (final c in indexed) '${c.serverId}/${c.id}'};
+  final rest = copies.where((c) => seen.add('${c.serverId}/${c.id}')).toList();
+  final later = _optionsOf(ref, rest, onEach: collector.add);
+  final options = [...await early, ...await later];
+  if (options.isEmpty && copies.isEmpty) return const [];
+  final remembered = preferred ?? (copies.isEmpty ? null : await PreferredServers.get(titleKeyOf(copies.first)));
+  return _rank(ref, options, remembered);
 });
 
 /// 播放某个版本时记下偏好服务器
@@ -276,9 +368,10 @@ final tmdbEpisodeSourcesProvider = FutureProvider.autoDispose.family<List<Source
   final all = await ref.watch(tmdbSeriesEpisodesProvider(key.title).future);
   final matches = all.where((e) => e.seasonNumber == key.season && e.episodeNumber == key.episode).toList();
   if (matches.isEmpty) return const [];
-  final options = await _optionsOf(ref, matches);
   final copies = await ref.watch(tmdbLibrarySearchProvider(key.title).future);
   final preferred = copies.isEmpty ? null : await PreferredServers.get(titleKeyOf(copies.first));
+  final collector = _Collector(ref, tmdbEpisodeSourcesKey(key), (o) => _rank(ref, o, preferred));
+  final options = await _optionsOf(ref, matches, onEach: collector.add);
   return _rank(ref, options, preferred);
 });
 
@@ -334,10 +427,19 @@ final libraryEpisodeSourcesProvider = FutureProvider.autoDispose.family<List<Sou
   final episodes = await ref.watch(librarySeriesEpisodesProvider(key.series).future);
   final matches = episodes.where((e) => e.seasonNumber == key.season && e.episodeNumber == key.episode).toList();
   if (matches.isEmpty) return const [];
-  final options = await _optionsOf(ref, matches);
-  final series = await ref.watch(itemProvider(key.series.home).future);
-  final preferred = await PreferredServers.get(titleKeyOf(series));
-  return _rank(ref, options, preferred, home: key.series.home.serverId);
+  // 当前服务器取不到剧集详情（如报 502）时不影响其他服务器的版本：用卡片上的信息，都没有就不按偏好排序
+  final home = key.series.home;
+  final series = await ref
+      .watch(itemProvider(home).future)
+      .then<MediaItem?>((it) => it, onError: (Object _) => ItemSeeds.of(home.serverId, home.itemId));
+  final preferred = series == null ? null : await PreferredServers.get(titleKeyOf(series));
+  final collector = _Collector(
+    ref,
+    libraryEpisodeSourcesKey(key),
+    (o) => _rank(ref, o, preferred, home: home.serverId),
+  );
+  final options = await _optionsOf(ref, matches, onEach: collector.add);
+  return _rank(ref, options, preferred, home: home.serverId);
 });
 
 /// 自动换源用的版本标识：「服务器/版本 ID」

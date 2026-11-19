@@ -42,6 +42,13 @@ class ServerMediaSegment {
   final Duration end;
 }
 
+/// 服务器返回 5xx 时给用户看的说明（不显示 Dio 的英文原文）
+String describeServerError(int? status) => switch (status) {
+  502 || 503 || 504 => '服务器暂时无法响应（HTTP $status）：媒体服务器或它前面的反向代理出错，稍后重试；一直这样请检查服务器',
+  null => '服务器出错',
+  _ => '服务器处理请求时出错（HTTP $status），请检查服务器日志',
+};
+
 class MediaServerException implements Exception {
   const MediaServerException(this.message, {this.statusCode});
 
@@ -296,7 +303,11 @@ class EmbyClient {
         return r.data;
       } on DioException catch (e) {
         lastError = e;
-        if (e.type == DioExceptionType.badResponse) break;
+        if (e.type == DioExceptionType.badResponse) {
+          // 502 / 503 / 504 多半是这条线路上的反代或网关出错：换下一条线路试试；其他 5xx 是服务器本身出错，换线路也一样
+          if (const {502, 503, 504}.contains(e.response?.statusCode)) continue;
+          break;
+        }
         // 连接池里的空闲连接可能刚好被服务器 / 反代关掉（请求发出去才发现）：GET 在同一条线路上用新连接重试一次，
         // 不然只有一条线路时会偶尔报「网络错误」
         // 播放上报重复发一次也没关系（服务器按最后一次记），同样重试
@@ -315,12 +326,16 @@ class EmbyClient {
         continue; // 连接失败 / 超时：换下一条线路
       }
     }
-    throw MediaServerException(_describe(lastError));
+    throw MediaServerException(
+      _describe(lastError),
+      statusCode: lastError is DioException ? lastError.response?.statusCode : null,
+    );
   }
 
   String _describe(Object? e) {
     if (e is DioException) {
       return switch (e.type) {
+        DioExceptionType.badResponse => describeServerError(e.response?.statusCode),
         DioExceptionType.connectionTimeout || DioExceptionType.receiveTimeout => '连接超时，所有线路都不可用',
         DioExceptionType.connectionError => '无法连接服务器，请检查地址或网络',
         DioExceptionType.badCertificate => '服务器证书无效',
@@ -455,10 +470,28 @@ class EmbyClient {
     return _allowed(list.map(parseItem)).toList();
   }
 
-  Future<MediaItem> item(String id) async => parseItem(
-    await _request('GET', '/Users/${await _userId()}/Items/$id', query: {'Fields': _userFields})
-        as Map<String, dynamic>,
-  );
+  Future<MediaItem> item(String id) async {
+    try {
+      return parseItem(
+        await _request('GET', '/Users/${await _userId()}/Items/$id', query: {'Fields': _userFields})
+            as Map<String, dynamic>,
+      );
+    } on MediaServerException catch (e) {
+      if (e.statusCode != null && e.statusCode! < 500) rethrow;
+      // 有些条目单独取详情时服务器报 5xx 或迟迟不回（单条接口会顺带统计预告片、花絮等，要去扫媒体文件夹，
+      // 网盘挂载上可能很慢，反代等不及就报 502），但列表接口能正常返回同一条（首页卡片就是这么来的）：
+      // 改用列表接口按 ID 取，界面要的字段一样
+      final Object? data;
+      try {
+        data = await _request('GET', '/Users/${await _userId()}/Items', query: {'Ids': id, 'Fields': _userFields});
+      } on MediaServerException {
+        throw e;
+      }
+      final items = (data is Map ? data['Items'] as List? : null) ?? const [];
+      if (items.isEmpty) rethrow;
+      return parseItem(items.first as Map<String, dynamic>);
+    }
+  }
 
   /// 当前用户的头像（没有头像时服务器返回 404，界面显示首字母）
   ({Uri url, Map<String, String> headers})? userImage({int maxWidth = 160}) {

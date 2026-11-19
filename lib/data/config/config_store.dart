@@ -61,6 +61,7 @@ class ConfigStore extends Notifier<AppConfig> {
   static String _secretKey(String serverId, String field) => 'viora.server.$serverId.$field';
 
   static String _webdavKey(String field) => 'viora.webdav.$field';
+  static const _subtitleKey = 'viora.opensubtitles.password';
 
   bool _loaded = false;
   bool get loaded => _loaded;
@@ -107,7 +108,11 @@ class ConfigStore extends Notifier<AppConfig> {
         final current = webdav.toJson()[field] as String;
         if (current.isEmpty && stored != null) webdav = WebDavConfig.fromJson({...webdav.toJson(), field: stored});
       }
-      return config.copyWith(servers: servers, webdav: webdav);
+      var subtitles = config.subtitles;
+      final osPassword = await vault.read(_subtitleKey);
+      _written[_subtitleKey] = osPassword;
+      if (subtitles.osPassword.isEmpty && osPassword != null) subtitles = subtitles.copyWith(osPassword: osPassword);
+      return config.copyWith(servers: servers, webdav: webdav, subtitles: subtitles);
     } catch (e) {
       debugPrint('secret vault unavailable: $e');
       _vaultOk = false;
@@ -133,6 +138,8 @@ class ConfigStore extends Notifier<AppConfig> {
         await _put(_webdavKey('password'), config.webdav.password);
         await _put(_webdavKey('passphrase'), config.webdav.passphrase);
         json['webdav'] = {...json['webdav'] as Map<String, dynamic>, 'password': '', 'passphrase': ''};
+        await _put(_subtitleKey, config.subtitles.osPassword);
+        json['subtitles'] = {...json['subtitles'] as Map<String, dynamic>, 'osPassword': ''};
         // 删掉已移除服务器的密码
         for (final key in [..._written.keys]) {
           if (!key.startsWith('viora.server.')) continue;
@@ -149,6 +156,7 @@ class ConfigStore extends Notifier<AppConfig> {
         _vaultOk = false;
         json['servers'] = config.allServers.map((s) => s.toJson()).toList();
         json['webdav'] = config.webdav.toJson();
+        json['subtitles'] = config.subtitles.toJson();
       }
     }
     final prefs = await SharedPreferences.getInstance();
