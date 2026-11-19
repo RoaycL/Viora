@@ -99,11 +99,12 @@ const _fontFallback = <String>[
   'sans-serif',
 ];
 
-/// Windows 的主字体用应用内置的思源黑体子集 [uiFontFamily]，不依赖系统字体。
+/// Windows 的主字体用应用内置的小米 MiSans 子集 [uiFontFamily]，不依赖系统字体（官方允许免费商用、嵌入软件，需注明使用了 MiSans）。
 /// 之前用系统的微软雅黑（issue #56 第一次修复），在部分电脑上「倍速」两个字仍然一大一小、一高一低：
 /// 系统字体的查找、字重匹配和小字号的 hinting 因机器而异，同一个词里的字可能落到不同字体 / 不同字形上。
-/// 内置字体只有一套字形、去掉了 hinting，每台电脑画出来都一样。生僻字（子集外）才回退到微软雅黑。
-const uiFontFamily = 'VioraSans';
+/// 内置字体只有一套字形、去掉了 hinting，每台电脑画出来都一样；行高、基线和微软雅黑几乎相同，布局不变。
+/// 生僻字（子集外）才回退到微软雅黑。
+const uiFontFamily = 'MiSans';
 final String? _primaryFont = !kIsWeb && Platform.isWindows ? uiFontFamily : null;
 
 /// 数字字体（只在 Windows 上用）：内置的 Roboto 子集，只有数字和 `:.,/%+-`，数字等宽，时间跳动时不左右晃。

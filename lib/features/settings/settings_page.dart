@@ -779,6 +779,8 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
         title: '关于与更新',
         children: [
           _InfoLine(label: '当前版本', value: _version),
+          // MiSans 官方要求在软件中注明使用了该字体（只有 Windows 用它做界面字体）
+          if (PlatformProfile.isDesktop) const _InfoLine(label: '界面字体', value: 'MiSans（小米）'),
           _InfoLine(
             label: '更新来源',
             value: _source,
