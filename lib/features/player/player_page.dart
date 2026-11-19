@@ -471,7 +471,8 @@ class _PlayerPageState extends ConsumerState<PlayerPage> with WidgetsBindingObse
       _lastPosition = s.position;
     }
     // 开始播放前内核报的位置可能还是 0（续播时还没跳到上次的位置），不能拿来判断片头
-    if (_started || s.playing) _segments?.onPosition(s.position);
+    // 文件还没加载好（时长未知）时的位置也不算：这时发出的跳转会被内核丢掉
+    if ((_started || s.playing) && s.duration > Duration.zero) _segments?.onPosition(s.position);
     // 预加载下一集：看到 85%，或离片尾开始不到 1 分钟（片尾比较长的剧 85% 时可能已经在片尾里）
     final credits = _segmentList.where((x) => x.type == SegmentType.credits).firstOrNull;
     if (!_nextPreloading &&
