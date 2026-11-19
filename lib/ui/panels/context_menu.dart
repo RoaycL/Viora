@@ -57,7 +57,7 @@ Future<void> _showMenu(
   bool popup = false,
 }) {
   if (PlatformProfile.isDesktop || (popup && (item != null || _focusedIsButton()))) {
-    return _showPopupMenu(context, title: title, actions: actions, depth: depth, item: item);
+    return _showPopupMenu(context, title: title, actions: actions, depth: depth, item: item, popup: popup);
   }
   return showGeneralDialog<void>(
     context: context,
@@ -219,6 +219,24 @@ Future<void> _showPopupMenu(
   required List<MenuAction> Function() actions,
   required int depth,
   Rect? item,
+  bool popup = false,
+}) async {
+  // 播放页按钮（Windows）：点击时按钮刚请求焦点，焦点在随后的微任务里才生效，等它生效再找按钮
+  if (popup && item == null && PlatformProfile.isDesktop) {
+    await Future<void>.microtask(() {});
+    if (!context.mounted) return;
+    return _openPopupMenu(context, title: title, actions: actions, depth: depth, button: _clickedButton());
+  }
+  return _openPopupMenu(context, title: title, actions: actions, depth: depth, item: item);
+}
+
+Future<void> _openPopupMenu(
+  BuildContext context, {
+  required String title,
+  required List<MenuAction> Function() actions,
+  required int depth,
+  Rect? item,
+  Rect? button,
 }) {
   final overlay = Navigator.of(context).overlay!.context.findRenderObject() as RenderBox;
   Offset? anchor;
@@ -228,6 +246,10 @@ Future<void> _showPopupMenu(
   if (item != null) {
     anchor = overlay.globalToLocal(item.topRight + const Offset(6, -10));
     altX = overlay.globalToLocal(item.topLeft).dx - 16;
+  } else if (button != null) {
+    // Windows 播放页：菜单放在按钮下方（下面放不下放到上方），不盖住按钮
+    target = Rect.fromPoints(overlay.globalToLocal(button.topLeft), overlay.globalToLocal(button.bottomRight));
+    anchor = target.bottomLeft;
   } else if (InputMode.pointer && InputMode.lastPointer != null) {
     anchor = overlay.globalToLocal(InputMode.lastPointer!);
   } else {
@@ -257,6 +279,17 @@ Future<void> _showPopupMenu(
     ),
     transitionBuilder: (context, animation, _, child) => FadeTransition(opacity: animation, child: child),
   );
+}
+
+/// Windows：刚点的（或键盘选中的）按钮在屏幕上的位置；鼠标不在这个按钮上时为 null
+Rect? _clickedButton() {
+  if (!_focusedIsButton()) return null;
+  final box = FocusManager.instance.primaryFocus!.context!.findRenderObject()! as RenderBox;
+  // 两个角都换算到全局坐标（窗口比设计画布大时控件会被放大，不能直接用 box.size）
+  final rect = Rect.fromPoints(box.localToGlobal(Offset.zero), box.localToGlobal(box.size.bottomRight(Offset.zero)));
+  final pointer = InputMode.lastPointer;
+  if (InputMode.pointer && pointer != null && !rect.inflate(4).contains(pointer)) return null;
+  return rect;
 }
 
 /// 电视上焦点在一个按钮上（不是整个播放画面之类的大块区域）：才贴着它弹出，否则还是从右边滑出面板
