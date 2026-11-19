@@ -57,6 +57,32 @@ class SegmentSkipController {
     return null;
   }
 
+  /// 会被自动跳到下一集的片尾（还没处理过）：它后面的内容不会播放，不必预读
+  Segment? get autoNextCredits {
+    if (!hasNextEpisode || settings.credits != SegmentSkipMode.auto) return null;
+    for (final s in segments) {
+      if (s.type == SegmentType.credits &&
+          s.end == query.duration &&
+          !_handled.contains(_key(s)) &&
+          !_manualRetry.contains(_key(s))) {
+        return s;
+      }
+    }
+    return null;
+  }
+
+  /// 从头播放时开头就要自动跳过的片头（直接从它的结束处开始播放），没有就 null
+  Segment? autoIntroAtStart() {
+    for (final s in segments) {
+      if (s.type != SegmentType.intro || s.start > const Duration(seconds: 1)) continue;
+      final action = at(s.start);
+      if (action != null && action.automatic && action.segment == s && action.kind == SegmentSkipActionKind.seek) {
+        return s;
+      }
+    }
+    return null;
+  }
+
   void markHandled(SegmentSkipAction action) => _handled.add(_key(action.segment));
   void retry(SegmentSkipAction action) {
     _handled.remove(_key(action.segment));

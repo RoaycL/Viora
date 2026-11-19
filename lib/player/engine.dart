@@ -213,6 +213,9 @@ abstract class PlayerEngine {
   /// 画面比例：适应 / 填满（裁切）/ 拉伸
   Future<void> setVideoFit(VideoFit fit) async {}
 
+  /// 往后预读最多多少（null = 不限制，按缓冲上限）。片尾会被跳过时不必下载片尾；不支持的内核忽略
+  Future<void> setReadaheadLimit(Duration? limit) async {}
+
   /// 这个内核能不能调字幕延迟
   bool get supportsSubtitleDelay => false;
   Future<void> selectAudio(EngineTrack track);
