@@ -824,7 +824,7 @@ class _PlayerPageState extends ConsumerState<PlayerPage> with WidgetsBindingObse
 
   DanmakuClient? get _danmakuClient {
     final c = ref.read(configProvider).danmaku;
-    return c.activeServers.isEmpty ? null : DanmakuClient(c);
+    return c.allServers.isEmpty ? null : DanmakuClient(c);
   }
 
   /// 起播后自动匹配：记住的手动选择 → 服务器自动匹配 → 按标题搜索
@@ -884,7 +884,7 @@ class _PlayerPageState extends ConsumerState<PlayerPage> with WidgetsBindingObse
   String get _danmakuStatus {
     if (_danmakuLoading) return '加载中…';
     if (_danmaku != null) return '${_danmakuVisible ? '开' : '关'} · ${_danmaku!.comments.length} 条';
-    if (ref.read(configProvider).danmaku.activeServers.isEmpty) return '未配置服务器';
+    if (ref.read(configProvider).danmaku.allServers.isEmpty) return '未配置服务器';
     return _danmakuError == null ? '未加载' : '未匹配';
   }
 
@@ -1033,7 +1033,11 @@ class _PlayerPageState extends ConsumerState<PlayerPage> with WidgetsBindingObse
       actions: [
         for (final a in animes.take(40))
           MenuAction(
-            '${a.title}${a.episodeCount == null ? '' : ' · ${a.episodeCount} 集'}',
+            [
+              a.title,
+              if (a.episodeCount != null) '${a.episodeCount} 集',
+              ?DanmakuClient.sourceLabel(a.server),
+            ].join(' · '),
             Icons.movie_filter_outlined,
             () => _pickDanmakuEpisode(client, target, a),
           ),

@@ -109,16 +109,27 @@ class DanmakuSettingsSection extends ConsumerWidget {
             ),
             if (i < DanmakuConfig.maxServers - 1) const SizedBox(height: 12),
           ],
+          const SizedBox(height: 20),
+          VToggle(
+            label: '内置弹幕源（弹弹play）',
+            subtitle: DanmakuConfig.builtinAvailable
+                ? '不用自己部署也能看弹幕；配置了上面的服务器时，自动匹配优先用自己的服务器，匹配不上再用弹弹play'
+                : '这个版本没有内置弹弹play 的 AppId，暂时不能使用（正式发布的版本内置）',
+            value: d.useBuiltin && DanmakuConfig.builtinAvailable,
+            onChanged: (v) => DanmakuConfig.builtinAvailable
+                ? _update(ref, (x) => x.copyWith(useBuiltin: v))
+                : showToast('这个版本没有内置弹弹play 的 AppId'),
+          ),
         ],
       );
     }
-    final configured = d.servers.where((x) => x.isNotEmpty).length;
+    final configured = d.allServers.length;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Text(
           '播放时按「剧名 + 季 + 集」自动匹配；匹配不对时在播放菜单 → 弹幕里手动选择，同一季后面的集会记住。'
-          '${configured == 0 ? '还没有配置弹幕服务器：在「设置 → 接口与网络」里添加。' : '已配置 $configured 个弹幕服务器（在「设置 → 接口与网络」里管理）。'}',
+          '${configured == 0 ? '还没有配置弹幕服务器：在「设置 → 接口与网络」里添加，或打开内置的弹弹play。' : '已启用 $configured 个弹幕源（在「设置 → 接口与网络」里管理）。'}',
           style: VText.caption.copyWith(color: configured == 0 ? VColors.rating : VColors.textSecondary),
         ),
         const SizedBox(height: 20),
