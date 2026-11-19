@@ -13,11 +13,17 @@ abstract final class ImageSizing {
   /// 电视上全屏背景图的解码宽度
   static const tvBackdropWidth = 1280;
 
+  /// 电脑上全屏背景图最大的解码宽度
+  static const desktopBackdropWidth = 1920;
+
   static int physicalWidth(BuildContext context, double designWidth) {
     final dpr = MediaQuery.maybeDevicePixelRatioOf(context) ?? 1;
     final px = (designWidth * dpr).ceil();
     final w = tiers.firstWhere((t) => t >= px, orElse: () => tiers.last);
-    if (!PlatformProfile.isTv) return w;
+    // 电脑：全屏背景最多解码到 1920 宽。2K / 4K 屏全屏或最大化时按屏幕算要 2560 / 3840 宽，
+    // 一张 4K 背景解码后 30MB 以上，切换封面时解码 + 上传显卡要几百毫秒，画面会顿一下；
+    // 背景压在渐变和压暗下面，1920 宽放大看不出差别
+    if (!PlatformProfile.isTv) return designWidth >= 1600 && w > desktopBackdropWidth ? desktopBackdropWidth : w;
     // 电视：全屏背景解码到 1280 宽（压在渐变和压暗下面看不出差别）。1920 宽一张约 8MB、1280 宽约 3.7MB，
     // 来回切换背景时内存峰值和解码耗时都少一半以上（2GB 电视操作快了会因内存不足闪退）。
     // TMDB 的背景图本来就是 1280 宽，Emby / Jellyfin 的按这个宽度向服务器要缩小后的图

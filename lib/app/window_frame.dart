@@ -28,11 +28,14 @@ Future<void> initDesktopWindow() async {
   await windowManager.waitUntilReadyToShow(options, () async {
     await windowManager.show();
     await windowManager.focus();
-    if (DesktopPrefs.instance.fullScreenOnLaunch.value) {
-      await windowManager.setFullScreen(true);
-      windowFullScreen.value = true;
-    }
   });
+  // 「打开软件时全屏」：等第一帧画完、窗口真正显示出来再进全屏，和手动进全屏走同一条路。
+  // 之前在窗口还没显示时就进全屏，原生插件记下的「全屏前窗口」不对，之后切回窗口模式画面卡住不动
+  if (DesktopPrefs.instance.fullScreenOnLaunch.value) {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      Future<void>.delayed(const Duration(milliseconds: 300), () => setWindowFullScreen(true));
+    });
+  }
 }
 
 /// 窗口当前是否全屏（标题栏监听窗口事件更新；播放器的全屏按钮、Esc 键用它）
@@ -76,6 +79,16 @@ Future<void> _applyFullScreen(bool full) async {
   await windowManager.setFullScreen(full);
   windowFullScreen.value = full;
   if (full || await windowManager.isMaximized()) return;
+  // 退回的窗口不该还是整块屏幕那么大（原生插件记错了全屏前的位置时会这样，画面卡在全屏时的样子）：放回屏幕中间的默认大小
+  final display = PlatformDispatcher.instance.displays.firstOrNull;
+  final screen = display == null ? null : display.size / display.devicePixelRatio;
+  final now = await windowManager.getBounds();
+  if (screen != null && now.width >= screen.width - 1 && now.height >= screen.height - 1) {
+    const size = Size(1600, 900);
+    await windowManager.setBounds(
+      Rect.fromLTWH((screen.width - size.width) / 2, (screen.height - size.height) / 2, size.width, size.height),
+    );
+  }
   // 退出全屏后窗口的边框样式变了，但内容区不一定跟着重新布局（画面停在全屏时的样子、像卡死）：
   // 把窗口宽度改 1 像素再改回来，强制重新布局、重绘
   final bounds = await windowManager.getBounds();

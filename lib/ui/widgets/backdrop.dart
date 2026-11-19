@@ -1,7 +1,5 @@
 import 'package:flutter/widgets.dart';
 
-import '../../app/platform_profile.dart';
-
 import '../../app/theme.dart';
 import 'art.dart';
 
@@ -38,9 +36,9 @@ class PageBackdrop extends StatelessWidget {
         children: [
           AnimatedSwitcher(
             duration: VMotion.duration(context, VMotion.backdrop),
-            // 电视：切换时只保留「新图 + 上一张」两层。焦点移得快时默认会叠着三四张全屏大图一起淡出，
-            // 既占内存又拖慢电视 GPU（每层都要整屏混合）
-            layoutBuilder: PlatformProfile.isTv ? _latestTwo : AnimatedSwitcher.defaultLayoutBuilder,
+            // 切换时只保留「新图 + 上一张」两层。焦点 / 鼠标移得快时默认会叠着三四张全屏大图一起淡出，
+            // 既占内存又拖慢 GPU（每层都要整屏混合；电脑全屏 / 最大化时整屏更大，切封面会卡）
+            layoutBuilder: _latestTwo,
             child: image == null
                 ? ArtView(art, key: ValueKey(art), lightCenter: const Alignment(0.5, -0.4))
                 : Stack(
