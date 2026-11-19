@@ -57,6 +57,7 @@ class OnlineSubtitle {
     this.language,
     this.format,
     this.downloads,
+    this.searchLanguage,
   });
 
   /// [OpenSubtitlesClient.providerName] / [AssrtClient.providerName]
@@ -68,6 +69,9 @@ class OnlineSubtitle {
   final String? language;
   final String? format;
   final int? downloads;
+
+  /// 搜索时要的语言：字幕包里有多种语言的文件时，按它挑
+  final SubtitleLanguage? searchLanguage;
 }
 
 /// 下载下来的字幕文件
@@ -124,7 +128,10 @@ class OpenSubtitlesClient implements OnlineSubtitleProvider {
   String _baseUrl;
 
   /// 登录令牌（同一账号进程内复用，24 小时内有效）
-  static final _tokens = <String, (String token, String? baseUrl)>{};
+  static final _tokens = <String, (String token, String? baseUrl, DateTime expires)>{};
+
+  /// 官方令牌 24 小时有效：提前一小时换新的
+  static const tokenLifetime = Duration(hours: 23);
 
   @override
   String get name => providerName;
@@ -206,7 +213,8 @@ class OpenSubtitlesClient implements OnlineSubtitleProvider {
     if (!config.osLoggedIn) return null;
     final key = '${config.osUsername.trim()}\u0000${config.osPassword}';
     final cached = _tokens[key];
-    if (cached != null) {
+    if (cached != null && DateTime.now().isAfter(cached.$3)) _tokens.remove(key);
+    if (cached != null && _tokens.containsKey(key)) {
       if (cached.$2 != null) _baseUrl = cached.$2!;
       return cached.$1;
     }
@@ -221,7 +229,7 @@ class OpenSubtitlesClient implements OnlineSubtitleProvider {
       // VIP 账号会给专用的 API 地址
       final host = r.data?['base_url']?.toString();
       final base = host == null || host.isEmpty ? null : 'https://$host/api/v1';
-      _tokens[key] = (token, base);
+      _tokens[key] = (token, base, DateTime.now().add(tokenLifetime));
       if (base != null) _baseUrl = base;
       return token;
     } on DioException catch (e) {
@@ -240,10 +248,9 @@ class OpenSubtitlesClient implements OnlineSubtitleProvider {
 
   @override
   Future<SubtitleFile> download(OnlineSubtitle subtitle) async {
-    final token = await _login();
-    final auth = token == null ? null : 'Bearer $token';
-    Map<String, dynamic>? info;
-    try {
+    Future<Map<String, dynamic>?> request() async {
+      final token = await _login();
+      final auth = token == null ? null : 'Bearer $token';
       final r = await _dio.post<Map<String, dynamic>>(
         '$_baseUrl/download',
         data: {'file_id': int.tryParse(subtitle.id) ?? subtitle.id},
@@ -251,7 +258,19 @@ class OpenSubtitlesClient implements OnlineSubtitleProvider {
           headers: {..._headers, 'Content-Type': 'application/json', 'Authorization': ?auth},
         ),
       );
-      info = r.data;
+      return r.data;
+    }
+
+    Map<String, dynamic>? info;
+    try {
+      try {
+        info = await request();
+      } on DioException catch (e) {
+        // 令牌被服务器作废（过期、在别处改了密码）：重新登录再试一次
+        if (e.response?.statusCode != 401 || !config.osLoggedIn) rethrow;
+        _tokens.clear();
+        info = await request();
+      }
     } on DioException catch (e) {
       final code = e.response?.statusCode;
       if (code == 406 || code == 429) {
@@ -352,6 +371,7 @@ class AssrtClient implements OnlineSubtitleProvider {
                   : '${s['videoname'] ?? s['id']}',
               language: (s['lang'] as Map?)?['desc']?.toString(),
               format: s['subtype']?.toString(),
+              searchLanguage: language,
             ),
       ];
       if (list.isNotEmpty) return list;
@@ -359,8 +379,8 @@ class AssrtClient implements OnlineSubtitleProvider {
     return const [];
   }
 
-  /// 字幕包里挑一个文件：要求是文本字幕；中文优先挑简体，其次繁体
-  static Map<String, dynamic>? pickFile(List<Map<String, dynamic>> files) {
+  /// 字幕包里挑一个文件：要求是文本字幕；中文优先挑简体，其次繁体；英文优先挑英文文件，避开纯中文的
+  static Map<String, dynamic>? pickFile(List<Map<String, dynamic>> files, [SubtitleLanguage? language]) {
     final text = [
       for (final f in files)
         if (_textFormats.contains(_ext('${f['f'] ?? ''}'))) f,
@@ -369,8 +389,16 @@ class AssrtClient implements OnlineSubtitleProvider {
     int score(Map<String, dynamic> f) {
       final n = '${f['f']}'.toLowerCase();
       var s = 0;
-      if (RegExp(r'chs|简|sc\b|\.zh|gb').hasMatch(n)) s += 4;
-      if (RegExp(r'cht|繁|tc\b|big5').hasMatch(n)) s += 2;
+      final chs = RegExp(r'chs|简|sc\b|\.zh|gb').hasMatch(n);
+      final cht = RegExp(r'cht|繁|tc\b|big5').hasMatch(n);
+      final eng = RegExp(r'\beng?\b|english|英').hasMatch(n);
+      if (language == SubtitleLanguage.english) {
+        if (eng) s += 4;
+        if (chs || cht) s -= eng ? 1 : 4;
+      } else {
+        if (chs) s += 4;
+        if (cht) s += 2;
+      }
       if (_ext(n) == 'ass' || _ext(n) == 'ssa') s += 1;
       return s;
     }
@@ -384,7 +412,7 @@ class AssrtClient implements OnlineSubtitleProvider {
     final sub = ((j['sub'] as Map?)?['subs'] as List? ?? const []).whereType<Map<String, dynamic>>().firstOrNull;
     if (sub == null) throw const OnlineSubtitleException('射手网（伪）没有这条字幕的详情');
     final files = (sub['filelist'] as List? ?? const []).whereType<Map<String, dynamic>>().toList();
-    var file = pickFile(files);
+    var file = pickFile(files, subtitle.searchLanguage);
     // 单个文件（没有打包）时 filelist 为空，直接用 url
     if (file == null && files.isEmpty && _textFormats.contains(_ext('${sub['filename'] ?? ''}'))) {
       file = {'url': sub['url'], 'f': sub['filename']};

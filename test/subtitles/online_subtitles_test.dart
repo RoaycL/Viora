@@ -219,6 +219,43 @@ void main() {
     );
   });
 
+  test('射手网（伪）字幕包：搜英文时挑英文文件，搜中文时挑简体', () {
+    final files = [
+      {'f': 'movie.chs.srt'},
+      {'f': 'movie.en.srt'},
+      {'f': 'movie.cht.srt'},
+    ];
+    expect(AssrtClient.pickFile(files, SubtitleLanguage.english)!['f'], 'movie.en.srt');
+    expect(AssrtClient.pickFile(files, SubtitleLanguage.chinese)!['f'], 'movie.chs.srt');
+    expect(AssrtClient.pickFile(files)!['f'], 'movie.chs.srt');
+  });
+
+  test('OpenSubtitles：登录令牌被拒（过期）时重新登录再下载一次', () async {
+    final s = _FakeServer();
+    await s.start();
+    addTearDown(() => s.server.close(force: true));
+    var logins = 0, downloads = 0;
+    s.routes['/api/v1/login'] = (_) => {'token': 't${++logins}'};
+    s.routes['/api/v1/download'] = (req) {
+      downloads++;
+      if (req.headers.value('Authorization') == 'Bearer t1') {
+        req.response.statusCode = 401;
+        return {'message': 'token expired'};
+      }
+      return {'link': '${s.base}/f.srt', 'file_name': 'f.srt'};
+    };
+    s.routes['/f.srt'] = (_) => utf8.encode('ok');
+    final client = OpenSubtitlesClient(
+      const SubtitleSourcesConfig(osUsername: 'retry-user', osPassword: 'pw'),
+      apiKey: 'key',
+      baseUrl: '${s.base}/api/v1',
+    );
+    final file = await client.download(const OnlineSubtitle(provider: 'OpenSubtitles', id: '5', name: 'x'));
+    expect(utf8.decode(file.bytes), 'ok');
+    expect(logins, 2);
+    expect(downloads, 2);
+  });
+
   test('保存字幕：去掉 UTF-8 BOM、UTF-16 转成 UTF-8，文件名保留扩展名', () async {
     expect(normalizeSubtitleBytes([0xEF, 0xBB, 0xBF, 0x41]), [0x41]);
     final utf16le = [0xFF, 0xFE, ...'中a'.codeUnits.expand((u) => [u & 0xFF, u >> 8])];
