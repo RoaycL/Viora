@@ -1603,7 +1603,8 @@ class _PlayerPageState extends ConsumerState<PlayerPage> with WidgetsBindingObse
       }
       // Windows：鼠标悬停让按钮拿到了焦点，回车照常点击按钮，其他快捷键仍然作用于播放器
       if (confirmKeys.contains(key)) return KeyEventResult.ignored;
-      _focus.requestFocus();
+      // 滑块调整面板打开时，空格等快捷键照常生效，但焦点留在面板上，方向键继续调滑块
+      if (_adjusting == null) _focus.requestFocus();
     }
 
     final step = Duration(seconds: ref.read(configProvider).playback.seekStepSeconds);
