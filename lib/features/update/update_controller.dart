@@ -135,7 +135,7 @@ class UpdateController extends Notifier<UpdateState> {
 
   Future<AppVersion> get currentVersion async {
     final p = await packageInfo;
-    return AppVersion.tryParse('${p.version}+${p.buildNumber}') ?? const AppVersion(0, 0, 0);
+    return AppVersion.tryParse('${withPrerelease(p.version)}+${p.buildNumber}') ?? const AppVersion(0, 0, 0);
   }
 
   /// 经反向代理改写地址；没填反代地址时为 null

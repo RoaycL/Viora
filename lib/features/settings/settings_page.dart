@@ -33,6 +33,7 @@ import '../parental/parental_settings_section.dart';
 import '../segments/segment_service.dart';
 import '../segments/segment_settings_section.dart';
 import '../sync/sync_settings_section.dart';
+import '../update/app_version.dart';
 import '../update/update_controller.dart';
 import '../update/update_dialog.dart';
 import 'online_subtitle_settings_section.dart';
@@ -124,7 +125,7 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
     final source = await c.sourceDescription();
     if (!mounted) return;
     setState(() {
-      _version = 'v${p.version}（build ${p.buildNumber}）';
+      _version = 'v${withPrerelease(p.version)}（build ${p.buildNumber}）';
       _source = source;
       _manifest.text = c.settings.manifestUrl ?? '';
     });

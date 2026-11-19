@@ -181,8 +181,9 @@ class _PlayerPageState extends ConsumerState<PlayerPage> with WidgetsBindingObse
     if (item == null || client == null || item.kind != MediaKind.episode || item.seriesId == null) {
       return Future.value();
     }
-    return _nextEpisodeFuture ??= client
-        .episodes(item.seriesId!)
+    // 和「选集」面板共用一次请求：开播时就拿到整部剧的集列表，之后打开选集直接显示
+    final episodes = _episodeList(client, item.seriesId!);
+    return _nextEpisodeFuture ??= episodes
         .then((all) => _nextEpisode ??= nextEpisodeAfter(all, item))
         .catchError((Object _) {
           _nextEpisodeFuture = null; // 失败了下次再查
@@ -195,6 +196,16 @@ class _PlayerPageState extends ConsumerState<PlayerPage> with WidgetsBindingObse
   /// 控制层底部的面板（播放资源 / 选集）
   OsdPanel _panel = OsdPanel.none;
   Future<List<MediaItem>>? _episodes;
+  bool _episodesFailed = false;
+
+  /// 整部剧的集列表（选集面板和「下一集」共用）；上次请求失败了就重新请求
+  Future<List<MediaItem>> _episodeList(EmbyClient client, String seriesId) {
+    if (_episodesFailed) {
+      _episodes = null;
+      _episodesFailed = false;
+    }
+    return _episodes ??= _loadEpisodes(client, seriesId);
+  }
 
   Future<List<MediaItem>> _loadEpisodes(EmbyClient client, String seriesId) {
     final key = '${accountScope(client.server)}/$seriesId';
@@ -207,10 +218,11 @@ class _PlayerPageState extends ConsumerState<PlayerPage> with WidgetsBindingObse
     while (_episodeCache.length > 4) {
       _episodeCache.remove(_episodeCache.keys.first);
     }
-    // 失败的不留着
+    // 失败的不留着；下次打开选集或查下一集时重新请求
     future.then(
       (_) {},
       onError: (_) {
+        if (identical(_episodes, future)) _episodesFailed = true;
         if (identical(_episodeCache[key]?.$2, future)) _episodeCache.remove(key);
       },
     );
@@ -270,6 +282,9 @@ class _PlayerPageState extends ConsumerState<PlayerPage> with WidgetsBindingObse
     // 连播下一集、换服务器时由上一个播放页交接过来
     _entryFullScreen = _carriedEntryFullScreen ?? windowFullScreen.value;
     _carriedEntryFullScreen = null;
+    // 最大化也一样：播放页里点最大化 / 还原，回到首页时恢复成进来前的样子
+    _entryMaximized = _carriedEntryMaximized ?? windowMaximized.value;
+    _carriedEntryMaximized = null;
     // 「开始播放时全屏」
     if (isDesktopWindow && DesktopPrefs.instance.fullScreenOnPlay.value && !MiniPlayerWindow.active.value) {
       if (!windowFullScreen.value) unawaited(setWindowFullScreen(true));
@@ -285,6 +300,10 @@ class _PlayerPageState extends ConsumerState<PlayerPage> with WidgetsBindingObse
 
   /// 连播 / 换服务器到下一个播放页：交接 [_entryFullScreen]
   static bool? _carriedEntryFullScreen;
+
+  /// 进播放页前窗口是不是最大化（退出播放时恢复）
+  bool _entryMaximized = false;
+  static bool? _carriedEntryMaximized;
 
   /// 这一集是自动连播过来的
   late final bool _autoArrived = () {
@@ -1133,6 +1152,7 @@ class _PlayerPageState extends ConsumerState<PlayerPage> with WidgetsBindingObse
     _handoff = true;
     // 进播放页前的窗口状态交给下一个播放页（新页面先建好、这一页后销毁，所以在这里交接）
     _carriedEntryFullScreen = _entryFullScreen;
+    _carriedEntryMaximized = _entryMaximized;
     context.pushReplacement(route);
   }
 
@@ -1209,9 +1229,17 @@ class _PlayerPageState extends ConsumerState<PlayerPage> with WidgetsBindingObse
     _topNode.dispose();
     _skipFadeTimer?.cancel();
     // 退出播放时恢复窗口；连播下一集 / 换服务器时保持小窗
-    if (!handoff) MiniPlayerWindow.exit();
-    // 退出播放时窗口恢复成进来前的样子（连播 / 换服务器时已在 _handoffTo 交给下一个播放页）
-    if (!handoff && isDesktopWindow) unawaited(setWindowFullScreen(_entryFullScreen));
+    // 退出播放时窗口恢复成进来前的样子：先退小窗，再恢复全屏和最大化
+    // （连播 / 换服务器时已在 _handoffTo 交给下一个播放页）
+    if (!handoff) {
+      final full = _entryFullScreen, max = _entryMaximized;
+      unawaited(() async {
+        await MiniPlayerWindow.exit();
+        if (!isDesktopWindow) return;
+        await setWindowFullScreen(full);
+        if (!full) await setWindowMaximized(max);
+      }());
+    }
     // 销毁过程中不能让别的组件重建：这一帧结束后再恢复标题栏
     scheduleMicrotask(() => windowImmersive.value = false);
     super.dispose();
@@ -2087,7 +2115,7 @@ class _PlayerPageState extends ConsumerState<PlayerPage> with WidgetsBindingObse
       final client = _client;
       if (item == null || client == null || item.seriesId == null) return;
       // 整部剧的所有季：面板里可以切换季
-      _episodes ??= _loadEpisodes(client, item.seriesId!);
+      _episodeList(client, item.seriesId!);
     }
     setState(() => _panel = panel);
     _showOsd(sticky: true);

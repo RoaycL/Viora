@@ -19,6 +19,7 @@ import '../../ui/focus/focus_auto_scroll.dart';
 import '../../ui/focus/focusable.dart';
 import '../../ui/rows/cards.dart';
 import '../../ui/widgets/server_image.dart';
+import '../../ui/widgets/skeleton.dart';
 import '../browse/media_cards.dart' show formatClock;
 import '../library/library_page.dart' show ServerTypeLogo;
 
@@ -169,6 +170,7 @@ class PlayerOsd extends StatelessWidget {
                     if (desktop) ...[
                       OsdIconButton(
                         icon: Icons.picture_in_picture_alt_rounded,
+                        iconSize: _TopIcon.pip,
                         label: '小窗播放',
                         onPressed: MiniPlayerWindow.toggle,
                       ),
@@ -176,14 +178,30 @@ class PlayerOsd extends StatelessWidget {
                         valueListenable: windowFullScreen,
                         builder: (context, full, _) => OsdIconButton(
                           icon: full ? Icons.fullscreen_exit_rounded : Icons.fullscreen_rounded,
+                          iconSize: _TopIcon.fullScreen,
                           label: full ? '退出全屏' : '全屏',
                           onPressed: toggleFullScreen,
                         ),
                       ),
                     ],
-                    OsdIconButton(icon: Icons.graphic_eq_rounded, label: '音轨', onPressed: onAudio),
-                    OsdIconButton(icon: Icons.subtitles_outlined, label: '字幕', onPressed: onSubtitle),
-                    OsdIconButton(icon: Icons.more_horiz_rounded, label: '更多', onPressed: onMore),
+                    OsdIconButton(
+                      icon: Icons.graphic_eq_rounded,
+                      iconSize: _TopIcon.audio,
+                      label: '音轨',
+                      onPressed: onAudio,
+                    ),
+                    OsdIconButton(
+                      icon: Icons.subtitles_outlined,
+                      iconSize: _TopIcon.subtitle,
+                      label: '字幕',
+                      onPressed: onSubtitle,
+                    ),
+                    OsdIconButton(
+                      icon: Icons.more_horiz_rounded,
+                      iconSize: _TopIcon.more,
+                      label: '更多',
+                      onPressed: onMore,
+                    ),
                   ],
                 ),
                 // 时间固定在最右边：位置不随下载状态变化
@@ -302,6 +320,19 @@ String? downloadStatus(int? speed, Duration bufferedAhead) {
   return formatSpeed(0);
 }
 
+/// 右上角各图标的字号。Material 图标在 24 格里实际占的大小差很多（全屏只有四个角、约 14 格；小窗约 22 格），
+/// 同一个字号看起来一个大一个小：按图形实际大小分别换算，让每个图标看上去都约 26 像素
+abstract final class _TopIcon {
+  static const pip = 30.0;
+  static const fullScreen = 40.0;
+  static const audio = 32.0;
+  static const subtitle = 30.0;
+  static const more = 34.0;
+
+  /// 「弹」字圆圈的直径
+  static const danmaku = 26.0;
+}
+
 const _statusStyle = TextStyle(
   fontSize: 22,
   color: Color(0xD9FFFFFF),
@@ -416,28 +447,29 @@ class _DanmakuGlyph extends StatelessWidget {
   Widget build(BuildContext context) {
     final color = focused ? const Color(0xFF0B0C10) : Colors.white;
     return SizedBox(
-      width: 36,
-      height: 36,
+      width: _TopIcon.danmaku,
+      height: _TopIcon.danmaku,
       child: Stack(
         alignment: Alignment.center,
         children: [
           Container(
             decoration: BoxDecoration(
               shape: BoxShape.circle,
-              border: Border.all(color: color, width: 2.4),
+              // 线条粗细和 Material 图标（约 2 像素）一致，之前 2.4 粗、字也更大，比旁边的图标显得重
+              border: Border.all(color: color, width: 2),
             ),
             alignment: Alignment.center,
             child: Text(
               '弹',
-              style: TextStyle(fontSize: 18, height: 1, fontWeight: FontWeight.w700, color: color),
+              style: TextStyle(fontSize: 14, height: 1, fontWeight: FontWeight.w600, color: color),
             ),
           ),
           if (!on)
             Transform.rotate(
               angle: -0.785,
               child: Container(
-                width: 44,
-                height: 3,
+                width: 34,
+                height: 2.6,
                 decoration: BoxDecoration(
                   color: color,
                   borderRadius: BorderRadius.circular(2),
@@ -1020,10 +1052,12 @@ class _EpisodesPanelState extends State<EpisodesPanel> with _PanelEntry {
           ];
           final hasCurrent = eps.any((e) => e.id == widget.currentId);
           enterAfterBuild();
+          final loading = !snap.hasError && snap.connectionState != ConnectionState.done;
+          // 加载中只显示「选集」，下面先放占位卡片，结果回来后原地淡入（不跳动）
           final status = snap.hasError
               ? '获取集列表失败'
-              : snap.connectionState != ConnectionState.done
-              ? '正在获取集列表…'
+              : loading
+              ? '选集'
               : null;
           return Column(
             crossAxisAlignment: CrossAxisAlignment.start,
@@ -1048,26 +1082,85 @@ class _EpisodesPanelState extends State<EpisodesPanel> with _PanelEntry {
                 ],
               ),
               const SizedBox(height: 16),
-              if (eps.isNotEmpty)
-                _LazyHorizontalList(
-                  key: ValueKey(season),
-                  height: 230,
-                  itemWidth: _EpisodeCard.width,
-                  itemCount: eps.length,
-                  initialIndex: hasCurrent ? eps.indexWhere((e) => e.id == widget.currentId) : 0,
-                  itemBuilder: (context, i) {
-                    final e = eps[i];
-                    return _EpisodeCard(
-                      episode: e,
-                      current: e.id == widget.currentId,
-                      focusNode: e.id == widget.currentId || (!hasCurrent && i == 0) ? entryNode : null,
-                      onPick: () => widget.onPick(e),
-                    );
-                  },
-                ),
+              AnimatedSwitcher(
+                duration: const Duration(milliseconds: 220),
+                child: loading
+                    ? const _EpisodeSkeletonRow(key: ValueKey('episodes-loading'))
+                    : eps.isEmpty
+                    ? const SizedBox.shrink()
+                    : _LazyHorizontalList(
+                        key: ValueKey(season),
+                        height: 230,
+                        itemWidth: _EpisodeCard.width,
+                        itemCount: eps.length,
+                        initialIndex: hasCurrent ? eps.indexWhere((e) => e.id == widget.currentId) : 0,
+                        itemBuilder: (context, i) {
+                          final e = eps[i];
+                          return _EpisodeCard(
+                            episode: e,
+                            current: e.id == widget.currentId,
+                            focusNode: e.id == widget.currentId || (!hasCurrent && i == 0) ? entryNode : null,
+                            onPick: () => widget.onPick(e),
+                          );
+                        },
+                      ),
+              ),
             ],
           );
         },
+      ),
+    );
+  }
+}
+
+/// 集列表还没返回时的占位：和集卡片一样大小（封面 + 一行标题），一排铺满
+class _EpisodeSkeletonRow extends StatelessWidget {
+  const _EpisodeSkeletonRow({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    final count = (MediaQuery.sizeOf(context).width / (_EpisodeCard.width + _LazyHorizontalList.gap)).ceil();
+    return ExcludeFocus(
+      child: SkeletonShimmer(
+        child: SizedBox(
+          height: 230,
+          child: OverflowBox(
+            alignment: Alignment.topLeft,
+            maxWidth: double.infinity,
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                for (var i = 0; i < count; i++) ...[
+                  if (i > 0) const SizedBox(width: _LazyHorizontalList.gap),
+                  SizedBox(
+                    width: _EpisodeCard.width,
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Container(
+                          height: 180,
+                          decoration: BoxDecoration(
+                            color: const Color(0x1AFFFFFF),
+                            borderRadius: BorderRadius.circular(VRadius.md),
+                          ),
+                        ),
+                        const SizedBox(height: 14),
+                        Container(
+                          width: 150,
+                          height: 18,
+                          decoration: BoxDecoration(
+                            color: const Color(0x14FFFFFF),
+                            borderRadius: BorderRadius.circular(VRadius.xs),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ],
+            ),
+          ),
+        ),
       ),
     );
   }

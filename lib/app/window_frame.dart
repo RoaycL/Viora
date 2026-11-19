@@ -53,6 +53,26 @@ Size? _primaryScreen() {
 /// 窗口当前是否全屏（标题栏监听窗口事件更新；播放器的全屏按钮、Esc 键用它）
 final windowFullScreen = ValueNotifier(false);
 
+/// 窗口（不算全屏时）是否最大化。全屏期间保留进全屏前的值，播放页用它记下进来前的窗口状态
+final windowMaximized = ValueNotifier(false);
+
+/// 最大化 / 还原窗口（排在进出全屏后面执行；全屏中或已经是目标状态时不动）
+Future<void> setWindowMaximized(bool max) {
+  if (!isDesktopWindow) return Future<void>.value();
+  return _fullScreenChain = _fullScreenChain.then((_) async {
+    try {
+      if (await windowManager.isFullScreen() || await windowManager.isMaximized() == max) return;
+      if (max) {
+        await windowManager.maximize();
+      } else {
+        await windowManager.unmaximize();
+      }
+    } catch (e) {
+      debugPrint('maximize: $e');
+    }
+  });
+}
+
 /// 沉浸：播放页控制层隐藏时，标题栏的窗口按钮也隐藏（鼠标一动控制层出来，标题栏跟着出来）
 final windowImmersive = ValueNotifier(false);
 
@@ -205,6 +225,7 @@ class _WindowTitleBarState extends State<WindowTitleBar> with WindowListener {
     final max = await windowManager.isMaximized();
     final full = await windowManager.isFullScreen();
     windowFullScreen.value = full;
+    if (!full) windowMaximized.value = max;
     if (!mounted) return;
     setState(() {
       _maximized = max;
