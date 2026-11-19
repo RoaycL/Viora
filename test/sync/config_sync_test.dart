@@ -141,6 +141,21 @@ void main() {
       expect(p.enabled, isTrue);
     });
 
+    test('在线字幕：只发填了的字段，接收端没带过来的字段保留本机', () {
+      final windows = base.copyWith(subtitles: const SubtitleSourcesConfig(assrtToken: 'tok', osUsername: 'me'));
+      final payload = buildSyncPayload(windows, sections: {SyncSection.subtitles});
+      expect(payload['subtitles'], {'osUsername': 'me', 'assrtToken': 'tok'});
+      final tv = base.copyWith(subtitles: const SubtitleSourcesConfig(osUsername: 'old', osPassword: 'pw'));
+      final r = mergeSyncPayload(tv, payload);
+      expect(r.config.subtitles.assrtToken, 'tok');
+      expect(r.config.subtitles.osUsername, 'me');
+      expect(r.config.subtitles.osPassword, 'pw');
+      expect(r.summary, contains('在线字幕'));
+      // 什么都没填：不发、不改
+      expect(buildSyncPayload(base, sections: {SyncSection.subtitles})['subtitles'], isEmpty);
+      expect(mergeSyncPayload(tv, {'viora': 1, 'subtitles': <String, dynamic>{}}).isEmpty, isTrue);
+    });
+
     test('Windows 打包后再合并：内容一致，不带令牌', () {
       final payload = buildSyncPayload(base, sections: {SyncSection.servers, SyncSection.tmdb}, from: 'Windows');
       expect(jsonEncode(payload), isNot(contains('"token"')));

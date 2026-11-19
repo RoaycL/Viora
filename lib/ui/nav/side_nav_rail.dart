@@ -295,12 +295,15 @@ class _Logo extends StatelessWidget {
                 child: Center(
                   child: ClipRRect(
                     borderRadius: BorderRadius.circular(VRadius.sm),
-                    // 始终是深色图标（整体界面是深色的）；「日间图标」只换任务栏和桌面快捷方式
-                    child: Image.asset(
-                      'assets/images/app_icon.png',
-                      width: 44,
-                      height: 44,
-                      filterQuality: FilterQuality.medium,
+                    // 跟着「桌面图标」设置换（日间 / 默认 / 跟随系统），和任务栏、托盘一致
+                    child: ValueListenableBuilder<bool>(
+                      valueListenable: DesktopPrefs.instance.lightIcon,
+                      builder: (context, light, _) => Image.asset(
+                        light ? 'assets/images/app_icon_light.png' : 'assets/images/app_icon.png',
+                        width: 44,
+                        height: 44,
+                        filterQuality: FilterQuality.medium,
+                      ),
                     ),
                   ),
                 ),

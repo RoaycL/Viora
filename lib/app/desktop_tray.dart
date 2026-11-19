@@ -3,6 +3,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:tray_manager/tray_manager.dart';
 import 'package:window_manager/window_manager.dart';
 
+import 'desktop_prefs.dart';
 import 'window_frame.dart';
 
 /// Windows：点关闭时「退出应用」还是「最小化到托盘」（系统通知区域）。仅 Windows，电视 / 安卓不涉及。
@@ -33,7 +34,14 @@ class DesktopTray with TrayListener, WindowListener {
     // 拦截关闭，由 onWindowClose 决定退出还是隐藏
     await windowManager.setPreventClose(true);
     if (closeToTray.value) await _showTray();
+    // 托盘图标跟着「桌面图标」设置（日间 / 默认 / 跟随系统）一起换
+    DesktopPrefs.instance.lightIcon.addListener(() {
+      if (_trayShown) trayManager.setIcon(_trayIcon).catchError((_) {});
+    });
   }
+
+  static String get _trayIcon =>
+      DesktopPrefs.instance.lightIcon.value ? 'assets/images/app_icon_light.ico' : 'assets/images/tray_icon.ico';
 
   Future<void> setCloseToTray(bool value) async {
     closeToTray.value = value;
@@ -50,7 +58,7 @@ class DesktopTray with TrayListener, WindowListener {
   Future<void> _showTray() async {
     if (_trayShown) return;
     try {
-      await trayManager.setIcon('assets/images/tray_icon.ico');
+      await trayManager.setIcon(_trayIcon);
       await trayManager.setToolTip('Viora');
       await trayManager.setContextMenu(
         Menu(

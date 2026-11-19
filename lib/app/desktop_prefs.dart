@@ -7,7 +7,7 @@ import 'package:window_manager/window_manager.dart';
 
 import 'window_frame.dart';
 
-/// 桌面图标样式（Windows：任务栏、桌面和开始菜单的快捷方式；应用里左上角的 Logo 始终是深色的，和整体深色界面一致）
+/// 桌面图标样式（Windows：任务栏、托盘、桌面和开始菜单的快捷方式，以及应用左上角的 Logo）
 enum AppIconStyle {
   /// 深色底（现在的图标）
   dark('默认'),

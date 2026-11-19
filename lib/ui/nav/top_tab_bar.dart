@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../../app/desktop_prefs.dart';
 import '../../app/theme.dart';
 import '../focus/focusable.dart';
 import '../widgets/status_bar.dart';
@@ -64,11 +65,14 @@ class TopTabBar extends StatelessWidget {
                       padding: const EdgeInsets.only(top: 4),
                       child: ClipRRect(
                         borderRadius: BorderRadius.circular(VRadius.sm),
-                        child: Image.asset(
-                          'assets/images/app_icon.png',
-                          width: 44,
-                          height: 44,
-                          filterQuality: FilterQuality.medium,
+                        child: ValueListenableBuilder<bool>(
+                          valueListenable: DesktopPrefs.instance.lightIcon,
+                          builder: (context, light, _) => Image.asset(
+                            light ? 'assets/images/app_icon_light.png' : 'assets/images/app_icon.png',
+                            width: 44,
+                            height: 44,
+                            filterQuality: FilterQuality.medium,
+                          ),
                         ),
                       ),
                     ),
