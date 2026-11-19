@@ -482,10 +482,23 @@ class DanmakuConfig {
     this.colorMode = DanmakuColorMode.none,
     this.blockWords = '',
     this.searchBlockWords = '',
+    this.useBuiltin = true,
   });
 
   /// 播放时自动加载并显示弹幕
   final bool enabled;
+
+  /// 使用内置的弹弹play 开放弹幕源（发布版内置 AppId；排在自己的服务器后面）
+  final bool useBuiltin;
+
+  /// 弹弹play 开放平台（打包时由 --dart-define 注入，源码里没有；测试里可改）
+  static String builtinServer = 'https://api.dandanplay.net';
+  static String builtinAppId = const String.fromEnvironment('VIORA_DANDANPLAY_APP_ID');
+  static String builtinAppSecret = const String.fromEnvironment('VIORA_DANDANPLAY_APP_SECRET');
+  static bool get builtinAvailable => builtinAppId.isNotEmpty && builtinAppSecret.isNotEmpty;
+
+  /// 内置弹幕源是否参与（打开了开关且这个版本内置了 AppId）
+  bool get builtinActive => useBuiltin && builtinAvailable;
 
   /// 弹幕服务器地址（最多 3 个）
   final List<String> servers;
@@ -534,7 +547,13 @@ class DanmakuConfig {
       if (normalizeServer(s).isNotEmpty) normalizeServer(s),
   ];
 
-  bool get ready => enabled && activeServers.isNotEmpty;
+  /// 实际使用的弹幕服务器：自己的 danmu_api 在前，内置弹弹play 在最后（自动匹配按这个顺序取第一个）
+  List<String> get allServers => [
+    ...activeServers,
+    if (builtinActive && !activeServers.contains(builtinServer)) builtinServer,
+  ];
+
+  bool get ready => enabled && allServers.isNotEmpty;
 
   static String normalizeServer(String raw) {
     var s = raw.trim().replaceAll(RegExp(r'/+$'), '');
@@ -561,6 +580,7 @@ class DanmakuConfig {
     DanmakuColorMode? colorMode,
     String? blockWords,
     String? searchBlockWords,
+    bool? useBuiltin,
   }) => DanmakuConfig(
     enabled: enabled ?? this.enabled,
     servers: servers ?? this.servers,
@@ -574,11 +594,12 @@ class DanmakuConfig {
     colorMode: colorMode ?? this.colorMode,
     blockWords: blockWords ?? this.blockWords,
     searchBlockWords: searchBlockWords ?? this.searchBlockWords,
+    useBuiltin: useBuiltin ?? this.useBuiltin,
   );
 
   /// 跨设备同步的字段（弹幕服务器、屏蔽词、繁简与颜色处理）。
   /// 上限、字号、透明度、显示区域、速度等显示设置跟屏幕和性能有关，每台设备各自设置（docs/11-sync.md）
-  static const syncedKeys = {'servers', 'convert', 'colorMode', 'blockWords', 'searchBlockWords'};
+  static const syncedKeys = {'servers', 'convert', 'colorMode', 'blockWords', 'searchBlockWords', 'useBuiltin'};
 
   Map<String, dynamic> toSyncJson() => {
     for (final e in toJson().entries)
@@ -598,6 +619,7 @@ class DanmakuConfig {
     'colorMode': colorMode.name,
     'blockWords': blockWords,
     'searchBlockWords': searchBlockWords,
+    'useBuiltin': useBuiltin,
   };
 
   factory DanmakuConfig.fromJson(Map<String, dynamic> j) => DanmakuConfig(
@@ -613,6 +635,7 @@ class DanmakuConfig {
     colorMode: DanmakuColorMode.parse(j['colorMode'] as String?),
     blockWords: j['blockWords'] as String? ?? '',
     searchBlockWords: j['searchBlockWords'] as String? ?? '',
+    useBuiltin: j['useBuiltin'] as bool? ?? true,
   );
 }
 

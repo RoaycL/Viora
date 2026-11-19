@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 
+import 'package:crypto/crypto.dart';
 import 'package:dio/dio.dart';
 import 'package:flutter/foundation.dart';
 
@@ -24,7 +25,15 @@ class DanmakuMatch {
   final String episodeTitle;
 }
 
-/// danmu_api（弹弹play 兼容接口）客户端：多个服务器并发搜索，结果按 animeId 去重并记住来自哪个服务器
+/// 弹弹play 开放平台的签名头：X-Signature = base64(sha256(AppId + Timestamp + Path + AppSecret))，Path 不含查询参数
+Map<String, String> dandanplaySignature(String appId, String secret, String path, int timestamp) => {
+  'X-AppId': appId,
+  'X-Timestamp': '$timestamp',
+  'X-Signature': base64.encode(sha256.convert(utf8.encode('$appId$timestamp$path$secret')).bytes),
+};
+
+/// 弹幕客户端：自己的 danmu_api（弹弹play 兼容接口）+ 内置弹弹play，多个服务器并发搜索，
+/// 结果按 animeId 去重并记住来自哪个服务器
 class DanmakuClient {
   DanmakuClient(this.config, {Dio? dio})
     : _dio =
@@ -37,12 +46,38 @@ class DanmakuClient {
               headers: {'Accept': 'application/json', 'User-Agent': 'Viora'},
               responseType: ResponseType.plain,
             ),
-          );
+          ) {
+    // 发往内置弹弹play 的请求加签名（每个请求单独算，时间戳要新）
+    _dio.interceptors.add(
+      InterceptorsWrapper(
+        onRequest: (options, handler) {
+          if (isBuiltin(options.uri.toString())) {
+            options.headers.addAll(
+              dandanplaySignature(
+                DanmakuConfig.builtinAppId,
+                DanmakuConfig.builtinAppSecret,
+                options.uri.path,
+                DateTime.now().millisecondsSinceEpoch ~/ 1000,
+              ),
+            );
+          }
+          handler.next(options);
+        },
+      ),
+    );
+  }
 
   final DanmakuConfig config;
   final Dio _dio;
 
-  List<String> get servers => config.activeServers;
+  List<String> get servers => config.allServers;
+
+  /// 这个地址 / 服务器是不是内置的弹弹play
+  static bool isBuiltin(String url) =>
+      DanmakuConfig.builtinAvailable && (url == DanmakuConfig.builtinServer || url.startsWith('${DanmakuConfig.builtinServer}/'));
+
+  /// 搜索结果、弹幕来源里显示的服务器名（只标内置的弹弹play，自己的服务器不标）
+  static String? sourceLabel(String server) => isBuiltin(server) ? '弹弹play' : null;
 
   /// 解析后的原始弹幕（过滤前），最近 4 集；换下一集 / 切换资源时不用重新下载
   static final _commentCache = <String, List<DanmakuComment>>{};
@@ -84,11 +119,22 @@ class DanmakuClient {
           onError: (_) => <DanmakuAnime>[],
         ),
     ]);
-    final seen = <int>{};
+    final seen = <String>{};
+    // 自己的服务器在前；内置弹弹play 和它们编号不同，按标题去掉同一部作品的重复条目
+    // 被搜索屏蔽词去掉的结果不算：不然它会把弹弹play 里干净的同名结果也挡掉，两边都没了
+    final blocked = splitKeywords(config.searchBlockWords);
+    final titles = <String>{
+      for (var i = 0; i < results.length; i++)
+        if (!isBuiltin(servers[i]))
+          for (final a in results[i])
+            if (!blocked.any(a.title.contains)) sameTitleKey(a.title),
+    };
     final merged = [
-      for (final list in results)
-        for (final a in list)
-          if (seen.add(a.animeId)) a,
+      for (var i = 0; i < results.length; i++)
+        for (final a in results[i])
+          if (seen.add('${isBuiltin(servers[i]) ? 'b' : 'u'}#${a.animeId}') &&
+              (!isBuiltin(servers[i]) || !titles.contains(sameTitleKey(a.title))))
+            a,
     ];
     return rankAnimes(
       merged,
@@ -115,7 +161,8 @@ class DanmakuClient {
         _dio
             .post<String>(
               '$server/api/v2/match',
-              data: {'fileName': fileName},
+              // 弹弹play 默认要文件哈希；我们只有文件名
+              data: {'fileName': fileName, if (isBuiltin(server)) 'matchMode': 'fileNameOnly'},
               options: Options(contentType: Headers.jsonContentType),
             )
             .then<DanmakuMatch?>((r) {
@@ -181,3 +228,10 @@ class DanmakuException implements Exception {
   @override
   String toString() => message;
 }
+
+/// 判断两个来源的作品是不是同一部：去掉空格、【来源】标记、（年份）后比较
+String sameTitleKey(String title) => title
+    .toLowerCase()
+    .replaceAll(RegExp(r'【[^】]*】|\[[^\]]*\]'), '')
+    .replaceAll(RegExp(r'[（(]\d{4}[)）]'), '')
+    .replaceAll(RegExp(r'\s+'), '');

@@ -21,6 +21,7 @@ enum SyncSection {
   danmaku('弹幕', '弹幕服务器、屏蔽词（字号、条数等显示设置每台设备各自设置）'),
   segments('片头片尾', '数据源开关与 API Key'),
   ratings('外部评分', '数据源开关与地址；凭据需在元数据设置中允许同步'),
+  subtitles('在线字幕', '射手网（伪）token、OpenSubtitles 账号'),
   webdav('WebDAV 同步', '地址、账号、加密口令（电视收到后即可自动同步）');
 
   const SyncSection(this.label, this.detail);
@@ -66,6 +67,12 @@ Map<String, dynamic> buildSyncPayload(
   },
   if (sections.contains(SyncSection.tmdb)) 'tmdb': c.tmdb.toJson(),
   if (sections.contains(SyncSection.danmaku)) 'danmaku': c.danmaku.toSyncJson(),
+  // 只发送填了的字段：空值发出去会把对方已填的清掉（WebDAV 两台设备第一次合并时尤其明显）
+  if (sections.contains(SyncSection.subtitles))
+    'subtitles': {
+      for (final e in c.subtitles.toJson().entries)
+        if (e.value is String && (e.value as String).isNotEmpty) e.key: e.value,
+    },
   if (sections.contains(SyncSection.webdav) && c.webdav.configured) 'webdav': c.webdav.toJson(),
   if (sections.contains(SyncSection.segments) && segments != null)
     'segments': {
@@ -247,6 +254,10 @@ SyncMergeResult mergeSyncPayload(AppConfig c, Map<String, dynamic> p, {bool repl
     };
     config = config.copyWith(danmaku: DanmakuConfig.fromJson({...config.danmaku.toJson(), ...shared}));
     summary.add('弹幕');
+  }
+  if (section('subtitles') case final m? when m.isNotEmpty) {
+    config = config.copyWith(subtitles: SubtitleSourcesConfig.fromJson({...config.subtitles.toJson(), ...m}));
+    summary.add('在线字幕');
   }
   final seg = section('segments');
   final keys = <String, String>{
