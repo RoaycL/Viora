@@ -116,4 +116,52 @@ void main() {
     controller.retry(action);
     expect(controller.at(const Duration(seconds: 21))!.automatic, isFalse);
   });
+
+  test('从头播放直接从片头结束处开始：只限开头的自动片头；第一集例外、按钮模式不提前', () {
+    const opening = Segment(
+      type: SegmentType.intro,
+      start: Duration.zero,
+      end: Duration(seconds: 85),
+      provider: 'manual',
+      confidence: 1,
+    );
+    final auto = SegmentSettings.defaults().copyWith(intro: SegmentSkipMode.auto);
+    expect((SegmentSkipController(query: episode, settings: auto)..segments = [opening]).autoIntroAtStart(), opening);
+    // 片头前还有内容（冷开场）：不能直接跳过开头
+    expect((SegmentSkipController(query: episode, settings: auto)..segments = [intro]).autoIntroAtStart(), isNull);
+    final button = SegmentSettings.defaults().copyWith(intro: SegmentSkipMode.button);
+    expect((SegmentSkipController(query: episode, settings: button)..segments = [opening]).autoIntroAtStart(), isNull);
+    const first = SegmentQuery(
+      titleKey: 'series',
+      kind: SegmentMediaKind.episode,
+      season: 1,
+      episode: 1,
+      duration: Duration(minutes: 50),
+    );
+    expect(
+      (SegmentSkipController(
+        query: first,
+        settings: auto.copyWith(firstEpisodeException: true),
+      )..segments = [opening]).autoIntroAtStart(),
+      isNull,
+    );
+  });
+
+  test('会自动跳到下一集的片尾才限制预读；处理过、没有下一集、按钮模式都不限制', () {
+    final auto = SegmentSettings.defaults().copyWith(credits: SegmentSkipMode.auto);
+    final c = SegmentSkipController(query: episode, settings: auto, hasNextEpisode: true)..segments = [credits];
+    expect(c.autoNextCredits, credits);
+    c.markHandled(c.at(const Duration(minutes: 49))!);
+    expect(c.autoNextCredits, isNull);
+    expect((SegmentSkipController(query: episode, settings: auto)..segments = [credits]).autoNextCredits, isNull);
+    final button = SegmentSettings.defaults().copyWith(credits: SegmentSkipMode.button);
+    expect(
+      (SegmentSkipController(
+        query: episode,
+        settings: button,
+        hasNextEpisode: true,
+      )..segments = [credits]).autoNextCredits,
+      isNull,
+    );
+  });
 }

@@ -108,4 +108,59 @@ void main() {
     expect(seeks, isEmpty);
     session.dispose();
   });
+
+  test('跳转被内核丢掉（刚打开文件）：位置没到目标就隔一会儿重发，到了就停', () async {
+    final seeks = <Duration>[];
+    var now = DateTime(2026);
+    final session = SegmentPlaybackSession(
+      resolver: SegmentResolver(providers: []),
+      seek: (p) async => seeks.add(p),
+      nextEpisode: () async {},
+      onPrompt: (_) {},
+      now: () => now,
+    );
+    session.begin(
+      _ep,
+      SegmentSettings.defaults().copyWith(intro: SegmentSkipMode.auto),
+      manual: const ManualMark(introEnd: Duration(seconds: 90)).segmentsFor(_ep.duration),
+    );
+    session.onPosition(Duration.zero);
+    await Future<void>.delayed(Duration.zero);
+    expect(seeks, [const Duration(seconds: 90)]);
+    // 内核没跳：位置还在开头。1.5 秒内不重发
+    now = now.add(const Duration(milliseconds: 500));
+    session.onPosition(const Duration(milliseconds: 500));
+    expect(seeks, hasLength(1));
+    now = now.add(const Duration(seconds: 1));
+    session.onPosition(const Duration(milliseconds: 900));
+    await Future<void>.delayed(Duration.zero);
+    expect(seeks, hasLength(2));
+    // 这次跳过去了：不再重发
+    now = now.add(const Duration(seconds: 2));
+    session.onPosition(const Duration(seconds: 90, milliseconds: 200));
+    now = now.add(const Duration(seconds: 2));
+    session.onPosition(const Duration(seconds: 91));
+    expect(seeks, hasLength(2));
+  });
+
+  test('起播前已经跳过的片头：倒回去看不再被自动跳走', () async {
+    final seeks = <Duration>[];
+    final manual = const ManualMark(introEnd: Duration(seconds: 90)).segmentsFor(_ep.duration);
+    final session = SegmentPlaybackSession(
+      resolver: SegmentResolver(providers: []),
+      seek: (p) async => seeks.add(p),
+      nextEpisode: () async {},
+      onPrompt: (_) {},
+    );
+    session.begin(
+      _ep,
+      SegmentSettings.defaults().copyWith(intro: SegmentSkipMode.auto),
+      manual: manual,
+      handled: [manual.first],
+    );
+    session.onPosition(const Duration(seconds: 95));
+    session.onPosition(const Duration(seconds: 10));
+    await Future<void>.delayed(Duration.zero);
+    expect(seeks, isEmpty);
+  });
 }

@@ -15,7 +15,9 @@ class SegmentPlaybackSession {
     this.onResolution,
     this.onActionError,
     this.onAutoSkip,
-  });
+    DateTime Function()? now,
+  }) : _now = now ?? DateTime.now;
+  final DateTime Function() _now;
   final SegmentResolver resolver;
   final Future<void> Function(Duration) seek;
   final Future<void> Function() nextEpisode;
@@ -34,6 +36,14 @@ class SegmentPlaybackSession {
   bool _hasPosition = false;
   bool _inFlight = false;
 
+  /// 刚发出的跳转：等播放位置真的到了目标才算完成。内核刚打开文件、还没加载好时（自动连播到下一集、
+  /// 手动标记立即可用）mpv 会丢掉跳转命令而不报错，这时隔一会儿重发，最多 [maxSeekAttempts] 次
+  SegmentSkipAction? _verifying;
+  int _seekAttempts = 0;
+  DateTime _seekSentAt = DateTime.fromMillisecondsSinceEpoch(0);
+  static const maxSeekAttempts = 4;
+  static const seekRetryAfter = Duration(milliseconds: 1500);
+
   /// 数据源解析出的片段，和手动标记（优先）
   List<Segment> _resolved = const [];
   List<Segment> _manual = const [];
@@ -46,14 +56,20 @@ class SegmentPlaybackSession {
     bool hasNextEpisode = false,
     Duration? position,
     List<Segment> manual = const [],
+    List<Segment> handled = const [],
   }) {
     final generation = ++_generation;
     _position = position ?? Duration.zero;
     _hasPosition = position != null;
     _inFlight = false;
+    _verifying = null;
     _resolved = const [];
     _manual = manual;
     final controller = SegmentSkipController(query: query, settings: settings, hasNextEpisode: hasNextEpisode);
+    // 起播前已经跳过的（直接从片头结束处打开）：之后倒回去看不再被自动跳走
+    for (final s in handled) {
+      controller.markHandled(SegmentSkipAction(segment: s, kind: SegmentSkipActionKind.seek, automatic: true));
+    }
     _controller = controller;
     onPrompt(null);
     if (manual.isNotEmpty) {
@@ -94,10 +110,14 @@ class SegmentPlaybackSession {
     if (_hasPosition) onPosition(_position);
   }
 
+  /// 片尾会自动跳到下一集时，片尾开始的位置：预读到这里就够了
+  Duration? get prefetchLimit => _controller?.autoNextCredits?.start;
+
   void onPosition(Duration position) {
     _position = position;
     _hasPosition = true;
     if (_inFlight) return;
+    if (_verifying != null && _checkSeek(position)) return;
     final action = _controller?.at(position);
     if (action != null && action.automatic) {
       onAutoSkip?.call(action);
@@ -121,6 +141,11 @@ class SegmentPlaybackSession {
         await nextEpisode();
       } else {
         await seek(action.target);
+        if (generation == _generation) {
+          _verifying = action;
+          _seekAttempts = 1;
+          _seekSentAt = _now();
+        }
       }
     } on Exception catch (error) {
       if (generation == _generation) {
@@ -132,6 +157,35 @@ class SegmentPlaybackSession {
     } finally {
       if (generation == _generation) _inFlight = false;
     }
+  }
+
+  /// 返回 true：跳转还没生效、正在等待或已重发，这次位置不再做别的判断
+  bool _checkSeek(Duration position) {
+    final action = _verifying!;
+    final segment = action.segment;
+    // 到了目标附近，或用户自己拖走了：完成
+    if (position >= action.target - const Duration(seconds: 1) || !segment.contains(position)) {
+      _verifying = null;
+      return false;
+    }
+    if (_now().difference(_seekSentAt) < seekRetryAfter) return true;
+    if (_seekAttempts >= maxSeekAttempts) {
+      _verifying = null;
+      onActionError?.call(StateError('跳过${segment.type.name}未生效：位置停在 ${position.inSeconds}s'));
+      return false;
+    }
+    _seekAttempts++;
+    _seekSentAt = _now();
+    final generation = _generation;
+    _inFlight = true;
+    seek(action.target)
+        .catchError((Object e) {
+          if (generation == _generation) onActionError?.call(e);
+        })
+        .whenComplete(() {
+          if (generation == _generation) _inFlight = false;
+        });
+    return true;
   }
 
   void dispose() {
