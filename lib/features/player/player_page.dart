@@ -182,7 +182,7 @@ class _PlayerPageState extends ConsumerState<PlayerPage> with WidgetsBindingObse
       return Future.value();
     }
     // 和「选集」面板共用一次请求：开播时就拿到整部剧的集列表，之后打开选集直接显示
-    final episodes = _episodes ??= _loadEpisodes(client, item.seriesId!);
+    final episodes = _episodeList(client, item.seriesId!);
     return _nextEpisodeFuture ??= episodes
         .then((all) => _nextEpisode ??= nextEpisodeAfter(all, item))
         .catchError((Object _) {
@@ -198,6 +198,15 @@ class _PlayerPageState extends ConsumerState<PlayerPage> with WidgetsBindingObse
   Future<List<MediaItem>>? _episodes;
   bool _episodesFailed = false;
 
+  /// 整部剧的集列表（选集面板和「下一集」共用）；上次请求失败了就重新请求
+  Future<List<MediaItem>> _episodeList(EmbyClient client, String seriesId) {
+    if (_episodesFailed) {
+      _episodes = null;
+      _episodesFailed = false;
+    }
+    return _episodes ??= _loadEpisodes(client, seriesId);
+  }
+
   Future<List<MediaItem>> _loadEpisodes(EmbyClient client, String seriesId) {
     final key = '${accountScope(client.server)}/$seriesId';
     final hit = _episodeCache[key];
@@ -209,7 +218,7 @@ class _PlayerPageState extends ConsumerState<PlayerPage> with WidgetsBindingObse
     while (_episodeCache.length > 4) {
       _episodeCache.remove(_episodeCache.keys.first);
     }
-    // 失败的不留着；下次打开选集时重新请求
+    // 失败的不留着；下次打开选集或查下一集时重新请求
     future.then(
       (_) {},
       onError: (_) {
@@ -2090,11 +2099,7 @@ class _PlayerPageState extends ConsumerState<PlayerPage> with WidgetsBindingObse
       final client = _client;
       if (item == null || client == null || item.seriesId == null) return;
       // 整部剧的所有季：面板里可以切换季
-      if (_episodesFailed) {
-        _episodes = null;
-        _episodesFailed = false;
-      }
-      _episodes ??= _loadEpisodes(client, item.seriesId!);
+      _episodeList(client, item.seriesId!);
     }
     setState(() => _panel = panel);
     _showOsd(sticky: true);
