@@ -25,17 +25,29 @@ Future<void> initDesktopWindow() async {
   // 本机设置（启动全屏、图标、系统代理）在显示窗口前读好
   await DesktopPrefs.instance.load();
   await SystemProxy.apply(DesktopPrefs.instance.followSystemProxy.value);
+  final launchFull = DesktopPrefs.instance.fullScreenOnLaunch.value;
+  // 「打开软件时全屏」：窗口先按整块屏幕的大小摆好再显示（无边框，看起来已经是全屏），
+  // 不会先闪一下 1600×900 的小窗口再变大。真正进全屏仍等窗口显示、第一帧画完之后，和手动进全屏走同一条路：
+  // 之前在窗口还没显示时就进全屏，原生插件记下的「全屏前窗口」不对，之后切回窗口模式画面卡住不动。
+  // 这样记下的「全屏前窗口」是整块屏幕大小，退出全屏时 [_applyFullScreen] 会放回屏幕中间的默认大小
+  final screen = launchFull ? _primaryScreen() : null;
   await windowManager.waitUntilReadyToShow(options, () async {
+    if (screen != null) await windowManager.setBounds(Offset.zero & screen);
     await windowManager.show();
     await windowManager.focus();
   });
-  // 「打开软件时全屏」：等第一帧画完、窗口真正显示出来再进全屏，和手动进全屏走同一条路。
-  // 之前在窗口还没显示时就进全屏，原生插件记下的「全屏前窗口」不对，之后切回窗口模式画面卡住不动
-  if (DesktopPrefs.instance.fullScreenOnLaunch.value) {
+  if (launchFull) {
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      Future<void>.delayed(const Duration(milliseconds: 300), () => setWindowFullScreen(true));
+      Future<void>.delayed(const Duration(milliseconds: 50), () => setWindowFullScreen(true));
     });
   }
+}
+
+/// 主屏幕的逻辑尺寸（取不到时为 null）
+Size? _primaryScreen() {
+  final display = PlatformDispatcher.instance.displays.firstOrNull;
+  if (display == null || display.size.isEmpty) return null;
+  return display.size / display.devicePixelRatio;
 }
 
 /// 窗口当前是否全屏（标题栏监听窗口事件更新；播放器的全屏按钮、Esc 键用它）
@@ -80,8 +92,7 @@ Future<void> _applyFullScreen(bool full) async {
   windowFullScreen.value = full;
   if (full || await windowManager.isMaximized()) return;
   // 退回的窗口不该还是整块屏幕那么大（原生插件记错了全屏前的位置时会这样，画面卡在全屏时的样子）：放回屏幕中间的默认大小
-  final display = PlatformDispatcher.instance.displays.firstOrNull;
-  final screen = display == null ? null : display.size / display.devicePixelRatio;
+  final screen = _primaryScreen();
   final now = await windowManager.getBounds();
   if (screen != null && now.width >= screen.width - 1 && now.height >= screen.height - 1) {
     const size = Size(1600, 900);
