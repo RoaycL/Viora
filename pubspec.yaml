@@ -88,26 +88,15 @@ flutter:
     - assets/brands/
     - assets/images/jellyfin_logo.png
 
-  # 数字字体（Windows 上的时间、进度、评分等）：Roboto 只保留数字和 :.,/%+-，Apache 2.0（assets/fonts/Roboto-LICENSE.txt）
   fonts:
-    - family: VioraDigits
-      fonts:
-        - asset: assets/fonts/RobotoDigits-400.ttf
-          weight: 400
-        - asset: assets/fonts/RobotoDigits-500.ttf
-          weight: 500
-        - asset: assets/fonts/RobotoDigits-700.ttf
-          weight: 700
-        - asset: assets/fonts/RobotoDigits-900.ttf
-          weight: 900
-    # Windows 的界面主字体：小米 MiSans 子集（GB2312 全部汉字 + 西文标点，字形未改），生僻字回退到微软雅黑
+    # Windows 的界面主字体：小米 MiSans 完整字符集（全部 CJK 基本区 + 扩展 A、西文、标点，字形未改；只去掉 hinting）
     - family: MiSans
       fonts:
-        - asset: assets/fonts/MiSans-Subset-400.ttf
+        - asset: assets/fonts/MiSans-400.ttf
           weight: 400
-        - asset: assets/fonts/MiSans-Subset-600.ttf
+        - asset: assets/fonts/MiSans-600.ttf
           weight: 600
-        - asset: assets/fonts/MiSans-Subset-700.ttf
+        - asset: assets/fonts/MiSans-700.ttf
           weight: 700
 
   # An image asset can refer to one or more resolution-specific "variants", see
