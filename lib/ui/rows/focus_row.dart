@@ -322,10 +322,8 @@ class _FocusRowState extends State<FocusRow> implements RevealableFocusRow {
                 }
                 return false;
               },
-              child: Listener(
-                onPointerSignal: widget.forwardShiftWheelAtEdge && PlatformProfile.isDesktop
-                    ? _forwardEdgeScroll
-                    : null,
+                child: Listener(
+                onPointerSignal: widget.forwardShiftWheelAtEdge && PlatformProfile.isDesktop ? _forwardEdgeScroll : null,
                 child: ListView.separated(
                   controller: _scroll,
                   scrollDirection: Axis.horizontal,

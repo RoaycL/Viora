@@ -102,10 +102,7 @@ class _VTextFieldState extends State<VTextField> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(
-            widget.label,
-            style: VText.caption.copyWith(color: VColors.textTertiary, fontSize: compact ? 17 : null),
-          ),
+          Text(widget.label, style: VText.caption.copyWith(color: VColors.textTertiary, fontSize: compact ? 17 : null)),
           SizedBox(height: compact ? 8 : 10),
           Row(
             children: [
@@ -190,10 +187,7 @@ class _VTextFieldState extends State<VTextField> {
           ),
           if (widget.helper != null) ...[
             const SizedBox(height: 8),
-            Text(
-              widget.helper!,
-              style: VText.small.copyWith(color: VColors.textMuted, fontSize: compact ? 16 : null),
-            ),
+            Text(widget.helper!, style: VText.small.copyWith(color: VColors.textMuted, fontSize: compact ? 16 : null)),
           ],
         ],
       ),
@@ -269,10 +263,7 @@ class VToggle extends StatelessWidget {
                   else ...[
                     Text(label, style: text),
                     if (subtitle != null)
-                      Text(
-                        subtitle!,
-                        style: VText.small.copyWith(color: VColors.textTertiary, fontSize: compact ? 16 : null),
-                      ),
+                      Text(subtitle!, style: VText.small.copyWith(color: VColors.textTertiary, fontSize: compact ? 16 : null)),
                   ],
                 ],
               ),
@@ -320,12 +311,7 @@ class VChoice<T> extends StatelessWidget {
         Row(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Flexible(
-              child: Text(
-                title,
-                style: VText.caption.copyWith(color: VColors.textTertiary, fontSize: compact ? 17 : null),
-              ),
-            ),
+            Flexible(child: Text(title, style: VText.caption.copyWith(color: VColors.textTertiary, fontSize: compact ? 17 : null))),
             if (hint != null) InfoTip(hint),
           ],
         ),
@@ -350,14 +336,10 @@ class VChoice<T> extends StatelessWidget {
                     decoration: BoxDecoration(
                       color: focused
                           ? Colors.white
-                          : (selected
-                                ? Color(compact ? 0x29FFFFFF : 0x33FFFFFF)
-                                : Color(compact ? 0x0AFFFFFF : 0x0DFFFFFF)),
+                          : (selected ? Color(compact ? 0x29FFFFFF : 0x33FFFFFF) : Color(compact ? 0x0AFFFFFF : 0x0DFFFFFF)),
                       borderRadius: BorderRadius.circular(999),
                       border: Border.all(
-                        color: selected && !focused
-                            ? Color(compact ? 0xB3FFFFFF : 0xFFFFFFFF)
-                            : const Color(0x00000000),
+                        color: selected && !focused ? Color(compact ? 0xB3FFFFFF : 0xFFFFFFFF) : const Color(0x00000000),
                         width: compact ? 1.5 : 2,
                       ),
                     ),
@@ -392,10 +374,7 @@ class SectionTitle extends StatelessWidget {
     final compact = InfoTipScope.compact(context);
     return Padding(
       padding: EdgeInsets.only(bottom: compact ? 16 : 20),
-      child: Text(
-        text,
-        style: compact ? VText.rowTitle.copyWith(fontSize: 24, fontWeight: FontWeight.w600) : VText.rowTitle,
-      ),
+      child: Text(text, style: compact ? VText.rowTitle.copyWith(fontSize: 24, fontWeight: FontWeight.w600) : VText.rowTitle),
     );
   }
 }

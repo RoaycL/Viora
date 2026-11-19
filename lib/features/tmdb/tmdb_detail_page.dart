@@ -134,7 +134,9 @@ class _TmdbDetailState extends ConsumerState<_TmdbDetail> {
         ? null
         : ref.watch(
             partialSourcesProvider(
-              t.isTv ? tmdbEpisodeSourcesKey((title: key, season: season, episode: episode)) : tmdbSourcesKey(key),
+              t.isTv
+                  ? tmdbEpisodeSourcesKey((title: key, season: season, episode: episode))
+                  : tmdbSourcesKey(key),
             ),
           );
     final options = visibleSourceOptions(ref.read(configProvider), optionsAsync.value ?? partial ?? const []);

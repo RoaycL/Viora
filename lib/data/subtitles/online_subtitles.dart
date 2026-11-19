@@ -122,13 +122,9 @@ const _textFormats = {'srt', 'ass', 'ssa', 'vtt'};
 
 /// OpenSubtitles REST API（api.opensubtitles.com）：内置应用 Key，用户可选登录自己的账号提高下载次数
 class OpenSubtitlesClient implements OnlineSubtitleProvider {
-  OpenSubtitlesClient(
-    this.config, {
-    Dio? dio,
-    this.apiKey = SubtitleSourcesConfig.builtinOpenSubtitlesKey,
-    String? baseUrl,
-  }) : _dio = dio ?? _newDio(),
-       _baseUrl = baseUrl ?? 'https://api.opensubtitles.com/api/v1';
+  OpenSubtitlesClient(this.config, {Dio? dio, this.apiKey = SubtitleSourcesConfig.builtinOpenSubtitlesKey, String? baseUrl})
+    : _dio = dio ?? _newDio(),
+      _baseUrl = baseUrl ?? 'https://api.opensubtitles.com/api/v1';
 
   static const providerName = 'OpenSubtitles';
 
@@ -192,8 +188,10 @@ class OpenSubtitlesClient implements OnlineSubtitleProvider {
         queryParameters: searchParams(query, language),
         options: Options(headers: _headers),
       );
-      return [for (final d in (r.data?['data'] as List? ?? const []).whereType<Map<String, dynamic>>()) ?_parse(d)]
-        ..sort((a, b) => (b.downloads ?? 0).compareTo(a.downloads ?? 0));
+      return [
+        for (final d in (r.data?['data'] as List? ?? const []).whereType<Map<String, dynamic>>())
+          ?_parse(d),
+      ]..sort((a, b) => (b.downloads ?? 0).compareTo(a.downloads ?? 0));
     } on DioException catch (e) {
       throw OnlineSubtitleException('OpenSubtitles 搜索失败：${_dioMessage(e)}');
     }
@@ -262,7 +260,9 @@ class OpenSubtitlesClient implements OnlineSubtitleProvider {
       final r = await _dio.post<Map<String, dynamic>>(
         '$_baseUrl/download',
         data: {'file_id': int.tryParse(subtitle.id) ?? subtitle.id},
-        options: Options(headers: {..._headers, 'Content-Type': 'application/json', 'Authorization': ?auth}),
+        options: Options(
+          headers: {..._headers, 'Content-Type': 'application/json', 'Authorization': ?auth},
+        ),
       );
       return r.data;
     }
@@ -425,9 +425,7 @@ class AssrtClient implements OnlineSubtitleProvider {
     if (episode != null) {
       final sameEpisode = [
         for (final f in text)
-          if (episodeOf('${f['f']}') case (final s, final e)
-              when e == episode && (s == null || season == null || s == season))
-            f,
+          if (episodeOf('${f['f']}') case (final s, final e) when e == episode && (s == null || season == null || s == season)) f,
       ];
       if (sameEpisode.isNotEmpty) {
         text = sameEpisode;
@@ -500,8 +498,7 @@ List<int> normalizeSubtitleBytes(List<int> bytes) {
   if (bytes.length >= 2 && (bytes[0] == 0xFF && bytes[1] == 0xFE || bytes[0] == 0xFE && bytes[1] == 0xFF)) {
     final le = bytes[0] == 0xFF;
     final units = <int>[
-      for (var i = 2; i + 1 < bytes.length; i += 2)
-        le ? bytes[i] | (bytes[i + 1] << 8) : (bytes[i] << 8) | bytes[i + 1],
+      for (var i = 2; i + 1 < bytes.length; i += 2) le ? bytes[i] | (bytes[i + 1] << 8) : (bytes[i] << 8) | bytes[i + 1],
     ];
     return utf8.encode(String.fromCharCodes(units));
   }

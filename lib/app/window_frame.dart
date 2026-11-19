@@ -306,7 +306,10 @@ class _WindowTitleBarState extends State<WindowTitleBar> with WindowListener {
               opacity: _revealed ? 1 : 0,
               duration: const Duration(milliseconds: 160),
               curve: Curves.easeOut,
-              child: MouseRegion(onExit: (_) => setState(() => _revealed = false), child: _bar()),
+              child: MouseRegion(
+                onExit: (_) => setState(() => _revealed = false),
+                child: _bar(),
+              ),
             ),
           ),
         ],
@@ -337,12 +340,7 @@ class _WindowTitleBarState extends State<WindowTitleBar> with WindowListener {
           ),
           _CaptionButton(icon: Icons.remove_rounded, tooltip: '最小化', onPressed: minimizeWindow),
           if (_fullScreen)
-            const _CaptionButton(
-              icon: Icons.fullscreen_exit_rounded,
-              iconSize: 18,
-              tooltip: '退出全屏',
-              onPressed: toggleFullScreen,
-            )
+            const _CaptionButton(icon: Icons.fullscreen_exit_rounded, iconSize: 18, tooltip: '退出全屏', onPressed: toggleFullScreen)
           else
             _CaptionButton(
               icon: _maximized ? Icons.filter_none_rounded : Icons.crop_square_rounded,
