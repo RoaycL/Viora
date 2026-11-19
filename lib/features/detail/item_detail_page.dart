@@ -315,7 +315,8 @@ class _ItemDetailPageState extends ConsumerState<ItemDetailPage> {
     );
     final selected = options.where((o) => sourceKeyOf(o) == _sourceKey).firstOrNull ?? options.firstOrNull;
     final playTarget = useCatalog ? selected?.item : serverTarget;
-    final resumeAt = playTarget?.position ?? Duration.zero;
+    // 各服务器的进度不相通：用最近在哪台看过的进度（默认选中的版本可能在另一台服务器上）
+    final resumeAt = latestProgress(options)?.position ?? playTarget?.position ?? Duration.zero;
     if (selected != null) _warmDefault(selected);
     void play(SourceOption? o, {bool fromStart = false}) {
       final target = playTarget;
@@ -325,7 +326,7 @@ class _ItemDetailPageState extends ConsumerState<ItemDetailPage> {
         return;
       }
       rememberSource(item, o.serverId);
-      context.push(o.playRoute(position: fromStart ? Duration.zero : o.item.position, resume: !fromStart));
+      context.push(playRouteFor(o, options, fromStart: fromStart));
     }
 
     final playLabel = switch (playTarget) {

@@ -1,3 +1,5 @@
+import 'dart:ui' show ImageFilter;
+
 import 'package:flutter/material.dart';
 
 import '../../app/input/back_handler.dart';
@@ -105,7 +107,7 @@ Future<T?> _showPanel<T>(
   context: context,
   barrierDismissible: true,
   barrierLabel: '关闭详情面板',
-  barrierColor: const Color(0xB307080B),
+  barrierColor: const Color(0x6607080B),
   transitionDuration: VMotion.duration(context, VMotion.focus),
   pageBuilder: (context, _, _) => _DetailPanel(title: title, body: body),
   transitionBuilder: (context, animation, _, child) => FadeTransition(
@@ -171,38 +173,51 @@ class _DetailPanelState extends State<_DetailPanel> {
             padding: const EdgeInsets.all(40),
             child: ConstrainedBox(
               constraints: const BoxConstraints(maxWidth: 1000, maxHeight: 900),
-              child: Material(
-                color: const Color(0xFF181B24),
+              // 毛玻璃：半透明面板 + 模糊背后的详情页
+              child: ClipRRect(
                 borderRadius: BorderRadius.circular(VRadius.panel),
-                clipBehavior: Clip.antiAlias,
-                child: Padding(
-                  padding: const EdgeInsets.all(28),
-                  child: FocusTraversalGroup(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.stretch,
-                      children: [
-                        Row(
+                child: BackdropFilter(
+                  filter: ImageFilter.blur(sigmaX: 36, sigmaY: 36),
+                  child: Material(
+                    color: const Color(0x9E181B24),
+                    borderRadius: BorderRadius.circular(VRadius.panel),
+                    clipBehavior: Clip.antiAlias,
+                    child: Padding(
+                      padding: const EdgeInsets.all(28),
+                      child: FocusTraversalGroup(
+                        child: Column(
+                          mainAxisSize: MainAxisSize.min,
+                          crossAxisAlignment: CrossAxisAlignment.stretch,
                           children: [
-                            Expanded(
-                              child: Text(widget.title, maxLines: 2, overflow: TextOverflow.ellipsis, style: VText.h2),
+                            Row(
+                              children: [
+                                Expanded(
+                                  child: Text(
+                                    widget.title,
+                                    maxLines: 2,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: VText.h2,
+                                  ),
+                                ),
+                                const SizedBox(width: 24),
+                                Tooltip(
+                                  message: '关闭 · Esc / 返回',
+                                  child: CircleIconButton(
+                                    focusNode: _close,
+                                    icon: Icons.close_rounded,
+                                    tooltip: '关闭',
+                                    onPressed: _dismiss,
+                                  ),
+                                ),
+                              ],
                             ),
-                            const SizedBox(width: 24),
-                            Tooltip(
-                              message: '关闭 · Esc / 返回',
-                              child: CircleIconButton(
-                                focusNode: _close,
-                                icon: Icons.close_rounded,
-                                tooltip: '关闭',
-                                onPressed: _dismiss,
-                              ),
+                            const SizedBox(height: 24),
+                            Flexible(
+                              child: FocusScope(node: _body, child: widget.body(_close, _dismiss)),
                             ),
                           ],
                         ),
-                        const SizedBox(height: 24),
-                        Expanded(
-                          child: FocusScope(node: _body, child: widget.body(_close, _dismiss)),
-                        ),
-                      ],
+                      ),
                     ),
                   ),
                 ),
@@ -373,7 +388,6 @@ class _Overview extends StatefulWidget {
 class _OverviewState extends State<_Overview> {
   final _scroll = ScrollController();
   final _focus = FocusNode(debugLabel: 'detail-overview');
-  bool _focused = false;
 
   @override
   void dispose() {
@@ -413,23 +427,16 @@ class _OverviewState extends State<_Overview> {
     child: Focus(
       focusNode: _focus,
       autofocus: true,
-      onFocusChange: (focused) => setState(() => _focused = focused),
       child: Listener(
         onPointerDown: (_) => _focus.requestFocus(),
         child: Semantics(
           label: '完整简介',
-          child: DecoratedBox(
-            decoration: BoxDecoration(
-              border: Border.all(color: _focused ? VColors.focusRing : Colors.transparent, width: 2),
-              borderRadius: BorderRadius.circular(VRadius.md),
-            ),
-            child: Scrollbar(
+          child: Scrollbar(
+            controller: _scroll,
+            child: SingleChildScrollView(
               controller: _scroll,
-              child: SingleChildScrollView(
-                controller: _scroll,
-                padding: const EdgeInsets.all(16),
-                child: Text(widget.overview, style: VText.body.copyWith(height: 1.65)),
-              ),
+              padding: const EdgeInsets.all(16),
+              child: Text(widget.overview, style: VText.body.copyWith(height: 1.65)),
             ),
           ),
         ),

@@ -41,12 +41,46 @@ final windowFullScreen = ValueNotifier(false);
 /// 沉浸：播放页控制层隐藏时，标题栏的窗口按钮也隐藏（鼠标一动控制层出来，标题栏跟着出来）
 final windowImmersive = ValueNotifier(false);
 
+/// 进出全屏一次只做一个：连续双击、按钮和快捷键同时触发时，前一次还没切完又切一次，
+/// 原生插件记下的「全屏前的窗口位置」会被覆盖成全屏的大小，退出后窗口卡在半截、画面不刷新
+Future<void> _fullScreenChain = Future<void>.value();
+bool _fullScreenBusy = false;
+
+/// 切换全屏。上一次切换还没完成时忽略（双击连发、按键重复）
 Future<void> toggleFullScreen() async {
-  if (!isDesktopWindow) return;
-  if (MiniPlayerWindow.active.value) await MiniPlayerWindow.exit();
-  final full = !await windowManager.isFullScreen();
+  if (!isDesktopWindow || _fullScreenBusy) return;
+  await setWindowFullScreen(!windowFullScreen.value);
+}
+
+/// 进入 / 退出全屏（排队执行，已经是目标状态时不动）
+Future<void> setWindowFullScreen(bool full) {
+  if (!isDesktopWindow) return Future<void>.value();
+  return _fullScreenChain = _fullScreenChain.then((_) async {
+    _fullScreenBusy = true;
+    try {
+      if (MiniPlayerWindow.active.value) await MiniPlayerWindow.exit();
+      await _applyFullScreen(full);
+    } catch (e) {
+      debugPrint('full screen: $e');
+    } finally {
+      _fullScreenBusy = false;
+    }
+  });
+}
+
+Future<void> _applyFullScreen(bool full) async {
+  if (await windowManager.isFullScreen() == full) {
+    windowFullScreen.value = full;
+    return;
+  }
   await windowManager.setFullScreen(full);
   windowFullScreen.value = full;
+  if (full || await windowManager.isMaximized()) return;
+  // 退出全屏后窗口的边框样式变了，但内容区不一定跟着重新布局（画面停在全屏时的样子、像卡死）：
+  // 把窗口宽度改 1 像素再改回来，强制重新布局、重绘
+  final bounds = await windowManager.getBounds();
+  await windowManager.setBounds(Rect.fromLTWH(bounds.left, bounds.top, bounds.width + 1, bounds.height));
+  await windowManager.setBounds(bounds);
 }
 
 /// 播放器小窗（画中画）：窗口缩小到屏幕右下角并置顶，退出时恢复原来的大小、位置、最大化 / 全屏状态。仅 Windows。
@@ -64,10 +98,7 @@ abstract final class MiniPlayerWindow {
     _busy = true;
     try {
       _wasFullScreen = await windowManager.isFullScreen();
-      if (_wasFullScreen) {
-        await windowManager.setFullScreen(false);
-        windowFullScreen.value = false;
-      }
+      if (_wasFullScreen) await _applyFullScreen(false);
       _wasMaximized = await windowManager.isMaximized();
       if (_wasMaximized) await windowManager.unmaximize();
       _saved = await windowManager.getBounds();
@@ -94,10 +125,7 @@ abstract final class MiniPlayerWindow {
       await windowManager.setMinimumSize(const Size(960, 540));
       if (_saved != null) await windowManager.setBounds(_saved!);
       if (_wasMaximized) await windowManager.maximize();
-      if (_wasFullScreen) {
-        await windowManager.setFullScreen(true);
-        windowFullScreen.value = true;
-      }
+      if (_wasFullScreen) await _applyFullScreen(true);
     } finally {
       _busy = false;
     }
@@ -128,11 +156,23 @@ class _WindowTitleBarState extends State<WindowTitleBar> with WindowListener {
   void initState() {
     super.initState();
     windowManager.addListener(this);
+    // 进出全屏以应用自己记的状态为准（原生插件的全屏事件不一定每次都发，标题栏会停在旧样子几秒）
+    windowFullScreen.addListener(_onFullScreenFlag);
     _refresh();
+  }
+
+  void _onFullScreenFlag() {
+    final full = windowFullScreen.value;
+    if (!mounted || full == _fullScreen) return;
+    setState(() {
+      _fullScreen = full;
+      _revealed = false;
+    });
   }
 
   @override
   void dispose() {
+    windowFullScreen.removeListener(_onFullScreenFlag);
     windowManager.removeListener(this);
     super.dispose();
   }
@@ -144,8 +184,8 @@ class _WindowTitleBarState extends State<WindowTitleBar> with WindowListener {
     if (!mounted) return;
     setState(() {
       _maximized = max;
+      if (full != _fullScreen) _revealed = false;
       _fullScreen = full;
-      if (!full) _revealed = false;
     });
   }
 

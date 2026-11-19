@@ -95,11 +95,18 @@ class _TmdbDetailState extends ConsumerState<_TmdbDetail> {
   int? _season;
   int? _episode;
 
+  /// 当前这一集 / 这部电影的所有版本：接着看时用最近在哪台服务器上看过的进度
+  List<SourceOption> _options = const [];
+
   void _play(SourceOption o, {bool fromStart = false}) {
     // 记住这部作品用的服务器（剧集按剧记，下次默认还用这台）
     final copies = ref.read(tmdbLibrarySearchProvider(searchKeyOf(widget.t))).value ?? const <MediaItem>[];
-    rememberSource(copies.where((c) => c.serverId == o.serverId).firstOrNull ?? o.item, o.serverId);
-    context.push(o.playRoute(position: fromStart ? Duration.zero : o.item.position, resume: !fromStart));
+    rememberSource(
+      copies.where((c) => c.serverId == o.serverId).firstOrNull ?? o.item,
+      o.serverId,
+      series: widget.t.isTv ? searchKeyOf(widget.t) : null,
+    );
+    context.push(playRouteFor(o, _options, fromStart: fromStart));
   }
 
   @override
@@ -144,7 +151,8 @@ class _TmdbDetailState extends ConsumerState<_TmdbDetail> {
         ? '各服务器上都没有第 $season 季第 $episode 集'
         : '暂未找到资源';
     final found = selected != null;
-    final resumeAt = selected?.item.position ?? Duration.zero;
+    _options = options;
+    final resumeAt = selected == null ? Duration.zero : latestProgress(options)?.position ?? selected.item.position;
     final epLabel = 'S${season}E$episode';
     String playLabel() {
       if (!found) return loading ? '正在获取资源' : '暂无可播放资源';

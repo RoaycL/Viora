@@ -198,4 +198,33 @@ void main() {
     final all = await container.read(libraryEpisodeSourcesProvider(key).future);
     expect(all.map((o) => o.serverId).toSet(), {'a', 'b'});
   });
+
+  test('接着看：进度在另一台服务器上时从那台的进度开始，不被这台的 0 覆盖', () {
+    SourceOption option(String serverId, {Duration position = Duration.zero, DateTime? at}) => SourceOption(
+      item: MediaItem(
+        serverId: serverId,
+        id: 'e-$serverId',
+        kind: MediaKind.episode,
+        name: '第1集',
+        position: position,
+        lastPlayed: at,
+      ),
+      source: _sources(serverId, 'e-$serverId').sources.single,
+      serverName: serverId,
+      latencyMs: null,
+      account: 'acc',
+      view: 'view',
+    );
+    final best = option('a');
+    final watched = option('b', position: const Duration(minutes: 20), at: DateTime(2026, 11, 19, 10));
+    final older = option('c', position: const Duration(minutes: 5), at: DateTime(2026, 11, 18));
+    final all = [best, watched, older];
+    expect(latestProgress(all)?.serverId, 'b');
+    expect(playRouteFor(best, all), contains('pos=1200000'));
+    expect(playRouteFor(best, all), isNot(contains('resume=1')));
+    // 就是这个版本自己的进度：让播放页再向服务器确认最新进度
+    expect(playRouteFor(watched, all), contains('resume=1'));
+    expect(playRouteFor(best, all, fromStart: true), contains('pos=0'));
+    expect(latestProgress([best]), isNull);
+  });
 }

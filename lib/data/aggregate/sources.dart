@@ -5,6 +5,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../config/config_store.dart';
+import '../history/play_history.dart';
 import '../config/app_config.dart';
 import '../cache/account_scope.dart';
 import '../emby/emby_client.dart';
@@ -53,6 +54,34 @@ class SourceOption {
   /// [resume]：继续播放（播放页起播前取服务器上最新的进度），见 PlayerPage.resume
   String playRoute({Duration position = Duration.zero, bool resume = false}) =>
       '/play/${item.serverId}/${item.id}?pos=${position.inMilliseconds}&source=${source.id}${resume ? '&resume=1' : ''}';
+}
+
+/// 这一集在各服务器上最近一次没看完的进度。各台的进度互不相通：在 A 服务器看到一半，
+/// 详情页默认选中的是 B 服务器的版本（画质更好）时，也要接着 A 上的进度播
+MediaItem? latestProgress(Iterable<SourceOption> options) {
+  MediaItem? best;
+  DateTime? bestAt;
+  for (final o in options) {
+    final it = o.item;
+    if (it.played || it.position <= Duration.zero) continue;
+    final at = PlayHistory.lastPlayed(it);
+    if (best == null || (at != null && (bestAt == null || at.isAfter(bestAt)))) {
+      best = it;
+      bestAt = at;
+    }
+  }
+  return best;
+}
+
+/// 播放 [o] 的路由。接着看时用 [all] 里最近的进度：就是这个版本自己的进度时让播放页再向服务器确认最新进度；
+/// 进度来自别的服务器时直接从那个位置开始（这台服务器上的进度是 0，不能拿它覆盖）
+String playRouteFor(SourceOption o, Iterable<SourceOption> all, {bool fromStart = false}) {
+  if (fromStart) return o.playRoute();
+  final latest = latestProgress(all);
+  if (latest == null || (latest.serverId == o.serverId && latest.id == o.item.id)) {
+    return o.playRoute(position: o.item.position, resume: true);
+  }
+  return o.playRoute(position: latest.position);
 }
 
 /// 同一账号刷新时保留可用资源；账号 / 家长限制变化时不能复用旧 AsyncValue 中的资源。
@@ -335,8 +364,11 @@ final tmdbSourceOptionsProvider = FutureProvider.autoDispose.family<List<SourceO
 });
 
 /// 播放某个版本时记下偏好服务器
-Future<void> rememberSource(MediaItem titleItem, String serverId) =>
-    PreferredServers.set(titleKeyOf(titleItem), serverId);
+/// [series]：TMDB 剧集详情页传入，另按 TMDB ID 记一份（副本没有 TMDB ID 时读的也是这个键）
+Future<void> rememberSource(MediaItem titleItem, String serverId, {TmdbSearchKey? series}) async {
+  await PreferredServers.set(titleKeyOf(titleItem), serverId);
+  if (series != null) await PreferredServers.set(seriesTitleKey(series), serverId);
+}
 
 /// TMDB 详情页（剧集）：聚合搜索找到的每个副本（各服务器上的这部剧）的全部单集。
 /// 选中某一季某一集时，在这里按季号 + 集号对上各服务器的单集
@@ -367,13 +399,21 @@ final tmdbEpisodeSourcesProvider = FutureProvider.autoDispose.family<List<Source
   ref.watch(mediaFeedScopeProvider);
   // 偏好服务器和各服务器的查询同时进行：读到之前返回的中间结果先按默认规则排
   String? preferred;
-  final remembered = PreferredServers.get(seriesTitleKey(key.title)).then((p) => preferred = p);
-  final collector = _Collector(ref, tmdbEpisodeSourcesKey(key), (o) => _rank(ref, o, preferred));
   final copies = ref.watch(tmdbLibrarySearchProvider(key.title).future);
+  final remembered = _rememberedSeries(key.title, copies).then((p) => preferred = p);
+  final collector = _Collector(ref, tmdbEpisodeSourcesKey(key), (o) => _rank(ref, o, preferred));
   final options = await _episodeOptions(ref, const [], copies, key.season, key.episode, collector.add);
   if (options.isEmpty) return const [];
   return _rank(ref, options, await remembered);
 });
+
+/// 这部剧上次用的服务器：先读 TMDB ID 的键（不用等搜索）；没有时读旧记录（副本没有 TMDB ID 时按 IMDb / 剧名记的键）
+Future<String?> _rememberedSeries(TmdbSearchKey title, Future<List<MediaItem>> copies) async {
+  final byTmdb = await PreferredServers.get(seriesTitleKey(title));
+  if (byTmdb != null) return byTmdb;
+  final found = await copies.catchError((Object _) => const <MediaItem>[]);
+  return found.isEmpty ? null : PreferredServers.get(titleKeyOf(found.first));
+}
 
 /// 剧集的偏好服务器记录用的键（同 [titleKeyOf] 对有 TMDB ID 的剧）：不用等服务器返回剧集详情
 String seriesTitleKey(TmdbSearchKey title) => 'tmdb:${MediaKind.series.name}:${title.id}';
@@ -465,13 +505,13 @@ final libraryEpisodeSourcesProvider = FutureProvider.autoDispose.family<List<Sou
   );
   final home = key.series.home;
   String? preferred;
-  final remembered = PreferredServers.get(seriesTitleKey(key.series.title)).then((p) => preferred = p);
+  final copies = ref.watch(tmdbLibrarySearchProvider(key.series.title).future);
+  final remembered = _rememberedSeries(key.series.title, copies).then((p) => preferred = p);
   final collector = _Collector(
     ref,
     libraryEpisodeSourcesKey(key),
     (o) => _rank(ref, o, preferred, home: home.serverId),
   );
-  final copies = ref.watch(tmdbLibrarySearchProvider(key.series.title).future);
   final options = await _episodeOptions(ref, [home], copies, key.season, key.episode, collector.add);
   if (options.isEmpty) return const [];
   return _rank(ref, options, await remembered, home: home.serverId);
