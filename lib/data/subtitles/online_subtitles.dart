@@ -511,7 +511,13 @@ Future<String> saveSubtitleFile(SubtitleFile file, {Directory? dir}) async {
   await base.create(recursive: true);
   var name = file.fileName.replaceAll(RegExp(r'[\\/:*?"<>|]'), '_');
   if (!_textFormats.contains(_ext(name))) name = '$name.srt';
-  if (name.length > 120) name = name.substring(name.length - 120);
+  // 文件系统限制的是字节数（一般 255 字节），中文一个字 3 字节：按 UTF-8 字节截掉开头，留出时间戳前缀的位置
+  final runes = name.runes.toList();
+  var start = 0;
+  while (utf8.encode(String.fromCharCodes(runes.sublist(start))).length > 180) {
+    start++;
+  }
+  name = String.fromCharCodes(runes.sublist(start));
   final out = File('${base.path}${Platform.pathSeparator}${DateTime.now().millisecondsSinceEpoch}_$name');
   await out.writeAsBytes(normalizeSubtitleBytes(file.bytes), flush: true);
   return out.path;

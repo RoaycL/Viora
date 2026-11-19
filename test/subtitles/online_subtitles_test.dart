@@ -291,6 +291,12 @@ void main() {
     expect(path, isNot(contains('a/b')));
     final noExt = await saveSubtitleFile(SubtitleFile('12345', utf8.encode('x')), dir: dir);
     expect(noExt, endsWith('.srt'));
+    // 很长的中文文件名：按字节截短（不超过文件系统 255 字节的限制），扩展名保留
+    final long = await saveSubtitleFile(SubtitleFile('${'中' * 200}.ass', utf8.encode('x')), dir: dir);
+    final fileName = long.split(Platform.pathSeparator).last;
+    expect(utf8.encode(fileName).length, lessThanOrEqualTo(255));
+    expect(fileName, endsWith('中.ass'));
+    expect(File(long).existsSync(), isTrue);
   });
 
   test('在线字幕设置：OpenSubtitles 密码存进密钥库，配置文件里没有明文', () async {
