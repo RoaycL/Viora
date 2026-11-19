@@ -238,7 +238,7 @@ class _WindowTitleBarState extends State<WindowTitleBar> with WindowListener {
     );
   }
 
-  /// 全屏：平时只留最上沿几像素的感应区（translucent，不挡下面的内容），鼠标碰到就滑出整条标题栏
+  /// 全屏：平时只留最上沿几像素的感应区（translucent，不挡下面的内容），鼠标碰到就淡入整条标题栏
   Widget _fullScreenBar() {
     return SizedBox(
       height: WindowTitleBar.height,
@@ -257,13 +257,14 @@ class _WindowTitleBarState extends State<WindowTitleBar> with WindowListener {
             ),
           IgnorePointer(
             ignoring: !_revealed,
-            child: AnimatedSlide(
-              offset: _revealed ? Offset.zero : const Offset(0, -1),
+            // 和窗口模式一样直接浮在背景图上，不加底色；只淡入淡出
+            child: AnimatedOpacity(
+              opacity: _revealed ? 1 : 0,
               duration: const Duration(milliseconds: 160),
               curve: Curves.easeOut,
               child: MouseRegion(
                 onExit: (_) => setState(() => _revealed = false),
-                child: ColoredBox(color: const Color(0xCC0B0C10), child: _bar()),
+                child: _bar(),
               ),
             ),
           ),

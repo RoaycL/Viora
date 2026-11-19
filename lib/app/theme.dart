@@ -99,20 +99,22 @@ const _fontFallback = <String>[
   'sans-serif',
 ];
 
-/// Windows 直接把微软雅黑设为主字体，而不是只放在回退列表里。
-/// 默认主字体 Segoe UI 没有中文，中文字逐个走回退时，同一个词里的字可能落到不同字体上，
-/// 出现「倍速」两个字一大一小、一高一低（issue #56）。
-final String? _primaryFont = !kIsWeb && Platform.isWindows ? 'Microsoft YaHei UI' : null;
+/// Windows 的主字体用应用内置的思源黑体子集 [uiFontFamily]，不依赖系统字体。
+/// 之前用系统的微软雅黑（issue #56 第一次修复），在部分电脑上「倍速」两个字仍然一大一小、一高一低：
+/// 系统字体的查找、字重匹配和小字号的 hinting 因机器而异，同一个词里的字可能落到不同字体 / 不同字形上。
+/// 内置字体只有一套字形、去掉了 hinting，每台电脑画出来都一样。生僻字（子集外）才回退到微软雅黑。
+const uiFontFamily = 'VioraSans';
+final String? _primaryFont = !kIsWeb && Platform.isWindows ? uiFontFamily : null;
 
 /// 数字字体（只在 Windows 上用）：内置的 Roboto 子集，只有数字和 `:.,/%+-`，数字等宽，时间跳动时不左右晃。
-/// 只用在显示数字的地方（播放时间、进度、时钟、评分、倒计时）：其他字符照常回退到微软雅黑。
+/// 只用在显示数字的地方（播放时间、进度、时钟、评分、倒计时）：其他字符照常回退到界面主字体。
 /// 不做全局主字体：中文落到回退字体时可能出现同一个词里字大小、高低不一（issue #56）
 const digitsFontFamily = 'VioraDigits';
 
 /// 显示数字的文字样式：Windows 上数字用 [digitsFontFamily]，其他平台不变（安卓电视的系统字体 Roboto 本来就是等宽数字）
 TextStyle numericStyle(TextStyle style) => _primaryFont == null
     ? style
-    : style.copyWith(fontFamily: digitsFontFamily, fontFamilyFallback: _fontFallback);
+    : style.copyWith(fontFamily: digitsFontFamily, fontFamilyFallback: const [uiFontFamily, ..._fontFallback]);
 
 abstract final class VText {
   static const display = TextStyle(fontSize: 112, fontWeight: FontWeight.w900, height: 1, letterSpacing: 6);
