@@ -151,6 +151,10 @@ class _ServerEditPageState extends ConsumerState<ServerEditPage> {
         server = server.copyWith(movieCount: c.movies, seriesCount: c.series);
       } catch (_) {}
       await ref.read(configProvider.notifier).upsertServer(server);
+      // 上面测速至少有一条线路连得上：立即算作可用（编辑页用的是草稿客户端，不会自动更新可用状态）
+      ref
+          .read(serverReachabilityProvider.notifier)
+          .record(server.id, ref.read(configProvider).clientKey(server.id), true, manual: true);
       // 新服务器 / 修改后重建这台服务器的聚合索引（后台进行）
       final id = server.id;
       Future<void>.delayed(

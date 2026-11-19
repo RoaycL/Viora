@@ -182,6 +182,17 @@ class ServerReachability extends Notifier<Map<String, String>> {
                 (state[entry.key] == entry.value.key) == entry.value.offline)
               entry.key: entry.value,
         };
+        // 连接配置已经变了的离线记录：作废（不再复测它，留着的话配置改回去时会一直被排除而没人复测）
+        final stale = [
+          for (final entry in _pendingChecks.entries)
+            if (state[entry.key] == entry.value.key && !_isCurrent(config, entry.key, entry.value.key)) entry.key,
+        ];
+        if (stale.isNotEmpty) {
+          state = {...state}..removeWhere((id, _) => stale.contains(id));
+          for (final id in stale) {
+            _failedChecks.remove(id);
+          }
+        }
         _pendingChecks.clear();
         if (candidates.isEmpty) continue;
         await probeAllServers(ref.container, concurrency: 4, only: candidates.keys.toSet());

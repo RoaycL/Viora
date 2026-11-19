@@ -165,4 +165,26 @@ void main() {
     expect(container.read(availableAggregateServerIdsProvider), {'s'});
     await tester.pump(ServerReachability.retryIntervals.last);
   });
+
+  testWidgets('连接配置变了以后到期的复测：作废旧的离线记录，配置改回去不会一直被排除', (tester) async {
+    SharedPreferences.setMockInitialValues({});
+    ConfigStore.vault = MemoryVault();
+    const config = AppConfig(servers: [_server]);
+    final client = _ProbeClient(config);
+    final container = ProviderContainer(overrides: [serverClientProvider.overrideWith((ref, id) => client)]);
+    addTearDown(container.dispose);
+    final store = container.read(configProvider.notifier);
+    await store.update((_) => config);
+    final reachability = container.read(serverReachabilityProvider.notifier);
+    reachability.record('s', container.read(configProvider).clientKey('s'), false);
+    expect(container.read(availableAggregateServerIdsProvider), isEmpty);
+
+    final original = container.read(configProvider).servers.single;
+    await store.updateServer('s', (s) => s.copyWith(lines: [s.lines.single.copyWith(url: 'http://new.example')]));
+    await tester.pump(ServerReachability.retryIntervals.first);
+    await tester.pump(const Duration(milliseconds: 10));
+    await store.updateServer('s', (_) => original);
+    expect(container.read(availableAggregateServerIdsProvider), {'s'});
+    await tester.pump(ServerReachability.retryIntervals.last);
+  });
 }
