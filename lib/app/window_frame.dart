@@ -145,6 +145,7 @@ class _WindowTitleBarState extends State<WindowTitleBar> with WindowListener {
     setState(() {
       _maximized = max;
       _fullScreen = full;
+      if (!full) _revealed = false;
     });
   }
 
@@ -168,14 +169,53 @@ class _WindowTitleBarState extends State<WindowTitleBar> with WindowListener {
     }
   }
 
+  /// 全屏时鼠标移到屏幕最上沿，标题栏滑出来；移开后收回
+  bool _revealed = false;
+
   @override
   Widget build(BuildContext context) {
-    // 全屏时完全隐藏（鼠标移到顶部也不出现），按 F11 / Esc 退出全屏；
-    // 播放器小窗时也隐藏（小窗自己的悬停按钮负责拖动、还原、关闭）
+    // 播放器小窗时隐藏（小窗自己的悬停按钮负责拖动、还原、关闭）；播放页控制层隐藏时也隐藏
     return ListenableBuilder(
       listenable: Listenable.merge([MiniPlayerWindow.active, windowImmersive]),
-      builder: (context, _) =>
-          _fullScreen || MiniPlayerWindow.active.value || windowImmersive.value ? const SizedBox.shrink() : _bar(),
+      builder: (context, _) {
+        if (MiniPlayerWindow.active.value || windowImmersive.value) return const SizedBox.shrink();
+        if (_fullScreen) return _fullScreenBar();
+        return _bar();
+      },
+    );
+  }
+
+  /// 全屏：平时只留最上沿几像素的感应区（translucent，不挡下面的内容），鼠标碰到就滑出整条标题栏
+  Widget _fullScreenBar() {
+    return SizedBox(
+      height: WindowTitleBar.height,
+      child: Stack(
+        children: [
+          if (!_revealed)
+            Positioned(
+              left: 0,
+              right: 0,
+              top: 0,
+              height: 4,
+              child: MouseRegion(
+                hitTestBehavior: HitTestBehavior.translucent,
+                onEnter: (_) => setState(() => _revealed = true),
+              ),
+            ),
+          IgnorePointer(
+            ignoring: !_revealed,
+            child: AnimatedSlide(
+              offset: _revealed ? Offset.zero : const Offset(0, -1),
+              duration: const Duration(milliseconds: 160),
+              curve: Curves.easeOut,
+              child: MouseRegion(
+                onExit: (_) => setState(() => _revealed = false),
+                child: ColoredBox(color: const Color(0xCC0B0C10), child: _bar()),
+              ),
+            ),
+          ),
+        ],
+      ),
     );
   }
 
@@ -195,17 +235,21 @@ class _WindowTitleBarState extends State<WindowTitleBar> with WindowListener {
             // 下面的列表（鼠标可以拖动滚动）也参与手势竞争，鼠标一拖常被列表抢走，窗口拖不动
             child: GestureDetector(
               behavior: HitTestBehavior.opaque,
-              onPanStart: (_) => windowManager.startDragging(),
-              onDoubleTap: _toggleMaximize,
+              // 全屏时窗口不能拖动；双击退出全屏
+              onPanStart: _fullScreen ? null : (_) => windowManager.startDragging(),
+              onDoubleTap: _fullScreen ? toggleFullScreen : _toggleMaximize,
             ),
           ),
           _CaptionButton(icon: Icons.remove_rounded, tooltip: '最小化', onPressed: windowManager.minimize),
-          _CaptionButton(
-            icon: _maximized ? Icons.filter_none_rounded : Icons.crop_square_rounded,
-            iconSize: _maximized ? 13 : 16,
-            tooltip: _maximized ? '还原' : '最大化',
-            onPressed: _toggleMaximize,
-          ),
+          if (_fullScreen)
+            const _CaptionButton(icon: Icons.fullscreen_exit_rounded, iconSize: 18, tooltip: '退出全屏', onPressed: toggleFullScreen)
+          else
+            _CaptionButton(
+              icon: _maximized ? Icons.filter_none_rounded : Icons.crop_square_rounded,
+              iconSize: _maximized ? 13 : 16,
+              tooltip: _maximized ? '还原' : '最大化',
+              onPressed: _toggleMaximize,
+            ),
           _CaptionButton(
             icon: Icons.close_rounded,
             tooltip: '关闭',

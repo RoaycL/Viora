@@ -164,8 +164,32 @@ class _SearchPageState extends ConsumerState<SearchPage> {
       });
     }
 
-    await Future.wait(
-      servers.map((s) async {
+    // 3. 经 TMDB 换名：输入外文名 / 译名 / 别名时，本地索引和服务器都按片名匹配不上，
+    //    先在 TMDB 找到是哪部作品，再按 TMDB ID 从本地索引里取出片库里的条目
+    final tmdb = ref.read(tmdbClientProvider);
+    Future<void> viaTmdb() async {
+      if (tmdb == null || index == null) return;
+      try {
+        final titles = await tmdb.search(q).timeout(const Duration(seconds: 5));
+        if (gen != _generation || !mounted) return;
+        var added = 0;
+        final seen = {for (final it in all) '${it.serverId}/${it.id}'};
+        for (final t in titles.take(10)) {
+          for (final it in index.byTmdb(t.kind, '${t.id}')) {
+            if (itemVisible(config, it) && seen.add('${it.serverId}/${it.id}')) {
+              all.add(it);
+              added++;
+            }
+          }
+        }
+        trace.event('tmdb', count: added);
+        if (added > 0) scheduleRegroup();
+      } catch (_) {}
+    }
+
+    await Future.wait([
+      viaTmdb(),
+      ...servers.map((s) async {
         final client = ref.read(serverClientProvider(s.id));
         try {
           final page = await client!.items(searchTerm: q, limit: 20).timeout(const Duration(seconds: 5));
@@ -181,7 +205,7 @@ class _SearchPageState extends ConsumerState<SearchPage> {
           if (gen == _generation && mounted) setState(() => _pendingServers--);
         }
       }),
-    );
+    ]);
     regroup?.cancel();
     if (gen == _generation && mounted) {
       setState(() => _results = groupTitles(all).take(maxResults).toList());

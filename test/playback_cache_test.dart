@@ -20,6 +20,13 @@ void main() {
     expect(old.bufferMb, 256);
   });
 
+  test('字幕位置：默认 100，保存 / 读取，超出范围夹住', () {
+    expect(const PlaybackConfig().subtitlePosition, 100);
+    expect(PlaybackConfig.fromJson(const PlaybackConfig(subtitlePosition: 85).toJson()).subtitlePosition, 85);
+    expect(PlaybackConfig.fromJson(const {'userAgent': ''}).subtitlePosition, 100);
+    expect(PlaybackConfig.fromJson(const {'subtitlePosition': 400}).subtitlePosition, 150);
+  });
+
   test('预热量按比例分给片头 / 续播位置 / 片尾', () {
     PlaybackPreloader.warmBytes = 32 * 1024 * 1024;
     expect(PlaybackPreloader.headBytes + PlaybackPreloader.resumeBytes + PlaybackPreloader.tailBytes, 32 * 1024 * 1024);

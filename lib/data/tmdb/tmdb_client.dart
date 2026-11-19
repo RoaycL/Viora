@@ -295,6 +295,11 @@ class TmdbClient {
     return (TmdbPerson.fromJson(j), credits.where((t) => seen.add(t.key)).toList());
   }
 
+  /// 按片名搜索电影和剧集。TMDB 会同时匹配原名、各语言译名和别名，
+  /// 所以输入英文名、日文名、港台译名都能找到同一部作品（搜索页用它把外文名换成片库里的条目）
+  Future<List<TmdbTitle>> search(String query) async =>
+      _titles(await get('/search/multi', query: {'query': query, 'include_adult': 'false'}, ttl: listTtl));
+
   /// 按播出平台发现剧集
   Future<List<TmdbTitle>> network(int networkId, {int page = 1}) async => _titles(
     await get(
