@@ -19,6 +19,7 @@ import '../../ui/focus/focus_auto_scroll.dart';
 import '../../ui/focus/focusable.dart';
 import '../../ui/rows/cards.dart';
 import '../../ui/widgets/server_image.dart';
+import '../../ui/widgets/skeleton.dart';
 import '../browse/media_cards.dart' show formatClock;
 import '../library/library_page.dart' show ServerTypeLogo;
 
@@ -1051,10 +1052,12 @@ class _EpisodesPanelState extends State<EpisodesPanel> with _PanelEntry {
           ];
           final hasCurrent = eps.any((e) => e.id == widget.currentId);
           enterAfterBuild();
+          final loading = !snap.hasError && snap.connectionState != ConnectionState.done;
+          // 加载中只显示「选集」，下面先放占位卡片，结果回来后原地淡入（不跳动）
           final status = snap.hasError
               ? '获取集列表失败'
-              : snap.connectionState != ConnectionState.done
-              ? '正在获取集列表…'
+              : loading
+              ? '选集'
               : null;
           return Column(
             crossAxisAlignment: CrossAxisAlignment.start,
@@ -1079,26 +1082,85 @@ class _EpisodesPanelState extends State<EpisodesPanel> with _PanelEntry {
                 ],
               ),
               const SizedBox(height: 16),
-              if (eps.isNotEmpty)
-                _LazyHorizontalList(
-                  key: ValueKey(season),
-                  height: 230,
-                  itemWidth: _EpisodeCard.width,
-                  itemCount: eps.length,
-                  initialIndex: hasCurrent ? eps.indexWhere((e) => e.id == widget.currentId) : 0,
-                  itemBuilder: (context, i) {
-                    final e = eps[i];
-                    return _EpisodeCard(
-                      episode: e,
-                      current: e.id == widget.currentId,
-                      focusNode: e.id == widget.currentId || (!hasCurrent && i == 0) ? entryNode : null,
-                      onPick: () => widget.onPick(e),
-                    );
-                  },
-                ),
+              AnimatedSwitcher(
+                duration: const Duration(milliseconds: 220),
+                child: loading
+                    ? const _EpisodeSkeletonRow(key: ValueKey('episodes-loading'))
+                    : eps.isEmpty
+                    ? const SizedBox.shrink()
+                    : _LazyHorizontalList(
+                        key: ValueKey(season),
+                        height: 230,
+                        itemWidth: _EpisodeCard.width,
+                        itemCount: eps.length,
+                        initialIndex: hasCurrent ? eps.indexWhere((e) => e.id == widget.currentId) : 0,
+                        itemBuilder: (context, i) {
+                          final e = eps[i];
+                          return _EpisodeCard(
+                            episode: e,
+                            current: e.id == widget.currentId,
+                            focusNode: e.id == widget.currentId || (!hasCurrent && i == 0) ? entryNode : null,
+                            onPick: () => widget.onPick(e),
+                          );
+                        },
+                      ),
+              ),
             ],
           );
         },
+      ),
+    );
+  }
+}
+
+/// 集列表还没返回时的占位：和集卡片一样大小（封面 + 一行标题），一排铺满
+class _EpisodeSkeletonRow extends StatelessWidget {
+  const _EpisodeSkeletonRow({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    final count = (MediaQuery.sizeOf(context).width / (_EpisodeCard.width + _LazyHorizontalList.gap)).ceil();
+    return ExcludeFocus(
+      child: SkeletonShimmer(
+        child: SizedBox(
+          height: 230,
+          child: OverflowBox(
+            alignment: Alignment.topLeft,
+            maxWidth: double.infinity,
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                for (var i = 0; i < count; i++) ...[
+                  if (i > 0) const SizedBox(width: _LazyHorizontalList.gap),
+                  SizedBox(
+                    width: _EpisodeCard.width,
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Container(
+                          height: 180,
+                          decoration: BoxDecoration(
+                            color: const Color(0x1AFFFFFF),
+                            borderRadius: BorderRadius.circular(VRadius.md),
+                          ),
+                        ),
+                        const SizedBox(height: 14),
+                        Container(
+                          width: 150,
+                          height: 18,
+                          decoration: BoxDecoration(
+                            color: const Color(0x14FFFFFF),
+                            borderRadius: BorderRadius.circular(VRadius.xs),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ],
+            ),
+          ),
+        ),
       ),
     );
   }
