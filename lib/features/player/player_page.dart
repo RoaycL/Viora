@@ -1738,19 +1738,23 @@ class _PlayerPageState extends ConsumerState<PlayerPage> with WidgetsBindingObse
   Future<SubtitleQuery?> _subtitleQuery() async {
     final item = _item, client = _client;
     if (item == null || client == null) return null;
-    var title = item;
-    if (item.kind == MediaKind.episode && item.seriesId != null) {
-      try {
-        title = await client.item(item.seriesId!);
-      } catch (_) {}
-    }
     final episode = item.kind == MediaKind.episode;
+    MediaItem? title = item;
+    if (episode) {
+      // 剧集要用整部剧的 ID 和原名；取不到剧的信息时只按剧名搜，不能拿单集的 ID 当剧的 ID
+      title = null;
+      if (item.seriesId != null) {
+        try {
+          title = await client.item(item.seriesId!);
+        } catch (_) {}
+      }
+    }
     return SubtitleQuery(
-      title: episode ? (item.seriesName ?? title.name) : item.name,
-      originalTitle: title.originalTitle,
-      year: title.year,
-      tmdbId: int.tryParse(title.tmdbId ?? ''),
-      imdbId: title.imdbId,
+      title: episode ? (item.seriesName ?? title?.name ?? item.name) : item.name,
+      originalTitle: title?.originalTitle,
+      year: title?.year,
+      tmdbId: int.tryParse(title?.tmdbId ?? ''),
+      imdbId: title?.imdbId,
       season: episode ? item.seasonNumber : null,
       episode: episode ? item.episodeNumber : null,
     );
