@@ -121,10 +121,13 @@ class DanmakuClient {
     ]);
     final seen = <String>{};
     // 自己的服务器在前；内置弹弹play 和它们编号不同，按标题去掉同一部作品的重复条目
+    // 被搜索屏蔽词去掉的结果不算：不然它会把弹弹play 里干净的同名结果也挡掉，两边都没了
+    final blocked = splitKeywords(config.searchBlockWords);
     final titles = <String>{
       for (var i = 0; i < results.length; i++)
         if (!isBuiltin(servers[i]))
-          for (final a in results[i]) sameTitleKey(a.title),
+          for (final a in results[i])
+            if (!blocked.any(a.title.contains)) sameTitleKey(a.title),
     };
     final merged = [
       for (var i = 0; i < results.length; i++)

@@ -118,7 +118,8 @@ abstract final class DanmakuChoiceStore {
 
 /// 找到这一集的弹幕：先用记住的手动选择，再用服务器的自动匹配，最后按标题搜索取最像的一个
 Future<DanmakuTrack?> resolveDanmaku(DanmakuClient client, DanmakuTarget t, {DanmakuChoice? choice}) async {
-  if (choice != null && choice.hasAnime) {
+  // 记住的选择只在那个服务器还启用时用（比如关掉了内置弹弹play、删掉了某个服务器，就重新匹配）
+  if (choice != null && choice.hasAnime && client.servers.contains(choice.server)) {
     final anime = DanmakuAnime(server: choice.server!, animeId: choice.animeId!, title: choice.animeTitle ?? '');
     try {
       final track = await loadEpisodeOf(client, anime, t, offset: choice.offset);

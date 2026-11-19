@@ -130,6 +130,21 @@ void main() {
     expect(DanmakuClient.sourceLabel(own.url), isNull);
   });
 
+  test('被搜索屏蔽词去掉的结果不挡住弹弹play 的同名结果', () async {
+    own.reply = (_) => {
+      'animes': [
+        {'animeId': 1, 'animeTitle': '作品名【解说】'},
+      ],
+    };
+    builtin.reply = (_) => {
+      'animes': [
+        {'animeId': 2, 'animeTitle': '作品名'},
+      ],
+    };
+    final animes = await DanmakuClient(DanmakuConfig(servers: [own.url], searchBlockWords: '解说')).search('作品名');
+    expect(animes.map((a) => (a.server, a.title)), [(builtin.url, '作品名')]);
+  });
+
   test('同名判断忽略空格、来源标记和年份', () {
     expect(sameTitleKey('凡人修仙传 (2020)【bilibili】'), sameTitleKey('凡人修仙传'));
     expect(sameTitleKey('Frieren [B站]'), sameTitleKey('frieren'));
