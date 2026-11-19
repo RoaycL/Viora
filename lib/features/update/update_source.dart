@@ -101,15 +101,16 @@ const _androidAbis = ['arm64-v8a', 'armeabi-v7a', 'x86_64'];
 String manifestAssetKey(UpdatePlatform platform, String? abi) =>
     platform == UpdatePlatform.android && abi != null ? 'android-$abi' : platform.name;
 
-/// 测试版的标签前缀。测试版发布为 `beta-v<版本>`：v0.15.33 之前的旧版本解析不了这种标签，
-/// 只会更新到正式版（`v<版本>`），装上新版本后再按「检查测试版」开关决定
+/// 旧的测试版标签前缀（v0.17.5 及以前）：测试版发布为 `beta-v<版本>`，每个测试版占一个版本号。
+/// 现在的测试版是 `v<下一个正式版>-betaN`（如 `v0.17.6-beta1`），不再单独占版本号
 const betaTagPrefix = 'beta-';
 
-/// 发布的标签 → 版本号与是否测试版（`v1.2.3` 正式版、`beta-v1.2.3` 测试版；GitHub 上标成预发布的也算测试版）
+/// 发布的标签 → 版本号与是否测试版
+/// （`v1.2.3` 正式版；`v1.2.3-beta2`、旧的 `beta-v1.2.3` 测试版；GitHub 上标成预发布的也算测试版）
 (AppVersion, bool)? parseReleaseTag(String tag, {bool prerelease = false}) {
-  final beta = tag.startsWith(betaTagPrefix);
-  final version = AppVersion.tryParse(beta ? tag.substring(betaTagPrefix.length) : tag);
-  return version == null ? null : (version, beta || prerelease);
+  final legacyBeta = tag.startsWith(betaTagPrefix);
+  final version = AppVersion.tryParse(legacyBeta ? tag.substring(betaTagPrefix.length) : tag);
+  return version == null ? null : (version, legacyBeta || version.isBeta || prerelease);
 }
 
 /// GitHub Releases。仓库需要是公开的，客户端才能匿名访问。

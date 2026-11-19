@@ -1,10 +1,13 @@
 # 构建 Android APK 与 Windows 安装包，并发布 GitHub Release（正式版或测试版）。
 #
-# 版本号来自 pubspec.yaml 的 `version:`，发正式版还是测试版看仓库根目录的 `release-channel` 文件（stable / beta）：
+# 版本号来自 pubspec.yaml 的 `version:`，发正式版还是测试版看仓库根目录的 `release-channel` 文件：
 #   stable → 标签 v<版本>，正式版（GitHub 上标为 Latest）
-#   beta   → 标签 beta-v<版本>，测试版（预发布）。v0.15.33 及以前的应用解析不了这种标签，只会更新到正式版；
-#            新版本的应用按「设置 → 检查测试版」决定要不要提示测试版
-# 每个版本号只发一次（正式版和测试版不共用版本号）。当这个版本还没有发布时，创建 Release 并上传：
+#   betaN  → 标签 v<版本>-betaN（如 v0.17.6-beta1），测试版（预发布）。测试版不单独占版本号：
+#            pubspec 里写下一个正式版的版本号，同一个版本号下按 beta1、beta2… 发，最后发正式版
+#            （release-channel 改回 stable）。应用里打包时注入 VIORA_PRERELEASE=betaN，显示为 0.17.6-beta1，
+#            比较新旧时 beta1 < beta2 < 正式版；按「设置 → 检查测试版」决定要不要提示测试版
+#   v0.17.5 及以前的测试版用的是 beta-v<版本> 标签（每个测试版占一个版本号），应用仍能识别
+# 每个标签只发一次；正式版发过之后不能再发这个版本号的测试版。当这个标签还没有发布时，创建 Release 并上传：
 #   Viora-<版本>-android.split-arm64-v8a.apk   Android / Android TV（64 位，应用内更新优先用按架构拆分的包）
 #   Viora-<版本>-android.split-armeabi-v7a.apk Android / Android TV（32 位，多数电视盒子）
 #   Viora-<版本>-android.apk            通用包（所有架构，体积大；旧版本应用内更新用它）
@@ -61,6 +64,8 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       version: ${{ steps.v.outputs.version }}
+      display: ${{ steps.v.outputs.display }}
+      pre: ${{ steps.v.outputs.pre }}
       build: ${{ steps.v.outputs.build }}
       tag: ${{ steps.v.outputs.tag }}
       exists: ${{ steps.v.outputs.exists }}
@@ -76,21 +81,23 @@ jobs:
           build=${full#*+}
           channel=$(tr -d '[:space:]' < release-channel 2>/dev/null || echo stable)
           case "$channel" in
-            beta) beta=true; tag="beta-v$version" ;;
-            stable) beta=false; tag="v$version" ;;
-            *) echo "release-channel 只能是 stable 或 beta：$channel"; exit 1 ;;
+            stable) beta=false; pre=""; display="$version"; tag="v$version" ;;
+            beta[1-9]|beta[1-9][0-9]) beta=true; pre="$channel"; display="$version-$channel"; tag="v$display" ;;
+            *) echo "release-channel 只能是 stable 或 beta1、beta2…：$channel"; exit 1 ;;
           esac
-          # 正式版和测试版不共用版本号：这个版本号用任一种标签发过，就不再发
+          # 这个标签发过就不再发；正式版（或旧规则下同版本号的测试版 beta-v<版本>）发过之后，也不再发这个版本号的测试版
           exists=false
-          for t in "v$version" "beta-v$version"; do
+          for t in "$tag" "beta-v$version" $([ "$beta" = true ] && echo "v$version"); do
             if gh release view "$t" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then exists=true; fi
           done
           echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "display=$display" >> "$GITHUB_OUTPUT"
+          echo "pre=$pre" >> "$GITHUB_OUTPUT"
           echo "build=$build" >> "$GITHUB_OUTPUT"
           echo "tag=$tag" >> "$GITHUB_OUTPUT"
           echo "exists=$exists" >> "$GITHUB_OUTPUT"
           echo "beta=$beta" >> "$GITHUB_OUTPUT"
-          echo "版本 $full，标签 $tag（$([ "$beta" = true ] && echo 测试版 || echo 正式版)），已发布：$exists" >> "$GITHUB_STEP_SUMMARY"
+          echo "版本 $display（$full），标签 $tag（$([ "$beta" = true ] && echo 测试版 || echo 正式版)），已发布：$exists" >> "$GITHUB_STEP_SUMMARY"
       - uses: subosito/flutter-action@v2
         with:
           flutter-version: ${{ env.FLUTTER_VERSION }}
@@ -128,17 +135,17 @@ jobs:
           PY
           rm -f assets/fonts/MiSans-*.ttf
       - run: flutter pub get
-      - run: flutter build apk --release --dart-define=VIORA_TMDB_TOKEN=${{ secrets.TMDB_TOKEN }} --dart-define=VIORA_OPENSUBTITLES_KEY=${{ secrets.OPENSUBTITLES_API_KEY }} --dart-define=VIORA_DANDANPLAY_APP_ID=${{ secrets.DANDANPLAY_APP_ID }} --dart-define=VIORA_DANDANPLAY_APP_SECRET=${{ secrets.DANDANPLAY_APP_SECRET }}
+      - run: flutter build apk --release --dart-define=VIORA_TMDB_TOKEN=${{ secrets.TMDB_TOKEN }} --dart-define=VIORA_OPENSUBTITLES_KEY=${{ secrets.OPENSUBTITLES_API_KEY }} --dart-define=VIORA_DANDANPLAY_APP_ID=${{ secrets.DANDANPLAY_APP_ID }} --dart-define=VIORA_DANDANPLAY_APP_SECRET=${{ secrets.DANDANPLAY_APP_SECRET }} --dart-define=VIORA_PRERELEASE=${{ needs.prepare.outputs.pre }}
       - run: |
           mkdir -p dist
-          cp build/app/outputs/flutter-apk/app-release.apk "dist/Viora-${{ needs.prepare.outputs.version }}-android.apk"
+          cp build/app/outputs/flutter-apk/app-release.apk "dist/Viora-${{ needs.prepare.outputs.display }}-android.apk"
       # 按架构拆分（versionCode 会加上架构偏移：v7a +1000、arm64 +2000，从通用包升级上来不受影响）
-      - run: flutter build apk --release --split-per-abi --target-platform android-arm,android-arm64 --dart-define=VIORA_TMDB_TOKEN=${{ secrets.TMDB_TOKEN }} --dart-define=VIORA_OPENSUBTITLES_KEY=${{ secrets.OPENSUBTITLES_API_KEY }} --dart-define=VIORA_DANDANPLAY_APP_ID=${{ secrets.DANDANPLAY_APP_ID }} --dart-define=VIORA_DANDANPLAY_APP_SECRET=${{ secrets.DANDANPLAY_APP_SECRET }}
+      - run: flutter build apk --release --split-per-abi --target-platform android-arm,android-arm64 --dart-define=VIORA_TMDB_TOKEN=${{ secrets.TMDB_TOKEN }} --dart-define=VIORA_OPENSUBTITLES_KEY=${{ secrets.OPENSUBTITLES_API_KEY }} --dart-define=VIORA_DANDANPLAY_APP_ID=${{ secrets.DANDANPLAY_APP_ID }} --dart-define=VIORA_DANDANPLAY_APP_SECRET=${{ secrets.DANDANPLAY_APP_SECRET }} --dart-define=VIORA_PRERELEASE=${{ needs.prepare.outputs.pre }}
       - run: |
           for abi in arm64-v8a armeabi-v7a; do
             # GitHub 接口按文件名排序列出安装包，旧版本应用内更新取第一个 .apk：
             # 「android.split-」排在「android.apk」后面，旧版本拿到的是通用包（32 位电视也能装）
-            cp "build/app/outputs/flutter-apk/app-$abi-release.apk" "dist/Viora-${{ needs.prepare.outputs.version }}-android.split-$abi.apk"
+            cp "build/app/outputs/flutter-apk/app-$abi-release.apk" "dist/Viora-${{ needs.prepare.outputs.display }}-android.split-$abi.apk"
           done
       - uses: actions/upload-artifact@v6
         with:
@@ -157,11 +164,11 @@ jobs:
           channel: stable
           cache: true
       - run: flutter pub get
-      - run: flutter build windows --release --dart-define=VIORA_TMDB_TOKEN=${{ secrets.TMDB_TOKEN }} --dart-define=VIORA_OPENSUBTITLES_KEY=${{ secrets.OPENSUBTITLES_API_KEY }} --dart-define=VIORA_DANDANPLAY_APP_ID=${{ secrets.DANDANPLAY_APP_ID }} --dart-define=VIORA_DANDANPLAY_APP_SECRET=${{ secrets.DANDANPLAY_APP_SECRET }}
+      - run: flutter build windows --release --dart-define=VIORA_TMDB_TOKEN=${{ secrets.TMDB_TOKEN }} --dart-define=VIORA_OPENSUBTITLES_KEY=${{ secrets.OPENSUBTITLES_API_KEY }} --dart-define=VIORA_DANDANPLAY_APP_ID=${{ secrets.DANDANPLAY_APP_ID }} --dart-define=VIORA_DANDANPLAY_APP_SECRET=${{ secrets.DANDANPLAY_APP_SECRET }} --dart-define=VIORA_PRERELEASE=${{ needs.prepare.outputs.pre }}
       - name: 打包安装程序与免安装版
         shell: pwsh
         run: |
-          $version = "${{ needs.prepare.outputs.version }}"
+          $version = "${{ needs.prepare.outputs.display }}"
           $release = "build\windows\x64\runner\Release"
           New-Item -ItemType Directory -Force dist | Out-Null
           $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
@@ -191,7 +198,7 @@ jobs:
           merge-multiple: true
       - name: 生成更新说明与 latest.json
         env:
-          VERSION: ${{ needs.prepare.outputs.version }}
+          VERSION: ${{ needs.prepare.outputs.display }}
           TAG: ${{ needs.prepare.outputs.tag }}
           BETA: ${{ needs.prepare.outputs.beta }}
         run: |
@@ -225,7 +232,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ needs.prepare.outputs.tag }}
-          VERSION: ${{ needs.prepare.outputs.version }}
+          VERSION: ${{ needs.prepare.outputs.display }}
           BETA: ${{ needs.prepare.outputs.beta }}
         # 拆分包最后上传（文件名也保证按名字排序时通用包在前，见上面 android 任务）
         run: |

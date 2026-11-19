@@ -19,6 +19,7 @@ import 'data/media/server_registry.dart';
 import 'data/segments/segment_http.dart';
 import 'data/subtitles/online_subtitles.dart';
 import 'data/tmdb/tmdb_client.dart';
+import 'features/update/app_version.dart';
 import 'ui/widgets/cached_image.dart';
 
 Future<void> main() async {
@@ -53,7 +54,7 @@ Future<void> main() async {
   await initDesktopWindow();
   await DesktopTray.instance.init();
   try {
-    appVersion = (await PackageInfo.fromPlatform()).version;
+    appVersion = withPrerelease((await PackageInfo.fromPlatform()).version);
     segmentClientVersion = appVersion;
     subtitleClientVersion = appVersion;
   } catch (_) {}
