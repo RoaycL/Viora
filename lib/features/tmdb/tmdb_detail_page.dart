@@ -137,7 +137,7 @@ class _TmdbDetailState extends ConsumerState<_TmdbDetail> {
     final resumeAt = selected?.item.position ?? Duration.zero;
     final epLabel = 'S${season}E$episode';
     String playLabel() {
-      if (!found) return loading ? '正在加载' : '暂无可播放资源';
+      if (!found) return loading ? '正在获取资源' : '暂无可播放资源';
       final what = t.isTv ? ' $epLabel' : '';
       return resumeAt > Duration.zero ? '继续$what · ${formatClock(resumeAt)}' : '播放$what';
     }

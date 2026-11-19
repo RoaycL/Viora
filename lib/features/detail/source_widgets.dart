@@ -134,7 +134,7 @@ class SourcesSectionState extends State<SourcesSection> {
       if (widget.loading) {
         return Column(
           crossAxisAlignment: CrossAxisAlignment.start,
-          children: [header, _status('正在查找播放资源'), const SourceSkeletonRow()],
+          children: [header, _status('正在获取资源'), const SourceSkeletonRow()],
         );
       }
       if (widget.emptyText == null) return const SizedBox.shrink();
