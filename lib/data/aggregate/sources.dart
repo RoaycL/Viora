@@ -266,7 +266,9 @@ final sourceOptionsProvider = FutureProvider.family<List<SourceOption>, SourcesK
   final seen = <String>{'${target.serverId}/${target.id}'};
   final rest = copies.where((it) => seen.add('${it.serverId}/${it.id}')).toList();
 
-  final options = [...await own, ...await _optionsOf(ref, rest, onEach: collector.add)];
+  // 先把其他服务器的请求发出去再等：当前服务器慢时不拖住其他服务器
+  final restOptions = _optionsOf(ref, rest, onEach: collector.add);
+  final options = [...await own, ...await restOptions];
   return _rank(ref, options, preferred, home: target.serverId);
 });
 
@@ -325,7 +327,8 @@ final tmdbSourceOptionsProvider = FutureProvider.autoDispose.family<List<SourceO
   final copies = await ref.watch(tmdbLibrarySearchProvider(key).future);
   final seen = {for (final c in indexed) '${c.serverId}/${c.id}'};
   final rest = copies.where((c) => seen.add('${c.serverId}/${c.id}')).toList();
-  final options = [...await early, ...await _optionsOf(ref, rest, onEach: collector.add)];
+  final later = _optionsOf(ref, rest, onEach: collector.add);
+  final options = [...await early, ...await later];
   if (options.isEmpty && copies.isEmpty) return const [];
   final remembered = preferred ?? (copies.isEmpty ? null : await PreferredServers.get(titleKeyOf(copies.first)));
   return _rank(ref, options, remembered);
