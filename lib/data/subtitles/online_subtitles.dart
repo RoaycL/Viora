@@ -177,7 +177,7 @@ class OpenSubtitlesClient implements OnlineSubtitleProvider {
       );
       return [
         for (final d in (r.data?['data'] as List? ?? const []).whereType<Map<String, dynamic>>())
-          if (_parse(d) case final s?) s,
+          ?_parse(d),
       ]..sort((a, b) => (b.downloads ?? 0).compareTo(a.downloads ?? 0));
     } on DioException catch (e) {
       throw OnlineSubtitleException('OpenSubtitles 搜索失败：${_dioMessage(e)}');
