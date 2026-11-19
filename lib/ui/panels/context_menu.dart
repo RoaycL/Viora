@@ -364,24 +364,26 @@ class _PopupMenuState extends State<_PopupMenu> {
     final title = widget.title;
     return Material(
       type: MaterialType.transparency,
+      // 轻一点：更通透的毛玻璃（填充约 55% 不透明，之前 90% 几乎是实心深灰）、更窄、行更矮、字更小
       child: Glass(
-        width: 380,
+        width: 320,
         radius: VRadius.card,
-        blur: 30,
-        fill: const Color(0xE614161E),
-        padding: const EdgeInsets.all(10),
+        blur: 40,
+        fill: const Color(0x8C16181F),
+        border: const Color(0x1FFFFFFF),
+        padding: const EdgeInsets.all(6),
         child: Column(
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
             if (title.isNotEmpty)
               Padding(
-                padding: const EdgeInsets.fromLTRB(14, 8, 14, 10),
+                padding: const EdgeInsets.fromLTRB(12, 8, 12, 6),
                 child: Text(
                   title,
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
-                  style: VText.small.copyWith(color: VColors.textTertiary),
+                  style: VText.small.copyWith(fontSize: 15, color: VColors.textTertiary),
                 ),
               ),
             Flexible(
@@ -408,27 +410,27 @@ class _PopupMenuState extends State<_PopupMenu> {
                           builder: (context, focused) => AnimatedContainer(
                             key: _itemKey(i),
                             duration: VMotion.focus,
-                            height: actions[i].detail == null ? 50 : 64,
-                            padding: const EdgeInsets.symmetric(horizontal: 14),
+                            height: actions[i].detail == null ? 42 : 56,
+                            padding: const EdgeInsets.symmetric(horizontal: 12),
                             decoration: BoxDecoration(
-                              color: focused ? const Color(0x24FFFFFF) : const Color(0x00FFFFFF),
+                              color: focused ? const Color(0x1FFFFFFF) : const Color(0x00FFFFFF),
                               borderRadius: BorderRadius.circular(VRadius.sm),
                             ),
                             child: Row(
                               children: [
-                                Icon(actions[i].icon, size: 22, color: Colors.white),
-                                const SizedBox(width: 14),
+                                Icon(actions[i].icon, size: 19, color: const Color(0xE6FFFFFF)),
+                                const SizedBox(width: 12),
                                 Expanded(
                                   child: _ItemText(
                                     label: actions[i].label,
                                     detail: actions[i].detail,
-                                    size: 20,
+                                    size: 17,
                                     color: Colors.white,
                                     detailColor: const Color(0x99FFFFFF),
                                   ),
                                 ),
                                 if (actions[i].submenu != null)
-                                  Icon(Icons.chevron_right_rounded, size: 22, color: const Color(0x99FFFFFF)),
+                                  Icon(Icons.chevron_right_rounded, size: 19, color: const Color(0x80FFFFFF)),
                               ],
                             ),
                           ),
