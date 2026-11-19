@@ -204,6 +204,13 @@ class MpvEngine extends PlayerEngine {
   @override
   Future<void> setSubtitlePosition(int position) async => _subPos.value = position;
 
+  // cache-secs：开了缓存时往后预读的秒数（mpv 默认极大，实际由 demuxer-max-bytes 限制）
+  @override
+  Future<void> setReadaheadLimit(Duration? limit) => _prop(
+    'cache-secs',
+    limit == null ? '3600000' : (limit.inMilliseconds / 1000).clamp(1, 3600000).toStringAsFixed(1),
+  );
+
   final _fit = ValueNotifier(VideoFit.contain);
 
   @override
@@ -348,7 +355,6 @@ class _MpvSubtitleViewState extends State<MpvSubtitleView> {
   }
 }
 
-
 /// 字幕文字：白字、黑色描边、柔和阴影（深色、浅色画面上都看得清，又不遮住画面）
 class _OutlinedSubtitle extends StatelessWidget {
   const _OutlinedSubtitle({required this.text, required this.fontSize});
@@ -371,10 +377,17 @@ class _OutlinedSubtitle extends StatelessWidget {
               ..strokeWidth = (fontSize * 0.1).clamp(1.5, 5.0)
               ..strokeJoin = StrokeJoin.round
               ..color = const Color(0xE6000000),
-            shadows: [Shadow(color: const Color(0x99000000), blurRadius: fontSize * 0.3, offset: Offset(0, fontSize * 0.05))],
+            shadows: [
+              Shadow(color: const Color(0x99000000), blurRadius: fontSize * 0.3, offset: Offset(0, fontSize * 0.05)),
+            ],
           ),
         ),
-        Text(text, textAlign: TextAlign.center, textScaler: TextScaler.noScaling, style: style.copyWith(color: Colors.white)),
+        Text(
+          text,
+          textAlign: TextAlign.center,
+          textScaler: TextScaler.noScaling,
+          style: style.copyWith(color: Colors.white),
+        ),
       ],
     );
   }

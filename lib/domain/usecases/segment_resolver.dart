@@ -41,26 +41,33 @@ class SegmentResolver {
   final Duration timeout;
   final DateTime Function() _now;
 
+  String _cacheKey(SegmentQuery query) => '$cacheNamespace:${jsonEncode(query.cacheIdentity)}';
+
+  /// 只读缓存、不联网：没有有效缓存时返回 null。起播前用它判断能不能直接从片头结束处开始
+  Future<List<Segment>?> cached(SegmentQuery query) async {
+    if (!query.canLookup) return null;
+    try {
+      final hit = await cache?.read(_cacheKey(query));
+      if (hit == null) return null;
+      final age = _now().difference(hit.fetchedAt);
+      final ttl = hit.candidates.isEmpty ? const Duration(hours: 1) : const Duration(days: 7);
+      final normalized = hit.candidates.map((c) => validate(c, query.duration)).whereType<Segment>().toList();
+      // Duration buckets share a key, so revalidate against the exact file.
+      // A changed boundary must trigger lookup rather than silently lose data.
+      if (!age.isNegative && age < ttl && normalized.length == hit.candidates.length) return normalized;
+    } on Exception {
+      // An unavailable/corrupt cache must not disable skipping or block playback.
+    }
+    return null;
+  }
+
   /// [onPartial]：某种片段已经确定（比它优先的来源都已返回）就先发布，不必等慢的来源超时；
   /// 最终结果仍由返回值给出。命中缓存时不调用。
   Future<SegmentResolution> resolve(SegmentQuery query, {void Function(SegmentResolution partial)? onPartial}) async {
     if (!query.canLookup) return const SegmentResolution(segments: []);
-    final key = '$cacheNamespace:${jsonEncode(query.cacheIdentity)}';
-    try {
-      final hit = await cache?.read(key);
-      if (hit != null) {
-        final age = _now().difference(hit.fetchedAt);
-        final ttl = hit.candidates.isEmpty ? const Duration(hours: 1) : const Duration(days: 7);
-        final normalized = hit.candidates.map((c) => validate(c, query.duration)).whereType<Segment>().toList();
-        // Duration buckets share a key, so revalidate against the exact file.
-        // A changed boundary must trigger lookup rather than silently lose data.
-        if (!age.isNegative && age < ttl && normalized.length == hit.candidates.length) {
-          return SegmentResolution(segments: normalized, fromCache: true);
-        }
-      }
-    } on Exception {
-      // An unavailable/corrupt cache must not disable skipping or block playback.
-    }
+    final key = _cacheKey(query);
+    final hit = await cached(query);
+    if (hit != null) return SegmentResolution(segments: hit, fromCache: true);
 
     final failures = <String, SegmentFailure>{};
     // null = 还没返回

@@ -105,6 +105,9 @@ class SegmentPlaybackSession {
     if (_hasPosition) onPosition(_position);
   }
 
+  /// 片尾会自动跳到下一集时，片尾开始的位置：预读到这里就够了
+  Duration? get prefetchLimit => _controller?.autoNextCredits?.start;
+
   void onPosition(Duration position) {
     _position = position;
     _hasPosition = true;

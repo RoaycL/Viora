@@ -30,6 +30,7 @@ import '../../data/index/media_index.dart';
 import '../../data/media/media_models.dart';
 import '../../data/media/server_registry.dart';
 import '../../domain/models/segment.dart';
+import '../../domain/models/segment_settings.dart';
 import '../../player/engine.dart';
 import '../../player/exo_engine.dart';
 import '../../player/manual_segments.dart';
@@ -63,6 +64,30 @@ bool _arrivingByAutoPlay = false;
 
 /// 整部剧的集列表缓存（按服务器 + 剧，3 分钟）：连播时每一集都是新的播放页，不用每次打开「选集」都重新取
 final _episodeCache = <String, (DateTime, Future<List<MediaItem>>)>{};
+
+/// 剧集所属的剧（片头片尾按剧的 TMDB / IMDb ID 查、手动标记按剧保存），按服务器 + 剧缓存 10 分钟：
+/// 连播的下一集起播前就能拿到，不用再等一次请求
+final _seriesCache = <String, (DateTime, Future<MediaItem>)>{};
+
+Future<MediaItem> _seriesItem(EmbyClient client, String seriesId) {
+  final key = '${accountScope(client.server)}/$seriesId';
+  final hit = _seriesCache[key];
+  if (hit != null && DateTime.now().difference(hit.$1) < const Duration(minutes: 10)) return hit.$2;
+  final future = client.item(seriesId);
+  _seriesCache
+    ..remove(key)
+    ..[key] = (DateTime.now(), future);
+  while (_seriesCache.length > 8) {
+    _seriesCache.remove(_seriesCache.keys.first);
+  }
+  future.then(
+    (_) {},
+    onError: (_) {
+      _seriesCache.remove(key);
+    },
+  );
+  return future;
+}
 
 /// 播放页（docs/08-player.md、docs/07-input-control.md §3）。
 ///
@@ -184,12 +209,12 @@ class _PlayerPageState extends ConsumerState<PlayerPage> with WidgetsBindingObse
     }
     // 和「选集」面板共用一次请求：开播时就拿到整部剧的集列表，之后打开选集直接显示
     final episodes = _episodeList(client, item.seriesId!);
-    return _nextEpisodeFuture ??= episodes
-        .then((all) => _nextEpisode ??= nextEpisodeAfter(all, item))
-        .catchError((Object _) {
-          _nextEpisodeFuture = null; // 失败了下次再查
-          return null;
-        });
+    return _nextEpisodeFuture ??= episodes.then((all) => _nextEpisode ??= nextEpisodeAfter(all, item)).catchError((
+      Object _,
+    ) {
+      _nextEpisodeFuture = null; // 失败了下次再查
+      return null;
+    });
   }
 
   bool _nextPreloading = false;
@@ -473,6 +498,7 @@ class _PlayerPageState extends ConsumerState<PlayerPage> with WidgetsBindingObse
     // 开始播放前内核报的位置可能还是 0（续播时还没跳到上次的位置），不能拿来判断片头
     // 文件还没加载好（时长未知）时的位置也不算：这时发出的跳转会被内核丢掉
     if ((_started || s.playing) && s.duration > Duration.zero) _segments?.onPosition(s.position);
+    _limitReadahead(s.position);
     // 预加载下一集：看到 85%，或离片尾开始不到 1 分钟（片尾比较长的剧 85% 时可能已经在片尾里）
     final credits = _segmentList.where((x) => x.type == SegmentType.credits).firstOrNull;
     if (!_nextPreloading &&
@@ -637,6 +663,10 @@ class _PlayerPageState extends ConsumerState<PlayerPage> with WidgetsBindingObse
       final engineReady = _engine == null ? _attachEngine(_createEngine()) : Future<void>.value();
       final itemFuture = _item == null ? client.item(widget.itemId) : Future.value(_item!);
       itemFuture.ignore();
+      // 剧集的剧信息和条目一起提前取（片头跳过起播、片头片尾查询都要用）
+      itemFuture.then((it) {
+        if (it.kind == MediaKind.episode && it.seriesId != null) _seriesItem(client, it.seriesId!).ignore();
+      }, onError: (_) {});
       final info = await PlaybackPreloader.info(client, widget.serverId, widget.itemId);
       if (info.sources.isEmpty) throw const MediaServerException('没有可播放的资源');
       final wanted = sourceId ?? widget.sourceId;
@@ -650,8 +680,18 @@ class _PlayerPageState extends ConsumerState<PlayerPage> with WidgetsBindingObse
         _playSessionId = info.playSessionId ?? newPlaySessionId();
         _error = null;
       });
+      final introStart = _introSkipStart(itemFuture, client, source);
       await engineReady;
-      await _openCurrent(at ?? await _resumeFrom(itemFuture));
+      var from = at ?? await _resumeFrom(itemFuture);
+      if (from == Duration.zero) {
+        // 最多多等半秒（通常是本机读取，几毫秒）；拿不到就照常从头播，开播后再查、再跳
+        final skipTo = await introStart.timeout(const Duration(milliseconds: 500), onTimeout: () => null);
+        if (skipTo != null && mounted) {
+          from = skipTo;
+          showToast('已为您跳过片头，如需调整请到「设置 → 片头片尾」', duration: const Duration(seconds: 4));
+        }
+      }
+      await _openCurrent(from);
       _item = await itemFuture;
       if (mounted) setState(() {});
       unawaited(_beginSegments());
@@ -754,6 +794,8 @@ class _PlayerPageState extends ConsumerState<PlayerPage> with WidgetsBindingObse
     _segmentQuery = null;
     _segments?.dispose();
     _segments = null;
+    _creditsStart = null;
+    _readaheadSecs = null;
     if (mounted) {
       setState(() {
         _skipPrompt = null;
@@ -761,6 +803,69 @@ class _PlayerPageState extends ConsumerState<PlayerPage> with WidgetsBindingObse
       });
     }
   }
+
+  SegmentQuery _segmentQueryFor(MediaItem item, MediaItem title, MediaSourceInfo source, Duration duration) =>
+      SegmentQuery(
+        titleKey: titleKeyOf(title),
+        kind: item.kind == MediaKind.movie ? SegmentMediaKind.movie : SegmentMediaKind.episode,
+        duration: duration,
+        tmdbId: int.tryParse(title.tmdbId ?? ''),
+        imdbId: title.imdbId,
+        season: item.seasonNumber,
+        episode: item.episodeNumber,
+        sourceKey: '${widget.serverId}/${source.id}',
+      );
+
+  /// 从头播放、片头设为自动跳过时，起播前就知道片头在哪（手动标记，或之前查过的缓存）：
+  /// 直接从片头结束处打开，比从头加载再跳快，也不会先闪一下片头。不联网查询，拿不到就从头播
+  Future<Duration?> _introSkipStart(Future<MediaItem> itemFuture, EmbyClient client, MediaSourceInfo source) async {
+    try {
+      final item = await itemFuture;
+      if (item.kind != MediaKind.movie && item.kind != MediaKind.episode) return null;
+      final settings = await ref.read(segmentSettingsProvider.future);
+      if (settings.intro != SegmentSkipMode.auto) return null;
+      final title = item.kind == MediaKind.episode && item.seriesId != null
+          ? await _seriesItem(client, item.seriesId!)
+          : item;
+      final duration = source.duration ?? item.runtime ?? Duration.zero;
+      if (duration <= Duration.zero || !mounted) return null;
+      final query = _segmentQueryFor(item, title, source, duration);
+      final mark = await ManualSegmentStore.load(query) ?? const ManualMark();
+      final resolver = await playbackSegmentResolver(ref, client, item.id);
+      final cached = await resolver.cached(query) ?? const [];
+      final controller = SegmentSkipController(query: query, settings: settings)
+        ..segments = mergeManualSegments(cached, mark.segmentsFor(duration));
+      return controller.autoIntroStart();
+    } catch (_) {
+      return null;
+    }
+  }
+
+  /// 当前设给内核的预读上限（秒，null = 不限制）
+  int? _readaheadSecs;
+
+  /// 片尾会被自动跳到下一集时，预读只到片尾开始后几秒（留给「下一集」倒计时），不下载用不到的片尾，
+  /// 省流量和服务器带宽。离片尾还远（15 分钟以上）时不用管，缓冲上限本来就到不了；拖进片尾后立即恢复
+  void _limitReadahead(Duration position) {
+    // 片尾开始时自动跳过已经触发（正在「下一集」倒计时）：倒计时期间仍然只预读到倒计时结束；取消倒计时后恢复
+    final pending = _segments?.prefetchLimit;
+    if (pending != null) _creditsStart = pending;
+    final start = pending ?? (_nextCountdown != null ? _creditsStart : null);
+    int? want;
+    if (start != null) {
+      final end = start + const Duration(seconds: nextCountdownSeconds + 2);
+      if (position < end) {
+        final secs = ((end - position).inMilliseconds / 1000).ceil();
+        if (secs < 15 * 60) want = secs;
+      }
+    }
+    if (want == _readaheadSecs) return;
+    _readaheadSecs = want;
+    _engine?.setReadaheadLimit(want == null ? null : Duration(seconds: want));
+  }
+
+  /// 最近一次会自动跳到下一集的片尾开始位置
+  Duration? _creditsStart;
 
   Future<void> _beginSegments() async {
     final gen = ++_segmentGen;
@@ -774,7 +879,7 @@ class _PlayerPageState extends ConsumerState<PlayerPage> with WidgetsBindingObse
       var hasNext = false;
       if (item.kind == MediaKind.episode && item.seriesId != null) {
         final results = await Future.wait([
-          client.item(item.seriesId!).then<Object?>((v) => v, onError: (_) => null),
+          _seriesItem(client, item.seriesId!).then<Object?>((v) => v, onError: (_) => null),
           _resolveNextEpisode(),
         ]);
         if (results[0] is MediaItem) title = results[0]! as MediaItem;
@@ -782,16 +887,7 @@ class _PlayerPageState extends ConsumerState<PlayerPage> with WidgetsBindingObse
       }
       final duration = source.duration ?? item.runtime ?? _state.duration;
       if (duration <= Duration.zero || !mounted) return;
-      final query = SegmentQuery(
-        titleKey: titleKeyOf(title),
-        kind: item.kind == MediaKind.movie ? SegmentMediaKind.movie : SegmentMediaKind.episode,
-        duration: duration,
-        tmdbId: int.tryParse(title.tmdbId ?? ''),
-        imdbId: title.imdbId,
-        season: item.seasonNumber,
-        episode: item.episodeNumber,
-        sourceKey: '${widget.serverId}/${source.id}',
-      );
+      final query = _segmentQueryFor(item, title, source, duration);
       final resolver = await playbackSegmentResolver(ref, client, item.id);
       final mark = await ManualSegmentStore.load(query) ?? const ManualMark();
       if (!mounted || gen != _segmentGen || _source?.id != source.id) return;
@@ -990,20 +1086,20 @@ class _PlayerPageState extends ConsumerState<PlayerPage> with WidgetsBindingObse
           () => _startAdjust(_Adjusting.danmakuShift),
         )
       else
-      MenuAction.submenu(
-        '时间偏移 · ${shift == 0 ? '无' : '${shift > 0 ? '+' : ''}${(shift / 1000).toStringAsFixed(1)} 秒'}',
-        Icons.schedule_rounded,
-        title: '弹幕时间偏移',
-        items: () => [
-          for (final d in const [-5000, -1000, -500, 500, 1000, 5000])
-            MenuAction(
-              '${d > 0 ? '延后' : '提前'} ${(d.abs() / 1000).toStringAsFixed(1)} 秒',
-              d > 0 ? Icons.fast_forward_rounded : Icons.fast_rewind_rounded,
-              () => _setDanmakuShift(_danmakuChoice.shiftMs + d),
-            ),
-          MenuAction('重置', Icons.restart_alt_rounded, () => _setDanmakuShift(0)),
-        ],
-      ),
+        MenuAction.submenu(
+          '时间偏移 · ${shift == 0 ? '无' : '${shift > 0 ? '+' : ''}${(shift / 1000).toStringAsFixed(1)} 秒'}',
+          Icons.schedule_rounded,
+          title: '弹幕时间偏移',
+          items: () => [
+            for (final d in const [-5000, -1000, -500, 500, 1000, 5000])
+              MenuAction(
+                '${d > 0 ? '延后' : '提前'} ${(d.abs() / 1000).toStringAsFixed(1)} 秒',
+                d > 0 ? Icons.fast_forward_rounded : Icons.fast_rewind_rounded,
+                () => _setDanmakuShift(_danmakuChoice.shiftMs + d),
+              ),
+            MenuAction('重置', Icons.restart_alt_rounded, () => _setDanmakuShift(0)),
+          ],
+        ),
       MenuAction(
         '重新自动匹配',
         Icons.refresh_rounded,
@@ -1428,8 +1524,9 @@ class _PlayerPageState extends ConsumerState<PlayerPage> with WidgetsBindingObse
   }
 
   double get _adjustInitial => switch (_adjusting) {
-    _Adjusting.subtitlePosition => SubtitleLift.fromPosition(ref.read(configProvider).playback.subtitlePosition)
-        .toDouble(),
+    _Adjusting.subtitlePosition => SubtitleLift.fromPosition(
+      ref.read(configProvider).playback.subtitlePosition,
+    ).toDouble(),
     _Adjusting.subtitleDelay => _subDelay.inMilliseconds / 1000,
     _Adjusting.danmakuShift => _danmakuChoice.shiftMs / 1000,
     null => 0,
@@ -1475,7 +1572,9 @@ class _PlayerPageState extends ConsumerState<PlayerPage> with WidgetsBindingObse
     final current = ref.read(configProvider).playback.subtitlePosition;
     final position = delta == null ? 100 : SubtitleLift.toPosition(SubtitleLift.fromPosition(current) + delta);
     _engine?.setSubtitlePosition(position);
-    ref.read(configProvider.notifier).update((c) => c.copyWith(playback: c.playback.copyWith(subtitlePosition: position)));
+    ref
+        .read(configProvider.notifier)
+        .update((c) => c.copyWith(playback: c.playback.copyWith(subtitlePosition: position)));
     showToast('字幕位置：${SubtitleLift.label(position)}');
   }
 
@@ -1907,49 +2006,53 @@ class _PlayerPageState extends ConsumerState<PlayerPage> with WidgetsBindingObse
     var serverDenied = false;
     final query = await _subtitleQuery();
     final results = await Future.wait<List<MenuAction>>([
-      client.searchSubtitles(item.id, language).then(
-        (list) => [
-          for (final r in list.take(30))
-            MenuAction(
-              [
-                r.name,
-                r.provider.isEmpty ? '服务器' : '服务器 · ${r.provider}',
-                ?r.format?.toUpperCase(),
-                if (r.downloads != null) '${r.downloads} 次下载',
-              ].where((x) => x.isNotEmpty).join(' · '),
-              Icons.closed_caption_outlined,
-              () => _downloadSubtitle(r),
-            ),
-        ],
-        onError: (Object e) {
-          // 服务器没装字幕插件或账号没权限：只要内置来源有结果就不打扰
-          serverDenied = e is MediaServerException && (e.statusCode == 401 || e.statusCode == 403);
-          if (providers.isEmpty) errors.add(serverDenied ? '当前账号没有字幕管理权限' : '服务器：$e');
-          return const <MenuAction>[];
-        },
-      ),
-      for (final p in providers)
-        if (query != null)
-          p.search(query, lang).then(
+      client
+          .searchSubtitles(item.id, language)
+          .then(
             (list) => [
               for (final r in list.take(30))
                 MenuAction(
                   [
                     r.name,
-                    r.provider,
-                    ?r.language,
+                    r.provider.isEmpty ? '服务器' : '服务器 · ${r.provider}',
                     ?r.format?.toUpperCase(),
                     if (r.downloads != null) '${r.downloads} 次下载',
                   ].where((x) => x.isNotEmpty).join(' · '),
                   Icons.closed_caption_outlined,
-                  () => _loadOnlineSubtitle(p, r),
+                  () => _downloadSubtitle(r),
                 ),
             ],
             onError: (Object e) {
-              errors.add('$e');
+              // 服务器没装字幕插件或账号没权限：只要内置来源有结果就不打扰
+              serverDenied = e is MediaServerException && (e.statusCode == 401 || e.statusCode == 403);
+              if (providers.isEmpty) errors.add(serverDenied ? '当前账号没有字幕管理权限' : '服务器：$e');
               return const <MenuAction>[];
             },
           ),
+      for (final p in providers)
+        if (query != null)
+          p
+              .search(query, lang)
+              .then(
+                (list) => [
+                  for (final r in list.take(30))
+                    MenuAction(
+                      [
+                        r.name,
+                        r.provider,
+                        ?r.language,
+                        ?r.format?.toUpperCase(),
+                        if (r.downloads != null) '${r.downloads} 次下载',
+                      ].where((x) => x.isNotEmpty).join(' · '),
+                      Icons.closed_caption_outlined,
+                      () => _loadOnlineSubtitle(p, r),
+                    ),
+                ],
+                onError: (Object e) {
+                  errors.add('$e');
+                  return const <MenuAction>[];
+                },
+              ),
     ]);
     if (!mounted) return;
     final actions = [for (final r in results) ...r];
