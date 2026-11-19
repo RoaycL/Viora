@@ -601,6 +601,26 @@ void main() {
     await unmountPlayer(tester);
   });
 
+  testWidgets('Windows：鼠标点按钮打开的菜单不盖住按钮（底部按钮的菜单在按钮上面）', (tester) async {
+    await pumpPlayer(tester);
+    PlatformProfile.debugOverride = PlatformProfile.desktop;
+    final gesture = await tester.createGesture(kind: PointerDeviceKind.mouse);
+    addTearDown(gesture.removePointer);
+    final button = tester.getRect(find.text('倍速'));
+    await gesture.addPointer(location: const Offset(960, 400));
+    await gesture.moveTo(button.center);
+    await tester.pump(const Duration(milliseconds: 50));
+    await gesture.down(button.center);
+    await gesture.up();
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
+    final items = find.byIcon(Icons.speed_rounded);
+    expect(items, findsWidgets);
+    // 菜单项从上到下排列，最后一项最靠下
+    expect(tester.getRect(items.last).bottom, lessThan(button.top), reason: '菜单整个在按钮上方');
+    await unmountPlayer(tester);
+  });
+
   testWidgets('Windows：↑↓ 调音量、M 静音、滚轮和音量滑块；音量存进设置；电视上 ↑↓ 照常移动焦点', (tester) async {
     final h = await pumpPlayer(tester);
     PlatformProfile.debugOverride = PlatformProfile.desktop;
