@@ -43,7 +43,10 @@ final serverClientProvider = Provider.family<EmbyClient?, String>((ref, serverId
     appVersion: appVersion,
     onProbed: (reachable) {
       if (ref.mounted) {
-        ref.read(serverReachabilityProvider.notifier).record(serverId, config.clientKey(serverId), reachable);
+        // 用户手动测速（服务器页、改地址后）：结果立即生效，并作废还在进行的后台测速
+        ref
+            .read(serverReachabilityProvider.notifier)
+            .record(serverId, config.clientKey(serverId), reachable, manual: true);
       }
     },
     onServerChanged: (s) => store.updateServer(
@@ -59,9 +62,25 @@ final serverClientProvider = Provider.family<EmbyClient?, String>((ref, serverId
 final serverReachabilityProvider = NotifierProvider<ServerReachability, Map<String, String>>(ServerReachability.new);
 
 class ServerReachability extends Notifier<Map<String, String>> {
-  static const retryInterval = Duration(minutes: 10);
+  /// 离线后复测的间隔：先快后慢（刚开机网络还没连好时很快就能恢复），最长半小时
+  static const retryIntervals = [
+    Duration(seconds: 30),
+    Duration(minutes: 1),
+    Duration(minutes: 2),
+    Duration(minutes: 5),
+    Duration(minutes: 10),
+    Duration(minutes: 20),
+    Duration(minutes: 30),
+  ];
   static const _failureCheckCooldown = Duration(minutes: 1);
   final _retries = <String, Timer>{};
+
+  /// 每台服务器连续复测失败的次数（决定下一次复测间隔）
+  final _failedChecks = <String, int>{};
+
+  /// 每台服务器的手动测速代次：后台测速开始后用户手动测过，后台的旧结果作废，不覆盖手动结果
+  final _epochs = <String, int>{};
+  int epochOf(String id) => _epochs[id] ?? 0;
   Timer? _check;
   final _pendingChecks = <String, ({String key, bool offline})>{};
   final _lastFailureCheck = <String, ({String key, DateTime at})>{};
@@ -81,18 +100,42 @@ class ServerReachability extends Notifier<Map<String, String>> {
   bool _isCurrent(AppConfig config, String id, String key) =>
       config.server(id)?.loggedIn == true && config.clientKey(id) == key;
 
-  void record(String id, String connectionKey, bool reachable) {
+  /// [manual]：用户手动测速的结果，优先于正在进行的后台测速；[epoch]：后台测速开始时的 [epochOf]，期间有过手动测速就丢弃
+  void record(String id, String connectionKey, bool reachable, {bool manual = false, int? epoch}) {
     if (!_isCurrent(ref.read(configProvider), id, connectionKey)) return;
+    if (manual) {
+      _epochs[id] = epochOf(id) + 1;
+    } else if (epoch != null && epoch != epochOf(id)) {
+      return;
+    }
     if (reachable) {
       _retries.remove(id)?.cancel();
+      _failedChecks.remove(id);
       if (state.containsKey(id)) state = {...state}..remove(id);
       return;
     }
     if (state[id] != connectionKey) {
       _retries.remove(id)?.cancel();
+      _failedChecks.remove(id);
       state = {...state, id: connectionKey};
+    } else if (manual) {
+      // 手动测过仍然不通：从最短间隔重新开始复测
+      _retries.remove(id)?.cancel();
+      _failedChecks.remove(id);
     }
     _scheduleRetry(id, connectionKey);
+  }
+
+  /// 应用回到前台（电视唤醒、电脑解锁等，网络可能刚恢复）：立即复测所有离线服务器
+  void recheckOffline() {
+    if (!_active) return;
+    final config = ref.read(configProvider);
+    for (final entry in state.entries) {
+      if (!_isCurrent(config, entry.key, entry.value)) continue;
+      _retries.remove(entry.key)?.cancel();
+      _failedChecks.remove(entry.key);
+      _queueCheck(entry.key, entry.value, offline: true);
+    }
   }
 
   /// 连接失败只触发测速；权限、资源不存在等错误不影响整台服务器的状态。
@@ -114,13 +157,14 @@ class ServerReachability extends Notifier<Map<String, String>> {
   }
 
   void _scheduleRetry(String id, String key) {
-    _retries.putIfAbsent(
-      id,
-      () => Timer(retryInterval, () {
+    _retries.putIfAbsent(id, () {
+      final n = _failedChecks[id] ?? 0;
+      _failedChecks[id] = n + 1;
+      return Timer(retryIntervals[n.clamp(0, retryIntervals.length - 1)], () {
         _retries.remove(id);
         if (state[id] == key) _queueCheck(id, key, offline: true);
-      }),
-    );
+      });
+    });
   }
 
   void _queueCheck(String id, String key, {required bool offline}) {
@@ -175,17 +219,18 @@ Future<void> probeAllServers(
   final read = container.read;
   final reachability = read(serverReachabilityProvider.notifier);
   final pending = read(configProvider).servers.where((s) => only == null || only.contains(s.id)).toList();
-  final latency = <String, ({String connectionKey, Map<String, int?> lines})>{};
+  final latency = <String, ({String connectionKey, int epoch, Map<String, int?> lines})>{};
   Future<void> worker() async {
     while (pending.isNotEmpty && reachability._active) {
       final s = pending.removeAt(0);
       try {
         final connectionKey = read(configProvider).clientKey(s.id);
+        final epoch = reachability.epochOf(s.id);
         final probed = await read(serverClientProvider(s.id))?.probeAll(notify: false, timeout: timeout);
         if (probed == null || !reachability._active) continue;
         final lines = {for (final line in probed.lines) line.id: line.latencyMs};
-        latency[s.id] = (connectionKey: connectionKey, lines: lines);
-        reachability.record(s.id, connectionKey, lines.values.any((ms) => ms != null));
+        latency[s.id] = (connectionKey: connectionKey, epoch: epoch, lines: lines);
+        reachability.record(s.id, connectionKey, lines.values.any((ms) => ms != null), epoch: epoch);
       } catch (_) {}
     }
   }
@@ -197,6 +242,8 @@ Future<void> probeAllServers(
     final server = config.server(id);
     return server == null ||
         config.clientKey(id) != result.connectionKey ||
+        // 测速期间用户手动测过：保留手动测速的延迟
+        reachability.epochOf(id) != result.epoch ||
         !server.lines.any((l) => result.lines.containsKey(l.id) && result.lines[l.id] != l.latencyMs);
   });
   if (latency.isEmpty) return;

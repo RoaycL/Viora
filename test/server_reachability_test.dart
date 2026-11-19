@@ -76,14 +76,20 @@ void main() {
     reachability.record('s', newConfig.clientKey('s'), false);
     expect(container.read(availableAggregateServerIdsProvider), isEmpty);
 
-    client.reachable = true;
-    await tester.pump(const Duration(minutes: 9, seconds: 59));
-    expect(client.calls, 1, reason: '不到十分钟不复测');
+    // 复测间隔先快后慢：30 秒、1 分钟……仍然不通时继续拉长
+    await tester.pump(const Duration(seconds: 29));
+    expect(client.calls, 1, reason: '不到 30 秒不复测');
     await tester.pump(const Duration(seconds: 1));
     expect(client.calls, 2);
+    expect(container.read(availableAggregateServerIdsProvider), isEmpty);
+    await tester.pump(const Duration(seconds: 59));
+    expect(client.calls, 2, reason: '第二次复测间隔 1 分钟');
+    client.reachable = true;
+    await tester.pump(const Duration(seconds: 1));
+    expect(client.calls, 3);
     expect(container.read(availableAggregateServerIdsProvider), {'s'});
-    await tester.pump(ServerReachability.retryInterval);
-    expect(client.calls, 2, reason: '已经恢复时停止后台复测');
+    await tester.pump(ServerReachability.retryIntervals.last);
+    expect(client.calls, 3, reason: '已经恢复时停止后台复测');
   });
 
   testWidgets('聚合请求遇到连接错误后，在后台确认并跳过故障服务器', (tester) async {
@@ -128,5 +134,35 @@ void main() {
     reachability.record('s', config.clientKey('s'), true);
     await tester.pump(const Duration(milliseconds: 1));
     expect(container.read(availableAggregateServerIdsProvider), {'s'});
+  });
+
+  testWidgets('手动测速优先：后台测速期间手动测过，后台的旧结果不覆盖；回到前台立即复测离线服务器', (tester) async {
+    SharedPreferences.setMockInitialValues({});
+    ConfigStore.vault = MemoryVault();
+    const config = AppConfig(servers: [_server]);
+    final client = _ProbeClient(config);
+    final container = ProviderContainer(overrides: [serverClientProvider.overrideWith((ref, id) => client)]);
+    addTearDown(container.dispose);
+    await container.read(configProvider.notifier).update((_) => config);
+    final reachability = container.read(serverReachabilityProvider.notifier);
+    final key = container.read(configProvider).clientKey('s');
+
+    // 后台测速开始时记下代次，结果回来前用户手动测速成功
+    final epoch = reachability.epochOf('s');
+    reachability.record('s', key, true, manual: true);
+    reachability.record('s', key, false, epoch: epoch);
+    expect(container.read(availableAggregateServerIdsProvider), {'s'}, reason: '旧的后台结果作废');
+
+    // 手动测速确认离线；回到前台立即复测，不等定时
+    reachability.record('s', key, false, manual: true);
+    expect(container.read(availableAggregateServerIdsProvider), isEmpty);
+    client.reachable = true;
+    final before = client.calls;
+    reachability.recheckOffline();
+    await tester.pump(const Duration(milliseconds: 10));
+    await tester.pump(const Duration(milliseconds: 10));
+    expect(client.calls, before + 1);
+    expect(container.read(availableAggregateServerIdsProvider), {'s'});
+    await tester.pump(ServerReachability.retryIntervals.last);
   });
 }
