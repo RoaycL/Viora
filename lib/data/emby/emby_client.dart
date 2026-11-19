@@ -488,7 +488,7 @@ class EmbyClient {
         throw e;
       }
       final items = (data is Map ? data['Items'] as List? : null) ?? const [];
-      if (items.isEmpty) throw e;
+      if (items.isEmpty) rethrow;
       return parseItem(items.first as Map<String, dynamic>);
     }
   }
