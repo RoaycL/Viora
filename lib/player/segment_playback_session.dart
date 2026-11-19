@@ -181,6 +181,8 @@ class SegmentPlaybackSession {
     if (_seekAttempts >= maxSeekAttempts) {
       _verifying = null;
       onActionError?.call(StateError('跳过${segment.type.name}未生效：位置停在 ${position.inSeconds}s'));
+      // 自动跳过没成功：改成显示按钮，用户还能手动再试（接下来的 at() 会返回非自动的动作）
+      _controller?.retry(action);
       return false;
     }
     _seekAttempts++;
@@ -196,6 +198,12 @@ class SegmentPlaybackSession {
           if (generation == _generation) _inFlight = false;
         });
     return true;
+  }
+
+  /// 之前当作已经跳过的片段（例如起播时直接从片头结束处打开）其实没生效：重新按设置的模式处理
+  void reopen(Segment segment) {
+    _controller?.unmarkHandled(segment);
+    if (_hasPosition) onPosition(_position);
   }
 
   void dispose() {

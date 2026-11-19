@@ -5,8 +5,9 @@ String errorText(Object error) {
   if (error is! DioException) return error.toString();
   final status = error.response?.statusCode;
   return switch (error.type) {
-    DioExceptionType.connectionTimeout || DioExceptionType.receiveTimeout || DioExceptionType.sendTimeout =>
-      '连接超时，请检查网络',
+    DioExceptionType.connectionTimeout ||
+    DioExceptionType.receiveTimeout ||
+    DioExceptionType.sendTimeout => '连接超时，请检查网络',
     DioExceptionType.connectionError => '无法连接，请检查网络或代理',
     DioExceptionType.badCertificate => '证书无效',
     DioExceptionType.badResponse when status == 401 || status == 403 => '没有权限（HTTP $status），请检查登录或 Key',

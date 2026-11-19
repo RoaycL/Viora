@@ -74,7 +74,8 @@ class DanmakuClient {
 
   /// 这个地址 / 服务器是不是内置的弹弹play
   static bool isBuiltin(String url) =>
-      DanmakuConfig.builtinAvailable && (url == DanmakuConfig.builtinServer || url.startsWith('${DanmakuConfig.builtinServer}/'));
+      DanmakuConfig.builtinAvailable &&
+      (url == DanmakuConfig.builtinServer || url.startsWith('${DanmakuConfig.builtinServer}/'));
 
   /// 搜索结果、弹幕来源里显示的服务器名（只标内置的弹弹play，自己的服务器不标）
   static String? sourceLabel(String server) => isBuiltin(server) ? '弹弹play' : null;

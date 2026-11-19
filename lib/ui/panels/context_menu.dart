@@ -286,8 +286,10 @@ Future<void> _openPopupMenu(
               child: _PopupMenu(title: title, actions: actions, depth: depth),
             ),
     ),
-    transitionBuilder: (context, animation, _, child) =>
-        FadeTransition(opacity: CurvedAnimation(parent: animation, curve: Curves.easeOut), child: child),
+    transitionBuilder: (context, animation, _, child) => FadeTransition(
+      opacity: CurvedAnimation(parent: animation, curve: Curves.easeOut),
+      child: child,
+    ),
   );
 }
 

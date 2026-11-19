@@ -509,6 +509,12 @@ class _PlayerPageState extends ConsumerState<PlayerPage> with WidgetsBindingObse
     if (_startFixes >= 2) {
       debugPrint('[play] 起播位置 ${want.inSeconds}s 没有生效，停在 ${s.position.inSeconds}s');
       _expectStart = null;
+      // 起播直接跳过的片头其实没跳成：交回片头片尾逻辑重新处理（自动再跳一次，还不行就显示按钮）
+      final skipped = _startupSkipped;
+      if (skipped != null) {
+        _startupSkipped = null;
+        _segments?.reopen(skipped);
+      }
       return false;
     }
     _startFixes++;

@@ -84,6 +84,9 @@ class SegmentSkipController {
   }
 
   void markHandled(SegmentSkipAction action) => _handled.add(_key(action.segment));
+
+  /// 当作没处理过（之前以为已经跳过，其实没生效）：按原来的模式重新判断
+  void unmarkHandled(Segment segment) => _handled.remove(_key(segment));
   void retry(SegmentSkipAction action) {
     _handled.remove(_key(action.segment));
     _manualRetry.add(_key(action.segment));

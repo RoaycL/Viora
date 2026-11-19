@@ -5,6 +5,7 @@ import 'package:viora/domain/models/segment_settings.dart';
 import 'package:viora/domain/usecases/segment_resolver.dart';
 import 'package:viora/player/manual_segments.dart';
 import 'package:viora/player/segment_playback_session.dart';
+import 'package:viora/player/segment_skip_controller.dart';
 
 import 'segment_resolver_test.dart' show FakeProvider, candidate;
 
@@ -162,5 +163,56 @@ void main() {
     session.onPosition(const Duration(seconds: 10));
     await Future<void>.delayed(Duration.zero);
     expect(seeks, isEmpty);
+  });
+
+  test('自动跳过重发几次都没生效：改为显示按钮，手动点能再跳', () async {
+    final seeks = <Duration>[];
+    final prompts = <SegmentSkipAction?>[];
+    var now = DateTime(2026);
+    final session = SegmentPlaybackSession(
+      resolver: SegmentResolver(providers: []),
+      seek: (p) async => seeks.add(p),
+      nextEpisode: () async {},
+      onPrompt: prompts.add,
+      now: () => now,
+    );
+    session.begin(
+      _ep,
+      SegmentSettings.defaults().copyWith(intro: SegmentSkipMode.auto),
+      manual: const ManualMark(introEnd: Duration(seconds: 90)).segmentsFor(_ep.duration),
+    );
+    for (var i = 0; i < 8; i++) {
+      session.onPosition(Duration(seconds: i));
+      await Future<void>.delayed(Duration.zero);
+      now = now.add(const Duration(seconds: 2));
+    }
+    expect(seeks, hasLength(SegmentPlaybackSession.maxSeekAttempts));
+    final button = prompts.lastWhere((p) => p != null);
+    expect(button!.automatic, isFalse);
+    await session.activate(button);
+    expect(seeks, hasLength(SegmentPlaybackSession.maxSeekAttempts + 1));
+  });
+
+  test('起播直接跳过的片头其实没生效：重新打开后照常自动跳过', () async {
+    final seeks = <Duration>[];
+    final manual = const ManualMark(introEnd: Duration(seconds: 90)).segmentsFor(_ep.duration);
+    final session = SegmentPlaybackSession(
+      resolver: SegmentResolver(providers: []),
+      seek: (p) async => seeks.add(p),
+      nextEpisode: () async {},
+      onPrompt: (_) {},
+    );
+    session.begin(
+      _ep,
+      SegmentSettings.defaults().copyWith(intro: SegmentSkipMode.auto),
+      manual: manual,
+      handled: [manual.first],
+    );
+    session.onPosition(const Duration(seconds: 3));
+    await Future<void>.delayed(Duration.zero);
+    expect(seeks, isEmpty);
+    session.reopen(manual.first);
+    await Future<void>.delayed(Duration.zero);
+    expect(seeks, [const Duration(seconds: 90)]);
   });
 }
