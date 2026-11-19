@@ -248,7 +248,7 @@ Future<void> _openPopupMenu(
     altX = overlay.globalToLocal(item.topLeft).dx - 16;
   } else if (button != null) {
     // Windows 播放页：菜单放在按钮下方（下面放不下放到上方），不盖住按钮
-    target = overlay.globalToLocal(button.topLeft) & button.size;
+    target = Rect.fromPoints(overlay.globalToLocal(button.topLeft), overlay.globalToLocal(button.bottomRight));
     anchor = target.bottomLeft;
   } else if (InputMode.pointer && InputMode.lastPointer != null) {
     anchor = overlay.globalToLocal(InputMode.lastPointer!);
@@ -285,7 +285,8 @@ Future<void> _openPopupMenu(
 Rect? _clickedButton() {
   if (!_focusedIsButton()) return null;
   final box = FocusManager.instance.primaryFocus!.context!.findRenderObject()! as RenderBox;
-  final rect = box.localToGlobal(Offset.zero) & box.size;
+  // 两个角都换算到全局坐标（窗口比设计画布大时控件会被放大，不能直接用 box.size）
+  final rect = Rect.fromPoints(box.localToGlobal(Offset.zero), box.localToGlobal(box.size.bottomRight(Offset.zero)));
   final pointer = InputMode.lastPointer;
   if (InputMode.pointer && pointer != null && !rect.inflate(4).contains(pointer)) return null;
   return rect;
