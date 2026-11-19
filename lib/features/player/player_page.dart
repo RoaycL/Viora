@@ -489,15 +489,51 @@ class _PlayerPageState extends ConsumerState<PlayerPage> with WidgetsBindingObse
     if (change) unawaited(_engine?.selectSubtitle(track));
   }
 
+  /// 打开时要求的起播位置（续播、跳过片头直接起播）：确认内核真的从这里开始。有的片源 / 内核会忽略起播位置
+  /// 从头播放，这时补一次跳转（最多两次）。用户自己拖动进度后不再管
+  Duration? _expectStart;
+  int _startFixes = 0;
+  DateTime _startFixAt = DateTime.fromMillisecondsSinceEpoch(0);
+
+  /// 返回 true：起播位置还没生效（已补跳转），这次的位置不要拿去判断片头片尾
+  bool _checkStart(EngineState s) {
+    final want = _expectStart;
+    if (want == null || s.duration <= Duration.zero) return false;
+    if (s.position >= want - const Duration(seconds: 3)) {
+      _expectStart = null;
+      return false;
+    }
+    // 内核刚打开时先报 0，随后才跳到起播位置：开始走动（过了 1 秒）还在前面才算被忽略了
+    if (!s.playing || s.position < const Duration(seconds: 1)) return true;
+    if (DateTime.now().difference(_startFixAt) < const Duration(seconds: 2)) return true;
+    if (_startFixes >= 2) {
+      debugPrint('[play] 起播位置 ${want.inSeconds}s 没有生效，停在 ${s.position.inSeconds}s');
+      _expectStart = null;
+      // 起播直接跳过的片头其实没跳成：交回片头片尾逻辑重新处理（自动再跳一次，还不行就显示按钮）
+      final skipped = _startupSkipped;
+      if (skipped != null) {
+        _startupSkipped = null;
+        _segments?.reopen(skipped);
+      }
+      return false;
+    }
+    _startFixes++;
+    _startFixAt = DateTime.now();
+    debugPrint('[play] 起播位置 ${want.inSeconds}s 被忽略（现在 ${s.position.inSeconds}s），补一次跳转');
+    _engine?.seek(want);
+    return true;
+  }
+
   void _onEngineState() {
     final s = _state;
     _pickDefaultSubtitle(s);
+    final startPending = _checkStart(s);
     if (s.position > Duration.zero && (s.duration <= Duration.zero || s.position <= s.duration)) {
       _lastPosition = s.position;
     }
     // 开始播放前内核报的位置可能还是 0（续播时还没跳到上次的位置），不能拿来判断片头
     // 文件还没加载好（时长未知）时的位置也不算：这时发出的跳转会被内核丢掉
-    if ((_started || s.playing) && s.duration > Duration.zero) _segments?.onPosition(s.position);
+    if ((_started || s.playing) && s.duration > Duration.zero && !startPending) _segments?.onPosition(s.position);
     _limitReadahead(s.position);
     // 预加载下一集：看到 85%，或离片尾开始不到 1 分钟（片尾比较长的剧 85% 时可能已经在片尾里）
     final credits = _segmentList.where((x) => x.type == SegmentType.credits).firstOrNull;
@@ -584,6 +620,9 @@ class _PlayerPageState extends ConsumerState<PlayerPage> with WidgetsBindingObse
     final headers = {...req.headers}..remove('User-Agent');
     _lastPosition = at;
     _subtitlePicked = false;
+    _expectStart = at > const Duration(seconds: 3) ? at : null;
+    _startFixes = 0;
+    _startFixAt = DateTime.fromMillisecondsSinceEpoch(0);
     await engine.open(EngineMedia(url: req.url, headers: headers, userAgent: req.userAgent, start: at));
     if (PlatformProfile.isDesktop) await engine.setVolume(_muted ? 0 : _volume);
     await _applyDisplay(engine);
@@ -689,6 +728,9 @@ class _PlayerPageState extends ConsumerState<PlayerPage> with WidgetsBindingObse
         if (skipTo != null && mounted) {
           from = skipTo.end;
           _startupSkipped = skipTo;
+          debugPrint(
+            'segments: 起播直接跳过片头（自动模式）${skipTo.start.inSeconds}-${skipTo.end.inSeconds}s，从 ${skipTo.end.inSeconds}s 打开',
+          );
           showToast('已为您跳过片头，如需调整请到「设置 → 片头片尾」', duration: const Duration(seconds: 4));
         }
       }
@@ -917,6 +959,7 @@ class _PlayerPageState extends ConsumerState<PlayerPage> with WidgetsBindingObse
             },
             onPrompt: (action) {
               if (!mounted || _samePrompt(action, _skipPrompt)) return;
+              if (action != null) debugPrint('segments: 显示跳过按钮 ${_describeSkip(action)}');
               setState(() {
                 _skipPrompt = action;
                 _skipFaded = false;
@@ -934,11 +977,13 @@ class _PlayerPageState extends ConsumerState<PlayerPage> with WidgetsBindingObse
                 'segments: ${item.name} tmdb=${query.tmdbId} imdb=${query.imdbId} '
                 's${query.season}e${query.episode} ${duration.inSeconds}s → '
                 '${r.segments.isEmpty ? '没有片段' : r.segments.map((s) => '${s.type.name}@${s.provider} ${s.start.inSeconds}-${s.end.inSeconds}s').join(', ')}'
-                '${r.fromCache ? '（缓存）' : ''}${r.failures.isEmpty ? '' : ' 失败：${r.failures.map((k, v) => MapEntry(k, v.name))}'}',
+                '${r.fromCache ? '（缓存）' : ''}${r.failures.isEmpty ? '' : ' 失败：${r.failures.map((k, v) => MapEntry(k, v.name))}'}'
+                ' 模式：片头=${settings.intro.name} 片尾=${settings.credits.name}',
               );
               if (mounted) setState(() => _segmentList = r.segments);
             },
             onAutoSkip: (action) {
+              debugPrint('segments: 自动跳过 ${_describeSkip(action)}');
               if (action.kind == SegmentSkipActionKind.nextEpisode) {
                 _autoNextPending = true;
               } else {
@@ -946,6 +991,7 @@ class _PlayerPageState extends ConsumerState<PlayerPage> with WidgetsBindingObse
               }
             },
             onActionError: (e) => debugPrint('segments: $e'),
+            onLog: (m) => debugPrint('segments: $m'),
           )..begin(
             query,
             settings,
@@ -1258,8 +1304,16 @@ class _PlayerPageState extends ConsumerState<PlayerPage> with WidgetsBindingObse
 
   void _activateSkip() {
     final action = _skipPrompt;
-    if (action != null) _segments?.activate(action);
+    if (action == null) return;
+    debugPrint('segments: 手动跳过 ${_describeSkip(action)}');
+    _segments?.activate(action);
   }
+
+  /// 写日志用：片段类型、范围、当前位置和动作
+  String _describeSkip(SegmentSkipAction a) =>
+      '${a.segment.type.name} ${a.segment.start.inSeconds}-${a.segment.end.inSeconds}s '
+      '@${_state.position.inSeconds}s → '
+      '${a.kind == SegmentSkipActionKind.nextEpisode ? '下一集' : '${a.target.inSeconds}s'}';
 
   void _handoffTo(String route) {
     _handoff = true;
@@ -1407,6 +1461,7 @@ class _PlayerPageState extends ConsumerState<PlayerPage> with WidgetsBindingObse
   }
 
   void _seekBy(Duration delta) {
+    _expectStart = null;
     final duration = _state.duration;
     final base = _pendingSeek ?? _state.position;
     var target = base + delta;
@@ -1616,6 +1671,7 @@ class _PlayerPageState extends ConsumerState<PlayerPage> with WidgetsBindingObse
 
   /// 进度条点击 / 拖动（Windows）
   void _seekTo(Duration to) {
+    _expectStart = null;
     _seekTimer?.cancel();
     _lastPosition = to;
     setState(() => _pendingSeek = null);
