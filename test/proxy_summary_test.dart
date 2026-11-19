@@ -4,6 +4,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:viora/app/app.dart';
 import 'package:viora/data/config/config_store.dart';
+import 'package:viora/ui/widgets/form.dart';
 
 import 'focus_navigation_test.dart' show pumpApp, unmount;
 
@@ -35,7 +36,8 @@ void main() {
     expect(find.text('请先填写上面的反向代理地址'), findsOneWidget);
     expect(container.read(configProvider).tmdb.useProxy, isFalse);
 
-    await tester.enterText(find.byType(TextField).first, 'https://proxy.example.com/proxy/');
+    // 左上角还有「搜索设置」输入框，这里要填的是反向代理地址（第一个设置输入框）
+    await tester.enterText(find.descendant(of: find.byType(VTextField).first, matching: find.byType(TextField)), 'https://proxy.example.com/proxy/');
     await tester.pump(const Duration(seconds: 1));
     await tester.tap(find.text('TMDB'));
     await tester.pumpAndSettle();

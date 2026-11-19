@@ -212,7 +212,12 @@ class VToggle extends StatelessWidget {
   final double? width;
 
   /// Windows 上较长的说明收进标题旁的「i」，鼠标悬停显示；短的状态说明（如「已开启」）和电视上照常显示在下面
-  bool get _tipOnly => subtitle != null && PlatformProfile.isDesktop && subtitle!.characters.length > 16;
+  /// 只在设置页（[InfoTipScope] 里）这样做，其他页面的说明照常显示
+  bool _tipOnly(BuildContext context) =>
+      subtitle != null &&
+      PlatformProfile.isDesktop &&
+      subtitle!.characters.length > 16 &&
+      InfoTipScope.enabled(context);
 
   @override
   Widget build(BuildContext context) {
@@ -240,7 +245,7 @@ class VToggle extends StatelessWidget {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  if (_tipOnly)
+                  if (_tipOnly(context))
                     Row(
                       mainAxisSize: MainAxisSize.min,
                       children: [
@@ -290,7 +295,7 @@ class VChoice<T> extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final (title, hint) = PlatformProfile.isDesktop ? splitHint(label) : (label, null);
+    final (title, hint) = PlatformProfile.isDesktop && InfoTipScope.enabled(context) ? splitHint(label) : (label, null);
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -364,6 +369,16 @@ class SectionTitle extends StatelessWidget {
   final i = label.indexOf('（');
   if (i <= 0 || !label.endsWith('）')) return (label, null);
   return (label.substring(0, i), label.substring(i + 1, label.length - 1));
+}
+
+/// 包住的区域里，Windows 上较长的开关说明收进「i」（设置页用）
+class InfoTipScope extends InheritedWidget {
+  const InfoTipScope({super.key, required super.child});
+
+  static bool enabled(BuildContext context) => context.dependOnInheritedWidgetOfExactType<InfoTipScope>() != null;
+
+  @override
+  bool updateShouldNotify(InfoTipScope oldWidget) => false;
 }
 
 /// 标题旁的「i」：鼠标悬停显示说明（Windows 设置页用，把长说明收起来）

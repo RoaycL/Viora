@@ -836,7 +836,8 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
     ];
     final current = _category.index.clamp(0, sections.length - 1);
 
-    return Row(
+    return InfoTipScope(
+      child: Row(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         // 左：分类
@@ -878,6 +879,7 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
           ),
         ),
       ],
+      ),
     );
   }
 }
