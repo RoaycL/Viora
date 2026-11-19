@@ -19,10 +19,12 @@ class _Fake {
   static Future<_Fake> start() async {
     final f = _Fake(await HttpServer.bind(InternetAddress.loopbackIPv4, 0));
     f.http.listen((request) async {
-      f.paths.add(request.uri.path);
-      request.response.statusCode = f.status(request.uri);
+      // Emby 的接口路径带 /emby 前缀，去掉后再匹配
+      final uri = request.uri.replace(path: request.uri.path.replaceFirst(RegExp('^/emby'), ''));
+      f.paths.add(uri.path);
+      request.response.statusCode = f.status(uri);
       request.response.headers.contentType = ContentType.json;
-      request.response.write(jsonEncode(f.body(request.uri)));
+      request.response.write(jsonEncode(f.body(uri)));
       await request.response.close();
     });
     return f;
