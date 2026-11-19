@@ -17,6 +17,7 @@ import 'data/config/config_store.dart';
 import 'data/history/play_history.dart';
 import 'data/media/server_registry.dart';
 import 'data/segments/segment_http.dart';
+import 'data/subtitles/online_subtitles.dart';
 import 'data/tmdb/tmdb_client.dart';
 import 'ui/widgets/cached_image.dart';
 
@@ -48,6 +49,7 @@ Future<void> main() async {
   try {
     appVersion = (await PackageInfo.fromPlatform()).version;
     segmentClientVersion = appVersion;
+    subtitleClientVersion = appVersion;
   } catch (_) {}
 
   // 先读入本地配置（服务器、线路、代理、UA），再启动界面

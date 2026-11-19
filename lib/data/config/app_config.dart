@@ -767,6 +767,39 @@ class WebDavConfig {
   );
 }
 
+/// 在线字幕来源（播放页「在线搜索字幕」）：OpenSubtitles 和射手网（伪）
+class SubtitleSourcesConfig {
+  const SubtitleSourcesConfig({this.osUsername = '', this.osPassword = '', this.assrtToken = ''});
+
+  /// OpenSubtitles 账号（可选）：登录后每天的下载次数比匿名多；密码和服务器密码一样存进系统密钥库
+  final String osUsername;
+  final String osPassword;
+
+  /// 射手网（伪）的 API token（assrt.net 用户中心领取，每个账号一个）
+  final String assrtToken;
+
+  /// 构建时内置的 OpenSubtitles API Key（CI 用 `--dart-define=VIORA_OPENSUBTITLES_KEY=...` 注入）
+  static const builtinOpenSubtitlesKey = String.fromEnvironment('VIORA_OPENSUBTITLES_KEY');
+
+  bool get openSubtitlesEnabled => builtinOpenSubtitlesKey.isNotEmpty;
+  bool get osLoggedIn => osUsername.trim().isNotEmpty && osPassword.isNotEmpty;
+  bool get assrtEnabled => assrtToken.trim().isNotEmpty;
+
+  SubtitleSourcesConfig copyWith({String? osUsername, String? osPassword, String? assrtToken}) => SubtitleSourcesConfig(
+    osUsername: osUsername ?? this.osUsername,
+    osPassword: osPassword ?? this.osPassword,
+    assrtToken: assrtToken ?? this.assrtToken,
+  );
+
+  Map<String, dynamic> toJson() => {'osUsername': osUsername, 'osPassword': osPassword, 'assrtToken': assrtToken};
+
+  factory SubtitleSourcesConfig.fromJson(Map<String, dynamic> j) => SubtitleSourcesConfig(
+    osUsername: j['osUsername'] as String? ?? '',
+    osPassword: j['osPassword'] as String? ?? '',
+    assrtToken: j['assrtToken'] as String? ?? '',
+  );
+}
+
 class AppConfig {
   const AppConfig({
     List<ServerConfig> servers = const [],
@@ -776,8 +809,11 @@ class AppConfig {
     this.danmaku = const DanmakuConfig(),
     this.parental = const ParentalConfig(),
     this.webdav = const WebDavConfig(),
+    this.subtitles = const SubtitleSourcesConfig(),
     this.deviceId = '',
   }) : allServers = servers;
+
+  final SubtitleSourcesConfig subtitles;
 
   final WebDavConfig webdav;
 
@@ -835,6 +871,7 @@ class AppConfig {
     DanmakuConfig? danmaku,
     ParentalConfig? parental,
     WebDavConfig? webdav,
+    SubtitleSourcesConfig? subtitles,
     String? deviceId,
   }) => AppConfig(
     // 默认保留全部服务器（含儿童模式下隐藏的），否则改任何设置都会把隐藏的服务器丢掉
@@ -845,6 +882,7 @@ class AppConfig {
     tmdb: tmdb ?? this.tmdb,
     danmaku: danmaku ?? this.danmaku,
     webdav: webdav ?? this.webdav,
+    subtitles: subtitles ?? this.subtitles,
     deviceId: deviceId ?? this.deviceId,
   );
 
@@ -857,6 +895,7 @@ class AppConfig {
     'danmaku': danmaku.toJson(),
     'parental': parental.toJson(),
     'webdav': webdav.toJson(),
+    'subtitles': subtitles.toJson(),
     'deviceId': deviceId,
   };
 
@@ -868,6 +907,7 @@ class AppConfig {
     danmaku: DanmakuConfig.fromJson(j['danmaku'] as Map<String, dynamic>? ?? const {}),
     parental: ParentalConfig.fromJson(j['parental'] as Map<String, dynamic>? ?? const {}),
     webdav: WebDavConfig.fromJson(j['webdav'] as Map<String, dynamic>? ?? const {}),
+    subtitles: SubtitleSourcesConfig.fromJson(j['subtitles'] as Map<String, dynamic>? ?? const {}),
     deviceId: j['deviceId'] as String? ?? '',
   );
 }

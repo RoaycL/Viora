@@ -115,12 +115,12 @@ jobs:
           channel: stable
           cache: true
       - run: flutter pub get
-      - run: flutter build apk --release --dart-define=VIORA_TMDB_TOKEN=${{ secrets.TMDB_TOKEN }}
+      - run: flutter build apk --release --dart-define=VIORA_TMDB_TOKEN=${{ secrets.TMDB_TOKEN }} --dart-define=VIORA_OPENSUBTITLES_KEY=${{ secrets.OPENSUBTITLES_API_KEY }}
       - run: |
           mkdir -p dist
           cp build/app/outputs/flutter-apk/app-release.apk "dist/Viora-${{ needs.prepare.outputs.version }}-android.apk"
       # 按架构拆分（versionCode 会加上架构偏移：v7a +1000、arm64 +2000，从通用包升级上来不受影响）
-      - run: flutter build apk --release --split-per-abi --target-platform android-arm,android-arm64 --dart-define=VIORA_TMDB_TOKEN=${{ secrets.TMDB_TOKEN }}
+      - run: flutter build apk --release --split-per-abi --target-platform android-arm,android-arm64 --dart-define=VIORA_TMDB_TOKEN=${{ secrets.TMDB_TOKEN }} --dart-define=VIORA_OPENSUBTITLES_KEY=${{ secrets.OPENSUBTITLES_API_KEY }}
       - run: |
           for abi in arm64-v8a armeabi-v7a; do
             # GitHub 接口按文件名排序列出安装包，旧版本应用内更新取第一个 .apk：
@@ -144,7 +144,7 @@ jobs:
           channel: stable
           cache: true
       - run: flutter pub get
-      - run: flutter build windows --release --dart-define=VIORA_TMDB_TOKEN=${{ secrets.TMDB_TOKEN }}
+      - run: flutter build windows --release --dart-define=VIORA_TMDB_TOKEN=${{ secrets.TMDB_TOKEN }} --dart-define=VIORA_OPENSUBTITLES_KEY=${{ secrets.OPENSUBTITLES_API_KEY }}
       - name: 打包安装程序与免安装版
         shell: pwsh
         run: |

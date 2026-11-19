@@ -1,0 +1,436 @@
+import 'dart:convert';
+import 'dart:io';
+
+import 'package:dio/dio.dart';
+import 'package:path_provider/path_provider.dart';
+
+import '../config/app_config.dart';
+
+/// 在线字幕的语言：中文（简繁）/ 英文
+enum SubtitleLanguage {
+  chinese('中文', 'chi'),
+  english('英文', 'eng');
+
+  const SubtitleLanguage(this.label, this.code);
+  final String label;
+
+  /// 三字母代码（媒体服务器的字幕搜索用）
+  final String code;
+}
+
+/// 要找字幕的片子：剧集用剧的 TMDB / IMDb ID 加季、集
+class SubtitleQuery {
+  const SubtitleQuery({
+    required this.title,
+    this.originalTitle,
+    this.year,
+    this.tmdbId,
+    this.imdbId,
+    this.season,
+    this.episode,
+  });
+
+  /// 电影名或剧名（中文）
+  final String title;
+
+  /// 原名（多为英文）：射手网（伪）按英文名搜得更准
+  final String? originalTitle;
+  final int? year;
+  final int? tmdbId;
+  final String? imdbId;
+  final int? season;
+  final int? episode;
+
+  bool get isEpisode => season != null && episode != null;
+
+  /// 「Name S01E02」
+  String keyword(String name) =>
+      isEpisode ? '$name S${season.toString().padLeft(2, '0')}E${episode.toString().padLeft(2, '0')}' : name;
+}
+
+/// 一条在线字幕（搜索结果）
+class OnlineSubtitle {
+  const OnlineSubtitle({
+    required this.provider,
+    required this.id,
+    required this.name,
+    this.language,
+    this.format,
+    this.downloads,
+  });
+
+  /// [OpenSubtitlesClient.providerName] / [AssrtClient.providerName]
+  final String provider;
+  final String id;
+  final String name;
+
+  /// 显示用的语言说明，如「简体」「简 英」「en」
+  final String? language;
+  final String? format;
+  final int? downloads;
+}
+
+/// 下载下来的字幕文件
+class SubtitleFile {
+  const SubtitleFile(this.fileName, this.bytes);
+  final String fileName;
+  final List<int> bytes;
+}
+
+class OnlineSubtitleException implements Exception {
+  const OnlineSubtitleException(this.message);
+  final String message;
+  @override
+  String toString() => message;
+}
+
+abstract class OnlineSubtitleProvider {
+  String get name;
+  Future<List<OnlineSubtitle>> search(SubtitleQuery query, SubtitleLanguage language);
+  Future<SubtitleFile> download(OnlineSubtitle subtitle);
+}
+
+Dio _newDio() => Dio(
+  BaseOptions(
+    connectTimeout: const Duration(seconds: 8),
+    receiveTimeout: const Duration(seconds: 20),
+    responseType: ResponseType.json,
+  ),
+);
+
+String _dioMessage(DioException e) =>
+    e.response?.statusCode != null ? 'HTTP ${e.response!.statusCode}' : (e.message ?? e.type.name);
+
+String _ext(String fileName) {
+  final i = fileName.lastIndexOf('.');
+  return i < 0 ? '' : fileName.substring(i + 1).toLowerCase();
+}
+
+const _textFormats = {'srt', 'ass', 'ssa', 'vtt'};
+
+// ───────────────────────── OpenSubtitles ─────────────────────────
+
+/// OpenSubtitles REST API（api.opensubtitles.com）：内置应用 Key，用户可选登录自己的账号提高下载次数
+class OpenSubtitlesClient implements OnlineSubtitleProvider {
+  OpenSubtitlesClient(this.config, {Dio? dio, this.apiKey = SubtitleSourcesConfig.builtinOpenSubtitlesKey, String? baseUrl})
+    : _dio = dio ?? _newDio(),
+      _baseUrl = baseUrl ?? 'https://api.opensubtitles.com/api/v1';
+
+  static const providerName = 'OpenSubtitles';
+
+  final SubtitleSourcesConfig config;
+  final String apiKey;
+  final Dio _dio;
+  String _baseUrl;
+
+  /// 登录令牌（同一账号进程内复用，24 小时内有效）
+  static final _tokens = <String, (String token, String? baseUrl)>{};
+
+  @override
+  String get name => providerName;
+
+  Map<String, String> get _headers => {
+    'Api-Key': apiKey,
+    // OpenSubtitles 要求 User-Agent 带应用名和版本
+    'User-Agent': 'Viora v$subtitleClientVersion',
+    'Accept': 'application/json',
+  };
+
+  static String _languages(SubtitleLanguage l) => switch (l) {
+    SubtitleLanguage.chinese => 'zh-cn,zh-tw',
+    SubtitleLanguage.english => 'en',
+  };
+
+  /// 搜索参数（按字母顺序：官方建议排好序，命中缓存更快）
+  static Map<String, String> searchParams(SubtitleQuery q, SubtitleLanguage l) {
+    final imdb = q.imdbId?.replaceFirst(RegExp('^tt'), '');
+    final p = <String, String>{'languages': _languages(l)};
+    if (q.isEpisode) {
+      p['season_number'] = '${q.season}';
+      p['episode_number'] = '${q.episode}';
+      if (q.tmdbId != null) {
+        p['parent_tmdb_id'] = '${q.tmdbId}';
+      } else if (imdb != null && imdb.isNotEmpty) {
+        p['parent_imdb_id'] = imdb;
+      } else {
+        p['query'] = (q.originalTitle ?? q.title).toLowerCase();
+      }
+    } else if (q.tmdbId != null) {
+      p['tmdb_id'] = '${q.tmdbId}';
+    } else if (imdb != null && imdb.isNotEmpty) {
+      p['imdb_id'] = imdb;
+    } else {
+      p['query'] = (q.originalTitle ?? q.title).toLowerCase();
+      if (q.year != null) p['year'] = '${q.year}';
+    }
+    return Map.fromEntries(p.entries.toList()..sort((a, b) => a.key.compareTo(b.key)));
+  }
+
+  @override
+  Future<List<OnlineSubtitle>> search(SubtitleQuery query, SubtitleLanguage language) async {
+    if (apiKey.isEmpty) return const [];
+    try {
+      final r = await _dio.get<Map<String, dynamic>>(
+        '$_baseUrl/subtitles',
+        queryParameters: searchParams(query, language),
+        options: Options(headers: _headers),
+      );
+      return [
+        for (final d in (r.data?['data'] as List? ?? const []).whereType<Map<String, dynamic>>())
+          if (_parse(d) case final s?) s,
+      ]..sort((a, b) => (b.downloads ?? 0).compareTo(a.downloads ?? 0));
+    } on DioException catch (e) {
+      throw OnlineSubtitleException('OpenSubtitles 搜索失败：${_dioMessage(e)}');
+    }
+  }
+
+  static OnlineSubtitle? _parse(Map<String, dynamic> d) {
+    final a = d['attributes'];
+    if (a is! Map<String, dynamic>) return null;
+    final file = (a['files'] as List? ?? const []).whereType<Map<String, dynamic>>().firstOrNull;
+    final fileId = file?['file_id'];
+    if (fileId == null) return null;
+    final fileName = file?['file_name']?.toString() ?? '';
+    final release = a['release']?.toString() ?? '';
+    return OnlineSubtitle(
+      provider: providerName,
+      id: '$fileId',
+      name: release.isNotEmpty ? release : fileName,
+      language: a['language']?.toString(),
+      format: _ext(fileName).isEmpty ? 'srt' : _ext(fileName),
+      downloads: (a['download_count'] as num?)?.toInt(),
+    );
+  }
+
+  Future<String?> _login() async {
+    if (!config.osLoggedIn) return null;
+    final key = '${config.osUsername.trim()}\u0000${config.osPassword}';
+    final cached = _tokens[key];
+    if (cached != null) {
+      if (cached.$2 != null) _baseUrl = cached.$2!;
+      return cached.$1;
+    }
+    try {
+      final r = await _dio.post<Map<String, dynamic>>(
+        '$_baseUrl/login',
+        data: {'username': config.osUsername.trim(), 'password': config.osPassword},
+        options: Options(headers: {..._headers, 'Content-Type': 'application/json'}),
+      );
+      final token = r.data?['token']?.toString();
+      if (token == null || token.isEmpty) throw const OnlineSubtitleException('OpenSubtitles 登录失败');
+      // VIP 账号会给专用的 API 地址
+      final host = r.data?['base_url']?.toString();
+      final base = host == null || host.isEmpty ? null : 'https://$host/api/v1';
+      _tokens[key] = (token, base);
+      if (base != null) _baseUrl = base;
+      return token;
+    } on DioException catch (e) {
+      final code = e.response?.statusCode;
+      throw OnlineSubtitleException(
+        code == 401 ? 'OpenSubtitles 账号或密码不对（设置 → 接口与网络 → 在线字幕）' : 'OpenSubtitles 登录失败：${_dioMessage(e)}',
+      );
+    }
+  }
+
+  /// 测试登录（设置页「保存并测试」）
+  Future<void> testLogin() async {
+    _tokens.clear();
+    await _login();
+  }
+
+  @override
+  Future<SubtitleFile> download(OnlineSubtitle subtitle) async {
+    final token = await _login();
+    final auth = token == null ? null : 'Bearer $token';
+    Map<String, dynamic>? info;
+    try {
+      final r = await _dio.post<Map<String, dynamic>>(
+        '$_baseUrl/download',
+        data: {'file_id': int.tryParse(subtitle.id) ?? subtitle.id},
+        options: Options(
+          headers: {..._headers, 'Content-Type': 'application/json', 'Authorization': ?auth},
+        ),
+      );
+      info = r.data;
+    } on DioException catch (e) {
+      final code = e.response?.statusCode;
+      if (code == 406 || code == 429) {
+        throw OnlineSubtitleException(
+          config.osLoggedIn
+              ? 'OpenSubtitles 今天的下载次数已用完，明天再试'
+              : 'OpenSubtitles 今天的匿名下载次数已用完：可以在设置 → 接口与网络 → 在线字幕里登录自己的账号',
+        );
+      }
+      throw OnlineSubtitleException('OpenSubtitles 下载失败：${_dioMessage(e)}');
+    }
+    final link = info?['link']?.toString();
+    if (link == null || link.isEmpty) {
+      throw OnlineSubtitleException(info?['message']?.toString() ?? 'OpenSubtitles 没有返回下载地址');
+    }
+    final fileName = info?['file_name']?.toString() ?? '${subtitle.id}.srt';
+    try {
+      final r = await _dio.get<List<int>>(link, options: Options(responseType: ResponseType.bytes));
+      return SubtitleFile(fileName, r.data ?? const []);
+    } on DioException catch (e) {
+      throw OnlineSubtitleException('OpenSubtitles 下载失败：${_dioMessage(e)}');
+    }
+  }
+}
+
+/// 请求头里的客户端版本（启动时设置成应用版本）
+String subtitleClientVersion = '1.0';
+
+// ───────────────────────── 射手网（伪） ─────────────────────────
+
+/// 射手网（伪）API（api.assrt.net）：中文字幕最全；需要用户自己的 token
+class AssrtClient implements OnlineSubtitleProvider {
+  AssrtClient(this.token, {Dio? dio, String? baseUrl})
+    : _dio = dio ?? _newDio(),
+      _baseUrl = baseUrl ?? 'https://api.assrt.net/v1';
+
+  static const providerName = '射手网（伪）';
+
+  final String token;
+  final Dio _dio;
+  final String _baseUrl;
+
+  @override
+  String get name => providerName;
+
+  Future<Map<String, dynamic>> _get(String path, Map<String, String> query) async {
+    try {
+      final r = await _dio.get<Object>(
+        '$_baseUrl$path',
+        queryParameters: {'token': token, ...query},
+        options: Options(responseType: ResponseType.plain, headers: {'User-Agent': 'Viora v$subtitleClientVersion'}),
+      );
+      final j = jsonDecode(r.data?.toString() ?? '{}');
+      if (j is! Map<String, dynamic>) throw const OnlineSubtitleException('射手网（伪）返回格式不对');
+      final status = (j['status'] as num?)?.toInt() ?? 0;
+      if (status != 0) {
+        throw OnlineSubtitleException(switch (status) {
+          101 => '射手网（伪）的 token 不对（设置 → 接口与网络 → 在线字幕）',
+          30900 => '射手网（伪）请求太频繁，请稍后再试',
+          _ => '射手网（伪）：${j['errmsg'] ?? '错误 $status'}',
+        });
+      }
+      return j;
+    } on DioException catch (e) {
+      throw OnlineSubtitleException('射手网（伪）请求失败：${_dioMessage(e)}');
+    }
+  }
+
+  static bool _matches(Map<String, dynamic> lang, SubtitleLanguage l) {
+    final list = lang['langlist'];
+    if (list is! Map) return true;
+    bool has(String k) => list[k] == true;
+    return switch (l) {
+      SubtitleLanguage.chinese => has('langchs') || has('langcht') || has('langdou'),
+      SubtitleLanguage.english => has('langeng') || has('langdou'),
+    };
+  }
+
+  @override
+  Future<List<OnlineSubtitle>> search(SubtitleQuery query, SubtitleLanguage language) async {
+    if (token.trim().isEmpty) return const [];
+    // 先按原名（英文）搜，搜不到再按中文名
+    final names = {
+      if (query.originalTitle?.trim().isNotEmpty ?? false) query.originalTitle!.trim(),
+      query.title.trim(),
+    };
+    for (final name in names) {
+      final j = await _get('/sub/search', {'q': query.keyword(name), 'cnt': '30', 'pos': '0'});
+      final subs = ((j['sub'] as Map?)?['subs'] as List? ?? const []).whereType<Map<String, dynamic>>();
+      final list = [
+        for (final s in subs)
+          if (_matches(s['lang'] as Map<String, dynamic>? ?? const {}, language))
+            OnlineSubtitle(
+              provider: providerName,
+              id: '${s['id']}',
+              name: (s['native_name']?.toString().trim().isNotEmpty ?? false)
+                  ? '${s['native_name']}'
+                  : '${s['videoname'] ?? s['id']}',
+              language: (s['lang'] as Map?)?['desc']?.toString(),
+              format: s['subtype']?.toString(),
+            ),
+      ];
+      if (list.isNotEmpty) return list;
+    }
+    return const [];
+  }
+
+  /// 字幕包里挑一个文件：要求是文本字幕；中文优先挑简体，其次繁体
+  static Map<String, dynamic>? pickFile(List<Map<String, dynamic>> files) {
+    final text = [
+      for (final f in files)
+        if (_textFormats.contains(_ext('${f['f'] ?? ''}'))) f,
+    ];
+    if (text.isEmpty) return null;
+    int score(Map<String, dynamic> f) {
+      final n = '${f['f']}'.toLowerCase();
+      var s = 0;
+      if (RegExp(r'chs|简|sc\b|\.zh|gb').hasMatch(n)) s += 4;
+      if (RegExp(r'cht|繁|tc\b|big5').hasMatch(n)) s += 2;
+      if (_ext(n) == 'ass' || _ext(n) == 'ssa') s += 1;
+      return s;
+    }
+
+    return (text..sort((a, b) => score(b).compareTo(score(a)))).first;
+  }
+
+  @override
+  Future<SubtitleFile> download(OnlineSubtitle subtitle) async {
+    final j = await _get('/sub/detail', {'id': subtitle.id});
+    final sub = ((j['sub'] as Map?)?['subs'] as List? ?? const []).whereType<Map<String, dynamic>>().firstOrNull;
+    if (sub == null) throw const OnlineSubtitleException('射手网（伪）没有这条字幕的详情');
+    final files = (sub['filelist'] as List? ?? const []).whereType<Map<String, dynamic>>().toList();
+    var file = pickFile(files);
+    // 单个文件（没有打包）时 filelist 为空，直接用 url
+    if (file == null && files.isEmpty && _textFormats.contains(_ext('${sub['filename'] ?? ''}'))) {
+      file = {'url': sub['url'], 'f': sub['filename']};
+    }
+    final url = file?['url']?.toString();
+    if (file == null || url == null || url.isEmpty) {
+      throw const OnlineSubtitleException('这条字幕只有压缩包，没有可直接加载的字幕文件，换一条试试');
+    }
+    try {
+      final r = await _dio.get<List<int>>(url, options: Options(responseType: ResponseType.bytes));
+      return SubtitleFile('${file['f']}', r.data ?? const []);
+    } on DioException catch (e) {
+      throw OnlineSubtitleException('射手网（伪）下载失败：${_dioMessage(e)}');
+    }
+  }
+}
+
+// ───────────────────────── 保存到本地 ─────────────────────────
+
+/// 字幕文本统一转成 UTF-8（ExoPlayer 只认 UTF-8 / 带 BOM 的 UTF-16；GBK 等其他编码原样保留，mpv 会自动识别）
+List<int> normalizeSubtitleBytes(List<int> bytes) {
+  if (bytes.length >= 3 && bytes[0] == 0xEF && bytes[1] == 0xBB && bytes[2] == 0xBF) return bytes.sublist(3);
+  if (bytes.length >= 2 && (bytes[0] == 0xFF && bytes[1] == 0xFE || bytes[0] == 0xFE && bytes[1] == 0xFF)) {
+    final le = bytes[0] == 0xFF;
+    final units = <int>[
+      for (var i = 2; i + 1 < bytes.length; i += 2) le ? bytes[i] | (bytes[i + 1] << 8) : (bytes[i] << 8) | bytes[i + 1],
+    ];
+    return utf8.encode(String.fromCharCodes(units));
+  }
+  return bytes;
+}
+
+/// 存到临时目录，返回本地路径（文件名保留扩展名：播放器按扩展名识别格式）
+Future<String> saveSubtitleFile(SubtitleFile file, {Directory? dir}) async {
+  final base = dir ?? Directory('${(await getTemporaryDirectory()).path}${Platform.pathSeparator}viora_subtitles');
+  await base.create(recursive: true);
+  var name = file.fileName.replaceAll(RegExp(r'[\\/:*?"<>|]'), '_');
+  if (!_textFormats.contains(_ext(name))) name = '$name.srt';
+  if (name.length > 120) name = name.substring(name.length - 120);
+  final out = File('${base.path}${Platform.pathSeparator}${DateTime.now().millisecondsSinceEpoch}_$name');
+  await out.writeAsBytes(normalizeSubtitleBytes(file.bytes), flush: true);
+  return out.path;
+}
+
+/// 已启用的在线字幕来源（OpenSubtitles 有内置 Key 时启用；射手网（伪）填了 token 时启用）
+List<OnlineSubtitleProvider> onlineSubtitleProviders(SubtitleSourcesConfig config) => [
+  if (config.assrtEnabled) AssrtClient(config.assrtToken.trim()),
+  if (config.openSubtitlesEnabled) OpenSubtitlesClient(config),
+];

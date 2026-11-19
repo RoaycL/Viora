@@ -22,6 +22,7 @@ import '../../data/config/config_store.dart';
 import '../../data/danmaku/danmaku_client.dart';
 import '../../data/danmaku/danmaku_models.dart';
 import '../../data/emby/emby_client.dart';
+import '../../data/subtitles/online_subtitles.dart';
 import '../../data/history/pending_reports.dart';
 import '../../data/history/play_history.dart';
 import '../../data/index/index_sync.dart';
@@ -1733,34 +1734,46 @@ class _PlayerPageState extends ConsumerState<PlayerPage> with WidgetsBindingObse
 
   // ───────────────────────── 在线字幕 ─────────────────────────
 
+  /// 在线找字幕要用的片名、年份和 ID（剧集用剧的 TMDB / IMDb ID）
+  Future<SubtitleQuery?> _subtitleQuery() async {
+    final item = _item, client = _client;
+    if (item == null || client == null) return null;
+    var title = item;
+    if (item.kind == MediaKind.episode && item.seriesId != null) {
+      try {
+        title = await client.item(item.seriesId!);
+      } catch (_) {}
+    }
+    final episode = item.kind == MediaKind.episode;
+    return SubtitleQuery(
+      title: episode ? (item.seriesName ?? title.name) : item.name,
+      originalTitle: title.originalTitle,
+      year: title.year,
+      tmdbId: int.tryParse(title.tmdbId ?? ''),
+      imdbId: title.imdbId,
+      season: episode ? item.seasonNumber : null,
+      episode: episode ? item.episodeNumber : null,
+    );
+  }
+
+  /// 同时在媒体服务器（字幕插件）和内置的在线字幕来源里搜索，合并列出
   Future<void> _searchSubtitles(String language, String label) async {
     final client = _client, item = _item;
     if (client == null || item == null) return;
+    final lang = SubtitleLanguage.values.firstWhere((l) => l.code == language);
+    final providers = onlineSubtitleProviders(ref.read(configProvider).subtitles);
     showToast('正在搜索$label字幕…');
-    List<RemoteSubtitle> list;
-    try {
-      list = await client.searchSubtitles(item.id, language);
-    } catch (e) {
-      final denied = e is MediaServerException && (e.statusCode == 401 || e.statusCode == 403);
-      showToast(denied ? '当前账号没有字幕管理权限：请在服务器的用户设置里允许管理字幕' : '搜索字幕失败：$e');
-      return;
-    }
-    if (!mounted) return;
-    if (list.isEmpty) {
-      showToast('没有找到$label字幕（服务器需要安装 OpenSubtitles 等字幕插件）');
-      return;
-    }
-    await _menu(
-      () => showContextMenu(
-        context,
-        anchored: true,
-        title: '$label字幕 · ${list.length} 个结果',
-        actions: [
-          for (final r in list.take(40))
+    final errors = <String>[];
+    var serverDenied = false;
+    final query = await _subtitleQuery();
+    final results = await Future.wait<List<MenuAction>>([
+      client.searchSubtitles(item.id, language).then(
+        (list) => [
+          for (final r in list.take(30))
             MenuAction(
               [
                 r.name,
-                r.provider,
+                r.provider.isEmpty ? '服务器' : '服务器 · ${r.provider}',
                 ?r.format?.toUpperCase(),
                 if (r.downloads != null) '${r.downloads} 次下载',
               ].where((x) => x.isNotEmpty).join(' · '),
@@ -1768,8 +1781,68 @@ class _PlayerPageState extends ConsumerState<PlayerPage> with WidgetsBindingObse
               () => _downloadSubtitle(r),
             ),
         ],
+        onError: (Object e) {
+          // 服务器没装字幕插件或账号没权限：只要内置来源有结果就不打扰
+          serverDenied = e is MediaServerException && (e.statusCode == 401 || e.statusCode == 403);
+          if (providers.isEmpty) errors.add(serverDenied ? '当前账号没有字幕管理权限' : '服务器：$e');
+          return const <MenuAction>[];
+        },
       ),
+      for (final p in providers)
+        if (query != null)
+          p.search(query, lang).then(
+            (list) => [
+              for (final r in list.take(30))
+                MenuAction(
+                  [
+                    r.name,
+                    r.provider,
+                    ?r.language,
+                    ?r.format?.toUpperCase(),
+                    if (r.downloads != null) '${r.downloads} 次下载',
+                  ].where((x) => x.isNotEmpty).join(' · '),
+                  Icons.closed_caption_outlined,
+                  () => _loadOnlineSubtitle(p, r),
+                ),
+            ],
+            onError: (Object e) {
+              errors.add('$e');
+              return const <MenuAction>[];
+            },
+          ),
+    ]);
+    if (!mounted) return;
+    final actions = [for (final r in results) ...r];
+    if (actions.isEmpty) {
+      showToast(
+        errors.isNotEmpty
+            ? '搜索字幕失败：${errors.join('；')}'
+            : serverDenied
+            ? '当前账号没有字幕管理权限：请在服务器的用户设置里允许管理字幕'
+            : providers.isEmpty
+            ? '没有找到$label字幕（服务器需要安装 OpenSubtitles 等字幕插件，或在设置 → 接口与网络 → 在线字幕里填写射手网（伪）token）'
+            : '没有找到$label字幕',
+      );
+      return;
+    }
+    if (errors.isNotEmpty) showToast(errors.join('；'));
+    await _menu(
+      () => showContextMenu(context, anchored: true, title: '$label字幕 · ${actions.length} 个结果', actions: actions),
     );
+  }
+
+  /// 内置来源的字幕：下载到本机临时目录，直接加载到播放器（不经过媒体服务器）
+  Future<void> _loadOnlineSubtitle(OnlineSubtitleProvider provider, OnlineSubtitle r) async {
+    showToast('正在下载字幕…');
+    try {
+      final file = await provider.download(r);
+      final path = await saveSubtitleFile(file);
+      if (!mounted) return;
+      await _engine?.addExternalSubtitle(Uri.file(path), title: '${r.provider} · ${r.name}');
+      showToast('已加载字幕：${r.name}');
+    } catch (e) {
+      showToast('下载字幕失败：$e');
+    }
   }
 
   Future<void> _downloadSubtitle(RemoteSubtitle r) async {
