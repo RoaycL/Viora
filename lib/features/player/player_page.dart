@@ -53,6 +53,7 @@ import '../danmaku/danmaku_service.dart';
 import '../segments/segment_service.dart';
 import 'mini_player.dart';
 import 'player_osd.dart';
+import 'subtitle_position_adjuster.dart';
 
 /// 连续自动播放（片尾倒计时结束、播完自动下一集，中间没有任何按键 / 点击）了几集：到 3 集时问「还在观看吗？」
 int _autoPlayStreak = 0;
@@ -1251,6 +1252,8 @@ class _PlayerPageState extends ConsumerState<PlayerPage> with WidgetsBindingObse
   bool get _onControls => !_focus.hasPrimaryFocus && _focus.hasFocus;
 
   void _showOsd({bool sticky = false}) {
+    // 调整字幕位置时控制层不出来，免得挡住画面
+    if (_adjustingSubtitle) return;
     _osdTimer?.cancel();
     if (!_osd && mounted) setState(() => _osd = true);
     if (!sticky) _armOsdTimer();
@@ -1396,13 +1399,34 @@ class _PlayerPageState extends ConsumerState<PlayerPage> with WidgetsBindingObse
     ref.read(configProvider.notifier).update((c) => c.copyWith(playback: c.playback.copyWith(subtitleScale: scale)));
   }
 
-  /// 字幕上下微调：delta 为正往上移（mpv sub-pos 变小），null = 恢复默认
-  void _moveSubtitle(int? delta) {
-    final current = ref.read(configProvider).playback.subtitlePosition;
-    final position = delta == null ? 100 : (current - delta).clamp(0, 150);
+  /// 正在调整字幕位置（画面上显示位置预览框和百分比滑块，控制层收起）
+  bool _adjustingSubtitle = false;
+
+  /// 调整中、还没保存的位置（返回键完成时用）
+  int? _pendingSubtitlePosition;
+
+  void _previewSubtitlePosition(int position) {
+    _pendingSubtitlePosition = position;
+    _engine?.setSubtitlePosition(position);
+  }
+
+  void _startSubtitleAdjust() {
+    _osdTimer?.cancel();
+    setState(() {
+      _adjustingSubtitle = true;
+      _pendingSubtitlePosition = null;
+      _panel = OsdPanel.none;
+      _osd = false;
+    });
+  }
+
+  /// 调整完成：保存位置，焦点回到播放器
+  void _finishSubtitleAdjust(int position) {
     _engine?.setSubtitlePosition(position);
     ref.read(configProvider.notifier).update((c) => c.copyWith(playback: c.playback.copyWith(subtitlePosition: position)));
-    showToast(position == 100 ? '字幕位置：默认' : '字幕位置：${position < 100 ? '上移' : '下移'} ${(100 - position).abs()}');
+    _pendingSubtitlePosition = null;
+    setState(() => _adjustingSubtitle = false);
+    _focus.requestFocus();
   }
 
   /// 起播 / 换源后把当前的显示设置交给内核（换源会新开媒体，内核可能是新的）
@@ -1463,6 +1487,10 @@ class _PlayerPageState extends ConsumerState<PlayerPage> with WidgetsBindingObse
   /// 键盘 Esc 等由 [_onKey] 调这里
   bool _handleBack() {
     if (!mounted) return false;
+    if (_adjustingSubtitle) {
+      _finishSubtitleAdjust(_pendingSubtitlePosition ?? ref.read(configProvider).playback.subtitlePosition);
+      return true;
+    }
     if (_nextCountdown != null) {
       _cancelNextCountdown();
       return true;
@@ -1747,15 +1775,10 @@ class _PlayerPageState extends ConsumerState<PlayerPage> with WidgetsBindingObse
         ],
       ),
       if (_engine?.supportsSubtitlePosition ?? false)
-        MenuAction.submenu(
-          '字幕位置 · ${position == 100 ? '默认' : '${position < 100 ? '上移' : '下移'} ${(100 - position).abs()}'}',
+        MenuAction(
+          '字幕位置 · ${SubtitleLift.label(position)}',
           Icons.vertical_align_center_rounded,
-          title: '字幕位置',
-          items: () => [
-            MenuAction('上移', Icons.arrow_upward_rounded, () => _moveSubtitle(5)),
-            MenuAction('下移', Icons.arrow_downward_rounded, () => _moveSubtitle(-5)),
-            MenuAction('恢复默认', Icons.restart_alt_rounded, () => _moveSubtitle(null)),
-          ],
+          _startSubtitleAdjust,
         ),
       if (_engine?.supportsSubtitleDelay ?? false)
         MenuAction.submenu(
@@ -2393,6 +2416,16 @@ class _PlayerPageState extends ConsumerState<PlayerPage> with WidgetsBindingObse
                                   ),
                               ],
                             ),
+                    ),
+                  // 调整字幕位置：盖在最上层（画面上的位置预览框 + 百分比滑块）
+                  if (engine != null && _adjustingSubtitle && !mini)
+                    Positioned.fill(
+                      child: SubtitlePositionAdjuster(
+                        position: ref.read(configProvider).playback.subtitlePosition,
+                        scale: ref.read(configProvider).playback.subtitleScale,
+                        onChanged: _previewSubtitlePosition,
+                        onDone: _finishSubtitleAdjust,
+                      ),
                     ),
                 ],
               ),

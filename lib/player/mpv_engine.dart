@@ -286,6 +286,16 @@ class MpvSubtitleView extends StatefulWidget {
   /// 默认位置离画面底部的距离（1080p）
   static const baseBottom = 24.0;
 
+  /// 跟 media_kit 原来的字幕一样按画面面积缩放（以 1080p 为准）
+  static double _k(Size size) => math.sqrt((size.width * size.height / (1920 * 1080)).clamp(0.0, 1.0));
+
+  /// 字幕最后一行底边离画面底部的距离（「字幕位置」调整时的预览框用同一个算法，位置完全对得上）
+  static double bottomOffset(Size size, int position) =>
+      (baseBottom * _k(size) + (100 - position) / 100 * size.height).clamp(0.0, size.height * 0.9);
+
+  /// 字号：按画面面积缩放，再乘上字幕大小设置
+  static double fontSize(Size size, double scale) => baseFontSize * _k(size) * scale;
+
   @override
   State<MpvSubtitleView> createState() => _MpvSubtitleViewState();
 }
@@ -321,15 +331,14 @@ class _MpvSubtitleViewState extends State<MpvSubtitleView> {
           listenable: Listenable.merge([widget.scale, widget.position]),
           builder: (context, _) {
             // 跟 media_kit 原来的字幕一样按画面面积缩放（以 1080p 为准），再乘上字幕大小设置
-            final k = math.sqrt((c.maxWidth * c.maxHeight / (1920 * 1080)).clamp(0.0, 1.0));
-            final bottom = (MpvSubtitleView.baseBottom * k + (100 - widget.position.value) / 100 * c.maxHeight)
-                .clamp(0.0, c.maxHeight * 0.9);
+            final size = c.biggest;
+            final bottom = MpvSubtitleView.bottomOffset(size, widget.position.value);
             return Padding(
               padding: EdgeInsets.fromLTRB(16, 0, 16, bottom),
               child: Align(
                 alignment: Alignment.bottomCenter,
                 // 不要黑底色块：白字 + 细黑描边 + 柔和阴影，直接叠在画面上（和主流播放器一样）
-                child: _OutlinedSubtitle(text: text, fontSize: MpvSubtitleView.baseFontSize * k * widget.scale.value),
+                child: _OutlinedSubtitle(text: text, fontSize: MpvSubtitleView.fontSize(size, widget.scale.value)),
               ),
             );
           },
