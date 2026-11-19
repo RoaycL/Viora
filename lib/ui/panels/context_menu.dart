@@ -222,12 +222,22 @@ Future<void> _showPopupMenu(
   bool popup = false,
 }) async {
   // 播放页按钮（Windows）：点击时按钮刚请求焦点，焦点在随后的微任务里才生效，等它生效再找按钮
-  final buttonMenu = popup && item == null && PlatformProfile.isDesktop;
-  if (buttonMenu) {
+  if (popup && item == null && PlatformProfile.isDesktop) {
     await Future<void>.microtask(() {});
     if (!context.mounted) return;
+    return _openPopupMenu(context, title: title, actions: actions, depth: depth, button: _clickedButton());
   }
-  final button = buttonMenu ? _clickedButton() : null;
+  return _openPopupMenu(context, title: title, actions: actions, depth: depth, item: item);
+}
+
+Future<void> _openPopupMenu(
+  BuildContext context, {
+  required String title,
+  required List<MenuAction> Function() actions,
+  required int depth,
+  Rect? item,
+  Rect? button,
+}) {
   final overlay = Navigator.of(context).overlay!.context.findRenderObject() as RenderBox;
   Offset? anchor;
   double? altX;
