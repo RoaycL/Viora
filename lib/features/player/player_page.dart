@@ -76,6 +76,7 @@ class PlayerPage extends ConsumerStatefulWidget {
     this.sourceId,
     this.triedSources = const [],
     this.resume = false,
+    this.progressAt,
   });
 
   final String serverId;
@@ -86,6 +87,10 @@ class PlayerPage extends ConsumerStatefulWidget {
   /// 卡片 / 详情页上的进度可能是缓存的旧数据，别的设备看到了更后面时，从旧位置播放、上报会把服务器进度覆盖回去。
   /// 「从头播放」、切换资源时接着当前位置等明确指定了位置的不设
   final bool resume;
+
+  /// 和 [resume] 一起用：[startMs] 是另一台服务器上的进度，这是那次播放的时间（毫秒时间戳）。
+  /// 这台服务器上的进度比它新时用这台的，否则用 [startMs]（这台的 0 / 旧进度不能把它覆盖掉）
+  final int? progressAt;
   final String? sourceId;
 
   /// 自动换源时已经试过、打不开的版本（「服务器/版本 ID」），换到其他服务器时带过去，避免来回切
@@ -261,24 +266,25 @@ class _PlayerPageState extends ConsumerState<PlayerPage> with WidgetsBindingObse
     }
     WidgetsBinding.instance.addObserver(this);
     _autoArrived;
-    // Windows「开始播放时全屏」：退出播放后恢复（连播下一集、换服务器时保持全屏）
+    // Windows：记下进播放页前窗口是不是全屏，退出播放时恢复成那样（播放页里进出全屏不影响首页等其他页面）。
+    // 连播下一集、换服务器时由上一个播放页交接过来
+    _entryFullScreen = _carriedEntryFullScreen ?? windowFullScreen.value;
+    _carriedEntryFullScreen = null;
+    // 「开始播放时全屏」
     if (isDesktopWindow && DesktopPrefs.instance.fullScreenOnPlay.value && !MiniPlayerWindow.active.value) {
-      final enter = !windowFullScreen.value;
-      _autoFullScreenPending = enter || _autoFullScreenCarried;
-      _autoFullScreenCarried = false;
-      if (enter) unawaited(toggleFullScreen());
-    } // 读取「是不是自动连播过来的」
+      if (!windowFullScreen.value) unawaited(setWindowFullScreen(true));
+    }
     // Windows 关闭到托盘时暂停（窗口看不见了，不在后台继续放）
     DesktopTray.instance.hiddenToTray.addListener(_onHiddenToTray);
   }
 
   bool _holdsIndexSync = false;
 
-  /// 这次播放是不是自动进的全屏（退出播放时恢复窗口）
-  bool _autoFullScreenPending = false;
+  /// 进播放页前窗口是不是全屏（退出播放时恢复）
+  bool _entryFullScreen = false;
 
-  /// 连播 / 换服务器到下一个播放页：全屏是上一个播放页自动进的，下一个退出时也要恢复
-  static bool _autoFullScreenCarried = false;
+  /// 连播 / 换服务器到下一个播放页：交接 [_entryFullScreen]
+  static bool? _carriedEntryFullScreen;
 
   /// 这一集是自动连播过来的
   late final bool _autoArrived = () {
@@ -544,6 +550,14 @@ class _PlayerPageState extends ConsumerState<PlayerPage> with WidgetsBindingObse
     if (!widget.resume) return fallback;
     try {
       final item = await fresh.timeout(const Duration(seconds: 3));
+      final carriedAt = widget.progressAt;
+      if (carriedAt != null) {
+        final at = PlayHistory.lastPlayed(item);
+        final newer = at != null && at.millisecondsSinceEpoch > carriedAt;
+        return newer && !item.played ? item.position : (newer ? Duration.zero : fallback);
+      }
+      // 服务器上是 0 又没标看完：多半是这台还没收到进度（上报没发出去、刚换过版本），用带来的位置，不从头播
+      if (item.position == Duration.zero && !item.played) return fallback;
       if (item.position != fallback) {
         AppLog.add('[play] 续播位置以服务器为准：${formatClock(item.position)}（卡片上是 ${formatClock(fallback)}）');
       }
@@ -1117,11 +1131,8 @@ class _PlayerPageState extends ConsumerState<PlayerPage> with WidgetsBindingObse
 
   void _handoffTo(String route) {
     _handoff = true;
-    // 自动进的全屏交给下一个播放页（新页面先建好、这一页后销毁，所以在这里交接）
-    if (_autoFullScreenPending) {
-      _autoFullScreenCarried = true;
-      _autoFullScreenPending = false;
-    }
+    // 进播放页前的窗口状态交给下一个播放页（新页面先建好、这一页后销毁，所以在这里交接）
+    _carriedEntryFullScreen = _entryFullScreen;
     context.pushReplacement(route);
   }
 
@@ -1199,8 +1210,8 @@ class _PlayerPageState extends ConsumerState<PlayerPage> with WidgetsBindingObse
     _skipFadeTimer?.cancel();
     // 退出播放时恢复窗口；连播下一集 / 换服务器时保持小窗
     if (!handoff) MiniPlayerWindow.exit();
-    // 「开始播放时全屏」自动进的全屏：退出播放时恢复原来的窗口（连播 / 换服务器时已在 _handoffTo 交给下一个播放页）
-    if (_autoFullScreenPending && windowFullScreen.value) unawaited(toggleFullScreen());
+    // 退出播放时窗口恢复成进来前的样子（连播 / 换服务器时已在 _handoffTo 交给下一个播放页）
+    if (!handoff && isDesktopWindow) unawaited(setWindowFullScreen(_entryFullScreen));
     // 销毁过程中不能让别的组件重建：这一帧结束后再恢复标题栏
     scheduleMicrotask(() => windowImmersive.value = false);
     super.dispose();

@@ -19,6 +19,7 @@ class ServerImage extends ConsumerWidget {
     this.fallbackSeed = '',
     this.alignment = Alignment.center,
     this.transparentFallback = false,
+    this.errorFallback,
   });
 
   final String serverId;
@@ -32,6 +33,9 @@ class ServerImage extends ConsumerWidget {
 
   /// Logo 等透明图：加载中 / 失败时不显示占位渐变
   final bool transparentFallback;
+
+  /// 加载失败时显示（如服务器异常时改用 TMDB 的图）；为空时同加载中的占位
+  final Widget? errorFallback;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -60,7 +64,7 @@ class ServerImage extends ConsumerWidget {
                 ),
               ],
             ),
-      errorBuilder: (_, _, _) => fallback,
+      errorBuilder: (_, _, _) => errorFallback ?? fallback,
     );
   }
 }

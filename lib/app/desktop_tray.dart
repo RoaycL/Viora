@@ -3,6 +3,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:tray_manager/tray_manager.dart';
 import 'package:window_manager/window_manager.dart';
 
+import '../data/emby/emby_client.dart';
 import 'desktop_prefs.dart';
 import 'window_frame.dart';
 
@@ -91,9 +92,13 @@ class DesktopTray with TrayListener, WindowListener {
     await windowManager.focus();
   }
 
-  /// 真正退出
+  /// 真正退出：先把窗口和托盘图标收起来（点了退出马上消失），再在后台发完播放进度、关掉播放内核等收尾，最后结束进程
   Future<void> quit() async {
+    try {
+      await windowManager.hide();
+    } catch (_) {}
     await _hideTray();
+    await EmbyClient.flushReports(timeout: const Duration(seconds: 3));
     await windowManager.setPreventClose(false);
     await windowManager.destroy();
   }

@@ -135,7 +135,30 @@ class SourcesSectionState extends State<SourcesSection> {
       if (widget.loading) {
         return Column(
           crossAxisAlignment: CrossAxisAlignment.start,
-          children: [header, _status('正在获取资源'), const SourceSkeletonRow()],
+          // 和资源出来后同一布局（清晰度标签行、版本卡片行、媒体信息按钮行），资源到了页面不跳
+          children: [
+            header,
+            Padding(
+              padding: const EdgeInsets.only(left: VSpace.safeH),
+              child: FocusButtonRow(
+                rowIndex: widget.firstRow,
+                scrollable: true,
+                children: [(node) => SelectChip(node: node, label: '正在获取资源', selected: false, onTap: () {})],
+              ),
+            ),
+            const SizedBox(height: 8),
+            const SourceSkeletonRow(),
+            const Padding(
+              padding: EdgeInsets.symmetric(horizontal: VSpace.safeH),
+              child: IgnorePointer(
+                child: Opacity(
+                  opacity: .35,
+                  child: PillButton(icon: Icons.expand_more_rounded, label: '展开媒体信息'),
+                ),
+              ),
+            ),
+            const SizedBox(height: 24),
+          ],
         );
       }
       if (widget.emptyText == null) return const SizedBox.shrink();
@@ -420,10 +443,23 @@ class SourceSkeletonRow extends StatelessWidget {
         ],
       ),
     );
-    return SingleChildScrollView(
-      scrollDirection: Axis.horizontal,
-      padding: const EdgeInsets.fromLTRB(VSpace.safeH, 0, 0, 24),
-      child: Row(children: [card, const SizedBox(width: 32), card, const SizedBox(width: 32), card]),
+    // 位置、间距同 [FocusRow]（版本卡片行）
+    return SizedBox(
+      height: SourceCard.height + FocusRow.focusBleed * 2,
+      child: SingleChildScrollView(
+        scrollDirection: Axis.horizontal,
+        physics: const NeverScrollableScrollPhysics(),
+        padding: const EdgeInsets.fromLTRB(VSpace.safeH, FocusRow.focusBleed, VSpace.safeH, FocusRow.focusBleed),
+        child: Row(
+          children: [
+            card,
+            const SizedBox(width: VSpace.rowGap),
+            card,
+            const SizedBox(width: VSpace.rowGap),
+            card,
+          ],
+        ),
+      ),
     );
   }
 }

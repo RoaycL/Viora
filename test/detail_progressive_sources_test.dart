@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:viora/data/aggregate/sources.dart';
+import 'package:viora/data/aggregate/tmdb_link.dart';
 import 'package:viora/data/config/app_config.dart';
 import 'package:viora/data/config/config_store.dart';
 import 'package:viora/data/emby/emby_client.dart';
@@ -22,14 +23,8 @@ ServerConfig _server(String id) => ServerConfig(
   lines: [ServerLine(id: 'l', name: 'main', url: 'https://$id.example')],
 );
 
-MediaItem _movie(String serverId, String id) => MediaItem(
-  serverId: serverId,
-  id: id,
-  kind: MediaKind.movie,
-  name: '历史那些事',
-  year: 2018,
-  tmdbId: '42',
-);
+MediaItem _movie(String serverId, String id) =>
+    MediaItem(serverId: serverId, id: id, kind: MediaKind.movie, name: '历史那些事', year: 2018, tmdbId: '42');
 
 /// 假服务器：详情、搜索、播放信息都可以单独控制
 class _Client extends EmbyClient {
@@ -37,7 +32,9 @@ class _Client extends EmbyClient {
 
   Future<MediaItem> Function(String id) onItem = (_) => throw const MediaServerException('HTTP 502', statusCode: 502);
   List<MediaItem> found = const [];
-  Future<PlaybackInfoResult> Function(String id) onInfo = (_) async => (sources: const <MediaSourceInfo>[], playSessionId: null);
+  List<MediaItem> eps = const [];
+  Future<PlaybackInfoResult> Function(String id) onInfo = (_) async =>
+      (sources: const <MediaSourceInfo>[], playSessionId: null);
 
   @override
   Future<MediaItem> item(String id) => onItem(id);
@@ -56,6 +53,9 @@ class _Client extends EmbyClient {
     String? fields,
     bool userData = true,
   }) async => PagedItems(found, found.length);
+
+  @override
+  Future<List<MediaItem>> episodes(String seriesId, {String? seasonId}) async => eps;
 
   @override
   Future<PlaybackInfoResult> playbackInfo(String itemId, {bool isPlayback = false}) => onInfo(itemId);
@@ -152,5 +152,79 @@ void main() {
     expect(ItemSeeds.of('a', '1')?.name, 'new');
     ItemSeeds.clear();
     expect(ItemSeeds.of('a', '1'), isNull);
+  });
+
+  test('剧集：当前服务器的这一集先查，不等当前服务器的剧集详情，也不等其他服务器搜完', () async {
+    final a = _server('a'), b = _server('b');
+    final config = AppConfig(servers: [a, b]);
+    MediaItem ep(String serverId) => MediaItem(
+      serverId: serverId,
+      id: 'e-$serverId',
+      kind: MediaKind.episode,
+      name: '第1集',
+      seasonNumber: 1,
+      episodeNumber: 1,
+    );
+    // 当前服务器取剧集详情一直不返回（反代卡住）
+    final home = _Client(a, config)
+      ..onItem = ((_) => Completer<MediaItem>().future)
+      ..eps = [ep('a')]
+      ..onInfo = (id) async => _sources('a', id);
+    final other = _Client(b, config)
+      ..eps = [ep('b')]
+      ..onInfo = (id) async => _sources('b', id);
+    final searched = Completer<List<MediaItem>>();
+    final container = ProviderContainer(
+      overrides: [
+        serverClientProvider.overrideWith((ref, id) => id == 'a' ? home : other),
+        mediaIndexProvider.overrideWith((ref) async => null),
+        tmdbLibrarySearchProvider.overrideWith((ref, key) => searched.future),
+      ],
+    );
+    addTearDown(container.dispose);
+    await container.read(configProvider.notifier).update((_) => config);
+
+    const title = (isTv: true, id: 42, title: '历史那些事', originalTitle: null, year: 2018);
+    const key = (series: (home: (serverId: 'a', itemId: 's-a'), title: title), season: 1, episode: 1);
+    final partial = container.listen(partialSourcesProvider(libraryEpisodeSourcesKey(key)), (_, _) {});
+    final sub = container.listen(libraryEpisodeSourcesProvider(key), (_, _) {});
+    for (var i = 0; i < 200 && partial.read() == null; i++) {
+      await Future<void>.delayed(const Duration(milliseconds: 5));
+    }
+    expect(partial.read()?.map((o) => o.serverId), ['a']);
+    expect(sub.read().isLoading, isTrue);
+
+    searched.complete([MediaItem(serverId: 'b', id: 's-b', kind: MediaKind.series, name: '历史那些事', tmdbId: '42')]);
+    final all = await container.read(libraryEpisodeSourcesProvider(key).future);
+    expect(all.map((o) => o.serverId).toSet(), {'a', 'b'});
+  });
+
+  test('接着看：进度在另一台服务器上时从那台的进度开始，不被这台的 0 覆盖', () {
+    SourceOption option(String serverId, {Duration position = Duration.zero, DateTime? at}) => SourceOption(
+      item: MediaItem(
+        serverId: serverId,
+        id: 'e-$serverId',
+        kind: MediaKind.episode,
+        name: '第1集',
+        position: position,
+        lastPlayed: at,
+      ),
+      source: _sources(serverId, 'e-$serverId').sources.single,
+      serverName: serverId,
+      latencyMs: null,
+      account: 'acc',
+      view: 'view',
+    );
+    final best = option('a');
+    final watched = option('b', position: const Duration(minutes: 20), at: DateTime(2026, 11, 19, 10));
+    final older = option('c', position: const Duration(minutes: 5), at: DateTime(2026, 11, 18));
+    final all = [best, watched, older];
+    expect(latestProgress(all)?.serverId, 'b');
+    expect(playRouteFor(best, all), contains('pos=1200000'));
+    expect(playRouteFor(best, all), contains('&at=${DateTime(2026, 11, 19, 10).millisecondsSinceEpoch}'));
+    // 就是这个版本自己的进度：让播放页再向服务器确认最新进度
+    expect(playRouteFor(watched, all), contains('resume=1'));
+    expect(playRouteFor(best, all, fromStart: true), contains('pos=0'));
+    expect(latestProgress([best]), isNull);
   });
 }

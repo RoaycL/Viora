@@ -20,6 +20,7 @@ import '../../ui/rows/cards.dart';
 import '../../ui/rows/focus_row.dart';
 import '../../ui/widgets/buttons.dart';
 import '../../ui/widgets/server_image.dart';
+import '../../ui/widgets/tmdb_image.dart';
 import '../../ui/widgets/toast.dart';
 import '../browse/media_cards.dart';
 import '../metadata/external_ratings.dart';
@@ -80,6 +81,31 @@ class _ItemDetailPageState extends ConsumerState<ItemDetailPage> {
   bool? _favorite;
   bool? _played;
   int _accountGeneration = 0;
+
+  /// 打开页面的淡入动画还在播：这时只用卡片信息显示轻量的加载页，动画结束再搭完整页面（否则首页点进来会卡一下）
+  Animation<double>? _routeAnimation;
+  bool _entered = false;
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final animation = ModalRoute.of(context)?.animation;
+    if (animation == _routeAnimation) return;
+    _routeAnimation?.removeStatusListener(_onRouteStatus);
+    _routeAnimation = animation;
+    _entered = animation == null || animation.isCompleted;
+    animation?.addStatusListener(_onRouteStatus);
+  }
+
+  void _onRouteStatus(AnimationStatus status) {
+    if (status.isCompleted && !_entered && mounted) setState(() => _entered = true);
+  }
+
+  @override
+  void dispose() {
+    _routeAnimation?.removeStatusListener(_onRouteStatus);
+    super.dispose();
+  }
 
   @override
   void initState() {
@@ -155,8 +181,8 @@ class _ItemDetailPageState extends ConsumerState<ItemDetailPage> {
       color: VColors.background,
       child: switch ((async, async.value ?? seed)) {
         (AsyncData(value: final item), _) => _content(item),
-        (_, final MediaItem item) => _content(item),
-        (AsyncError(:final error), _) => Center(
+        (_, final MediaItem item) when _entered => _content(item, serverDown: async.hasError),
+        (AsyncError(:final error), _) when seed == null || _entered => Center(
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
@@ -183,7 +209,7 @@ class _ItemDetailPageState extends ConsumerState<ItemDetailPage> {
     );
   }
 
-  Widget _content(MediaItem item) {
+  Widget _content(MediaItem item, {bool serverDown = false}) {
     final isSeries = item.kind == MediaKind.series;
     final seasons = isSeries ? ref.watch(_seasonsProvider(_key)).value ?? const <MediaItem>[] : const <MediaItem>[];
     final seasonId =
@@ -289,7 +315,8 @@ class _ItemDetailPageState extends ConsumerState<ItemDetailPage> {
     );
     final selected = options.where((o) => sourceKeyOf(o) == _sourceKey).firstOrNull ?? options.firstOrNull;
     final playTarget = useCatalog ? selected?.item : serverTarget;
-    final resumeAt = playTarget?.position ?? Duration.zero;
+    // 各服务器的进度不相通：用最近在哪台看过的进度（默认选中的版本可能在另一台服务器上）
+    final resumeAt = latestProgress(options)?.position ?? playTarget?.position ?? Duration.zero;
     if (selected != null) _warmDefault(selected);
     void play(SourceOption? o, {bool fromStart = false}) {
       final target = playTarget;
@@ -299,7 +326,7 @@ class _ItemDetailPageState extends ConsumerState<ItemDetailPage> {
         return;
       }
       rememberSource(item, o.serverId);
-      context.push(o.playRoute(position: fromStart ? Duration.zero : o.item.position, resume: !fromStart));
+      context.push(playRouteFor(o, options, fromStart: fromStart));
     }
 
     final playLabel = switch (playTarget) {
@@ -324,16 +351,30 @@ class _ItemDetailPageState extends ConsumerState<ItemDetailPage> {
       ?item.officialRating,
     ].join('  •  ');
 
+    final tmdbBackdrop = tmdb?.backdropPath == null
+        ? null
+        : TmdbImage(
+            path: tmdb!.backdropPath,
+            kind: TmdbImageKind.backdrop,
+            width: 1920,
+            fallbackSeed: item.id,
+            alignment: Alignment.topRight,
+            transparentFallback: true,
+          );
     return DetailLayout(
       seed: item.id,
-      backdrop: ServerImage(
-        serverId: widget.serverId,
-        image: item.backdrop ?? item.primary,
-        width: 1920,
-        fallbackSeed: item.id,
-        alignment: Alignment.topRight,
-        transparentFallback: true,
-      ),
+      // 这台服务器异常（取不到详情 / 图片加载失败）时改用 TMDB 的背景图
+      backdrop: serverDown && tmdbBackdrop != null
+          ? tmdbBackdrop
+          : ServerImage(
+              serverId: widget.serverId,
+              image: item.backdrop ?? item.primary,
+              width: 1920,
+              fallbackSeed: item.id,
+              alignment: Alignment.topRight,
+              transparentFallback: true,
+              errorFallback: tmdbBackdrop,
+            ),
       info: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
