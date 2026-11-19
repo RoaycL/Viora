@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:math' as math;
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
@@ -189,18 +190,19 @@ class MpvEngine extends PlayerEngine {
   @override
   Future<void> setSubtitleDelay(Duration delay) => _prop('sub-delay', (delay.inMilliseconds / 1000).toStringAsFixed(3));
 
+  // media_kit 默认不让 mpv 自己画字幕（sub-visibility=no），字幕文字由 Flutter 画在画面上，
+  // 所以 mpv 的 sub-scale / sub-pos 不起作用；大小和位置在这里自己处理（内封和外挂字幕都一样）
+  final _subScale = ValueNotifier(1.0);
+  final _subPos = ValueNotifier(100);
+
   @override
-  Future<void> setSubtitleScale(double scale) async {
-    // ASS / SSA 字幕默认不理会 sub-scale（内封中文字幕大多是 ASS），要 sub-ass-override=scale 才会跟着缩放
-    await _prop('sub-ass-override', 'scale');
-    await _prop('sub-scale', scale.toStringAsFixed(2));
-  }
+  Future<void> setSubtitleScale(double scale) async => _subScale.value = scale;
 
   @override
   bool get supportsSubtitlePosition => true;
 
   @override
-  Future<void> setSubtitlePosition(int position) => _prop('sub-pos', '$position');
+  Future<void> setSubtitlePosition(int position) async => _subPos.value = position;
 
   final _fit = ValueNotifier(VideoFit.contain);
 
@@ -228,18 +230,25 @@ class MpvEngine extends PlayerEngine {
       _player.setSubtitleTrack(SubtitleTrack.uri(url.toString(), title: title, language: language));
 
   @override
-  Widget buildView() => ValueListenableBuilder<VideoFit>(
-    valueListenable: _fit,
-    builder: (context, fit, _) => Video(
-      controller: _video,
-      controls: NoVideoControls,
-      fill: Colors.black,
-      fit: switch (fit) {
-        VideoFit.contain => BoxFit.contain,
-        VideoFit.cover => BoxFit.cover,
-        VideoFit.fill => BoxFit.fill,
-      },
-    ),
+  Widget buildView() => Stack(
+    fit: StackFit.expand,
+    children: [
+      ValueListenableBuilder<VideoFit>(
+        valueListenable: _fit,
+        builder: (context, fit, _) => Video(
+          controller: _video,
+          controls: NoVideoControls,
+          subtitleViewConfiguration: const SubtitleViewConfiguration(visible: false),
+          fill: Colors.black,
+          fit: switch (fit) {
+            VideoFit.contain => BoxFit.contain,
+            VideoFit.cover => BoxFit.cover,
+            VideoFit.fill => BoxFit.fill,
+          },
+        ),
+      ),
+      MpvSubtitleView(player: _player, scale: _subScale, position: _subPos),
+    ],
   );
 
   @override
@@ -254,5 +263,87 @@ class MpvEngine extends PlayerEngine {
     await _player.dispose();
     _state.dispose();
     _fit.dispose();
+    _subScale.dispose();
+    _subPos.dispose();
+  }
+}
+
+/// mpv 内核的字幕：文字来自 mpv（sub-text，已按字幕延迟对齐），大小和上下位置跟随播放设置
+class MpvSubtitleView extends StatefulWidget {
+  const MpvSubtitleView({super.key, required this.player, required this.scale, required this.position});
+
+  final Player player;
+
+  /// 字幕大小倍数（1 = 标准）
+  final ValueListenable<double> scale;
+
+  /// 和 mpv 的 sub-pos 同义：100 = 默认的底部，数值越小越靠上（每 1 = 画面高度的 1%），最大 150
+  final ValueListenable<int> position;
+
+  /// 1080p 画面上标准大小的字号
+  static const baseFontSize = 32.0;
+
+  /// 默认位置离画面底部的距离（1080p）
+  static const baseBottom = 24.0;
+
+  @override
+  State<MpvSubtitleView> createState() => _MpvSubtitleViewState();
+}
+
+class _MpvSubtitleViewState extends State<MpvSubtitleView> {
+  late List<String> _lines = widget.player.state.subtitle;
+  StreamSubscription<List<String>>? _sub;
+
+  @override
+  void initState() {
+    super.initState();
+    _sub = widget.player.stream.subtitle.listen((v) {
+      if (mounted) setState(() => _lines = v);
+    });
+  }
+
+  @override
+  void dispose() {
+    _sub?.cancel();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final text = [
+      for (final l in _lines)
+        if (l.trim().isNotEmpty) l.trim(),
+    ].join('\n');
+    if (text.isEmpty) return const SizedBox.shrink();
+    return IgnorePointer(
+      child: LayoutBuilder(
+        builder: (context, c) => ListenableBuilder(
+          listenable: Listenable.merge([widget.scale, widget.position]),
+          builder: (context, _) {
+            // 跟 media_kit 原来的字幕一样按画面面积缩放（以 1080p 为准），再乘上字幕大小设置
+            final k = math.sqrt((c.maxWidth * c.maxHeight / (1920 * 1080)).clamp(0.0, 1.0));
+            final bottom = (MpvSubtitleView.baseBottom * k + (100 - widget.position.value) / 100 * c.maxHeight)
+                .clamp(0.0, c.maxHeight * 0.9);
+            return Padding(
+              padding: EdgeInsets.fromLTRB(16, 0, 16, bottom),
+              child: Align(
+                alignment: Alignment.bottomCenter,
+                child: Text(
+                  text,
+                  textAlign: TextAlign.center,
+                  textScaler: TextScaler.noScaling,
+                  style: TextStyle(
+                    height: 1.4,
+                    fontSize: MpvSubtitleView.baseFontSize * k * widget.scale.value,
+                    color: Colors.white,
+                    backgroundColor: const Color(0xaa000000),
+                  ),
+                ),
+              ),
+            );
+          },
+        ),
+      ),
+    );
   }
 }

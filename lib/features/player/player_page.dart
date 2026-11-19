@@ -282,6 +282,9 @@ class _PlayerPageState extends ConsumerState<PlayerPage> with WidgetsBindingObse
     // 连播下一集、换服务器时由上一个播放页交接过来
     _entryFullScreen = _carriedEntryFullScreen ?? windowFullScreen.value;
     _carriedEntryFullScreen = null;
+    // 最大化也一样：播放页里点最大化 / 还原，回到首页时恢复成进来前的样子
+    _entryMaximized = _carriedEntryMaximized ?? windowMaximized.value;
+    _carriedEntryMaximized = null;
     // 「开始播放时全屏」
     if (isDesktopWindow && DesktopPrefs.instance.fullScreenOnPlay.value && !MiniPlayerWindow.active.value) {
       if (!windowFullScreen.value) unawaited(setWindowFullScreen(true));
@@ -297,6 +300,10 @@ class _PlayerPageState extends ConsumerState<PlayerPage> with WidgetsBindingObse
 
   /// 连播 / 换服务器到下一个播放页：交接 [_entryFullScreen]
   static bool? _carriedEntryFullScreen;
+
+  /// 进播放页前窗口是不是最大化（退出播放时恢复）
+  bool _entryMaximized = false;
+  static bool? _carriedEntryMaximized;
 
   /// 这一集是自动连播过来的
   late final bool _autoArrived = () {
@@ -1145,6 +1152,7 @@ class _PlayerPageState extends ConsumerState<PlayerPage> with WidgetsBindingObse
     _handoff = true;
     // 进播放页前的窗口状态交给下一个播放页（新页面先建好、这一页后销毁，所以在这里交接）
     _carriedEntryFullScreen = _entryFullScreen;
+    _carriedEntryMaximized = _entryMaximized;
     context.pushReplacement(route);
   }
 
@@ -1221,9 +1229,17 @@ class _PlayerPageState extends ConsumerState<PlayerPage> with WidgetsBindingObse
     _topNode.dispose();
     _skipFadeTimer?.cancel();
     // 退出播放时恢复窗口；连播下一集 / 换服务器时保持小窗
-    if (!handoff) MiniPlayerWindow.exit();
-    // 退出播放时窗口恢复成进来前的样子（连播 / 换服务器时已在 _handoffTo 交给下一个播放页）
-    if (!handoff && isDesktopWindow) unawaited(setWindowFullScreen(_entryFullScreen));
+    // 退出播放时窗口恢复成进来前的样子：先退小窗，再恢复全屏和最大化
+    // （连播 / 换服务器时已在 _handoffTo 交给下一个播放页）
+    if (!handoff) {
+      final full = _entryFullScreen, max = _entryMaximized;
+      unawaited(() async {
+        await MiniPlayerWindow.exit();
+        if (!isDesktopWindow) return;
+        await setWindowFullScreen(full);
+        if (!full) await setWindowMaximized(max);
+      }());
+    }
     // 销毁过程中不能让别的组件重建：这一帧结束后再恢复标题栏
     scheduleMicrotask(() => windowImmersive.value = false);
     super.dispose();
