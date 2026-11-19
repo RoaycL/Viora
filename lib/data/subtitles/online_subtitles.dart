@@ -317,26 +317,43 @@ class AssrtClient implements OnlineSubtitleProvider {
   String get name => providerName;
 
   Future<Map<String, dynamic>> _get(String path, Map<String, String> query) async {
+    Object? body;
     try {
       final r = await _dio.get<Object>(
         '$_baseUrl$path',
         queryParameters: {'token': token, ...query},
         options: Options(responseType: ResponseType.plain, headers: {'User-Agent': 'Viora v$subtitleClientVersion'}),
       );
-      final j = jsonDecode(r.data?.toString() ?? '{}');
-      if (j is! Map<String, dynamic>) throw const OnlineSubtitleException('射手网（伪）返回格式不对');
-      final status = (j['status'] as num?)?.toInt() ?? 0;
-      if (status != 0) {
-        throw OnlineSubtitleException(switch (status) {
-          101 => '射手网（伪）的 token 不对（设置 → 接口与网络 → 在线字幕）',
-          30900 => '射手网（伪）请求太频繁，请稍后再试',
-          _ => '射手网（伪）：${j['errmsg'] ?? '错误 $status'}',
-        });
-      }
-      return j;
+      body = r.data;
     } on DioException catch (e) {
-      throw OnlineSubtitleException('射手网（伪）请求失败：${_dioMessage(e)}');
+      // 出错时（4xx / 5xx）响应里同样带 status，按它说明原因
+      body = e.response?.data;
+      if (body == null) throw OnlineSubtitleException('射手网（伪）请求失败：${_dioMessage(e)}');
     }
+    Object? j;
+    try {
+      j = jsonDecode(body?.toString() ?? '{}');
+    } on FormatException {
+      j = null;
+    }
+    if (j is! Map<String, dynamic>) throw const OnlineSubtitleException('射手网（伪）返回格式不对');
+    final status = (j['status'] as num?)?.toInt() ?? 0;
+    if (status != 0) {
+      throw OnlineSubtitleException(switch (status) {
+        1 || 20001 => '射手网（伪）的 token 不对（设置 → 接口与网络 → 在线字幕）',
+        101 => '射手网（伪）：搜索关键词太短',
+        20900 => '射手网（伪）：这条字幕已经不存在',
+        30900 => '射手网（伪）请求太频繁（每分钟 20 次），请稍后再试',
+        _ => '射手网（伪）：${j['errmsg'] ?? '错误 $status'}',
+      });
+    }
+    return j;
+  }
+
+  /// 测试 token（设置页「保存并测试」）：返回每分钟的请求额度
+  Future<int?> quota() async {
+    final j = await _get('/user/quota', const {});
+    return ((j['user'] as Map?)?['quota'] as num?)?.toInt();
   }
 
   static bool _matches(Map<String, dynamic> lang, SubtitleLanguage l) {
@@ -358,7 +375,10 @@ class AssrtClient implements OnlineSubtitleProvider {
       query.title.trim(),
     };
     for (final name in names) {
-      final j = await _get('/sub/search', {'q': query.keyword(name), 'cnt': '30', 'pos': '0'});
+      final keyword = query.keyword(name);
+      // 关键词至少要比 3 个字长（如电影《Up》），太短的跳过，改用下一个名字
+      if (keyword.runes.length <= 3) continue;
+      final j = await _get('/sub/search', {'q': keyword, 'cnt': '30', 'pos': '0'});
       final subs = ((j['sub'] as Map?)?['subs'] as List? ?? const []).whereType<Map<String, dynamic>>();
       final list = [
         for (final s in subs)

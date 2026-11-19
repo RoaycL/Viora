@@ -199,7 +199,10 @@ void main() {
     final s = _FakeServer();
     await s.start();
     addTearDown(() => s.server.close(force: true));
-    s.routes['/v1/sub/search'] = (_) => {'status': 101, 'errmsg': 'invalid token'};
+    s.routes['/v1/sub/search'] = (req) {
+      req.response.statusCode = 401;
+      return {'status': 20001, 'errmsg': 'invalid token'};
+    };
     s.routes['/v1/sub/detail'] = (_) => {
       'status': 0,
       'sub': {
@@ -209,6 +212,9 @@ void main() {
       },
     };
     final client = AssrtClient('bad', baseUrl: '${s.base}/v1');
+    // 太短的名字（《Up》）不发请求：直接换下一个名字
+    expect(await client.search(const SubtitleQuery(title: 'Up'), SubtitleLanguage.english), isEmpty);
+    expect(s.requests, isEmpty);
     await expectLater(
       client.search(const SubtitleQuery(title: 'Friends'), SubtitleLanguage.chinese),
       throwsA(isA<OnlineSubtitleException>().having((e) => e.message, 'message', contains('token'))),

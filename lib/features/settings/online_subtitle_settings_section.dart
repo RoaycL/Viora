@@ -63,8 +63,8 @@ class OnlineSubtitleSettingsSection extends ConsumerWidget {
           return true;
         }
         try {
-          await AssrtClient(value).search(const SubtitleQuery(title: 'Friends'), SubtitleLanguage.chinese);
-          showToast('射手网（伪）连接成功');
+          final quota = await AssrtClient(value).quota();
+          showToast(quota == null ? '射手网（伪）连接成功' : '射手网（伪）连接成功：每分钟可请求 $quota 次');
         } catch (e) {
           showToast('$e');
         }
