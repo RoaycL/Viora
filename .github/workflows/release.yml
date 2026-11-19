@@ -114,6 +114,19 @@ jobs:
           flutter-version: ${{ env.FLUTTER_VERSION }}
           channel: stable
           cache: true
+      # MiSans 只在 Windows 上做界面字体（约 22MB），安卓包里去掉：删掉 pubspec 里的字体声明和字体文件
+      - name: Drop Windows-only font
+        run: |
+          python3 - <<'PY'
+          import re
+          p = 'pubspec.yaml'
+          s = open(p, encoding='utf-8').read()
+          # 现在 fonts 下只有 MiSans：整段去掉（含注释和每个字重）
+          s, n = re.subn(r"\n  fonts:\n(?:(?:    |      |        |          ).*\n)+", "\n", s)
+          assert n == 1 and 'MiSans' not in s, 'unexpected fonts block'
+          open(p, 'w', encoding='utf-8').write(s)
+          PY
+          rm -f assets/fonts/MiSans-*.ttf
       - run: flutter pub get
       - run: flutter build apk --release --dart-define=VIORA_TMDB_TOKEN=${{ secrets.TMDB_TOKEN }} --dart-define=VIORA_OPENSUBTITLES_KEY=${{ secrets.OPENSUBTITLES_API_KEY }} --dart-define=VIORA_DANDANPLAY_APP_ID=${{ secrets.DANDANPLAY_APP_ID }} --dart-define=VIORA_DANDANPLAY_APP_SECRET=${{ secrets.DANDANPLAY_APP_SECRET }}
       - run: |

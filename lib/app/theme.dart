@@ -99,23 +99,18 @@ const _fontFallback = <String>[
   'sans-serif',
 ];
 
-/// Windows 的主字体用应用内置的小米 MiSans 子集 [uiFontFamily]，不依赖系统字体（官方允许免费商用、嵌入软件，需注明使用了 MiSans）。
+/// Windows 的主字体用应用内置的小米 MiSans（完整字符集） [uiFontFamily]，不依赖系统字体（官方允许免费商用、嵌入软件，需注明使用了 MiSans）。
 /// 之前用系统的微软雅黑（issue #56 第一次修复），在部分电脑上「倍速」两个字仍然一大一小、一高一低：
 /// 系统字体的查找、字重匹配和小字号的 hinting 因机器而异，同一个词里的字可能落到不同字体 / 不同字形上。
 /// 内置字体只有一套字形、去掉了 hinting，每台电脑画出来都一样；行高、基线和微软雅黑几乎相同，布局不变。
-/// 生僻字（子集外）才回退到微软雅黑。
+/// 扩展 A 以外的极生僻字才回退到微软雅黑。
 const uiFontFamily = 'MiSans';
 final String? _primaryFont = !kIsWeb && Platform.isWindows ? uiFontFamily : null;
 
-/// 数字字体（只在 Windows 上用）：内置的 Roboto 子集，只有数字和 `:.,/%+-`，数字等宽，时间跳动时不左右晃。
-/// 只用在显示数字的地方（播放时间、进度、时钟、评分、倒计时）：其他字符照常回退到界面主字体。
-/// 不做全局主字体：中文落到回退字体时可能出现同一个词里字大小、高低不一（issue #56）
-const digitsFontFamily = 'VioraDigits';
-
-/// 显示数字的文字样式：Windows 上数字用 [digitsFontFamily]，其他平台不变（安卓电视的系统字体 Roboto 本来就是等宽数字）
-TextStyle numericStyle(TextStyle style) => _primaryFont == null
-    ? style
-    : style.copyWith(fontFamily: digitsFontFamily, fontFamilyFallback: const [uiFontFamily, ..._fontFallback]);
+/// 显示数字的文字样式（播放时间、进度、时钟、评分、倒计时）：用等宽数字（tnum），时间跳动时不左右晃。
+/// Windows 上就是 MiSans 自带的等宽数字；安卓电视的系统字体 Roboto 也支持
+TextStyle numericStyle(TextStyle style) =>
+    style.copyWith(fontFeatures: [...?style.fontFeatures, const FontFeature.tabularFigures()]);
 
 abstract final class VText {
   static const display = TextStyle(fontSize: 112, fontWeight: FontWeight.w900, height: 1, letterSpacing: 6);

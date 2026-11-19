@@ -13,6 +13,7 @@ class PageBackdrop extends StatelessWidget {
     required this.art,
     this.image,
     this.imageKey,
+    this.imageDecoded = false,
     this.dimLeft = true,
     this.fadeBottomFrom = 0.4,
   });
@@ -22,6 +23,9 @@ class PageBackdrop extends StatelessWidget {
   /// 真实背景图（盖在 [art] 上，加载完成前显示 [art]）；[imageKey] 变化时交叉淡入
   final Widget? image;
   final Object? imageKey;
+
+  /// [image] 已解码、会整张不透明地直接显示：不在它下面再画占位渐变（三层全屏渐变，切换淡入时每帧都要混合，屏幕越大越费）
+  final bool imageDecoded;
   final bool dimLeft;
 
   /// 从屏幕高度的哪个比例开始向底部渐隐到背景色
@@ -45,7 +49,7 @@ class PageBackdrop extends StatelessWidget {
                     key: ValueKey(imageKey ?? art),
                     fit: StackFit.expand,
                     children: [
-                      ArtView(art, lightCenter: const Alignment(0.5, -0.4)),
+                      if (!imageDecoded) ArtView(art, lightCenter: const Alignment(0.5, -0.4)),
                       image!,
                     ],
                   ),

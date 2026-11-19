@@ -49,13 +49,17 @@ class HomePage extends StatelessWidget {
 /// 背景：占位渐变 + 真实图片；[hero] 为焦点在推荐行上时 Hero 区显示的预览信息
 @immutable
 class _Backdrop {
-  const _Backdrop(this.key, this.art, [this.image, this.hero, this.provider]);
+  const _Backdrop(this.key, this.art, [this.image, this.hero, this.provider, this.decoded = false]);
 
   final Object key;
+
   final ArtSpec art;
   final Widget? image;
   final HeroEntry? hero;
   final ImageProvider? provider;
+
+  /// 背景图已下载解码好（换上时直接整张显示）：背景层不用再在图下面画占位渐变
+  final bool decoded;
 }
 
 class _HomeBody extends ConsumerStatefulWidget {
@@ -392,7 +396,11 @@ class _HomeBodyState extends ConsumerState<_HomeBody> {
       setState(() {
         // 新图就绪前保留旧图与旧信息；失败时显示新作品占位，不能把旧图配给新标题。
         // 超时（null）仍保留图片：下载完成后自动淡入，否则这部作品会一直停在占位上
-        _backdrop = imageReady != false ? b : _Backdrop(b.key, b.art, null, b.hero);
+        _backdrop = imageReady == true
+            ? _Backdrop(b.key, b.art, b.image, b.hero, b.provider, b.image != null)
+            : imageReady == null
+            ? b
+            : _Backdrop(b.key, b.art, null, b.hero);
         _preview = b.hero;
         onCommit?.call();
       });
@@ -891,15 +899,19 @@ class _HomeBodyState extends ConsumerState<_HomeBody> {
                     art: backdrop?.art ?? const ArtSpec(Color(0xFF1A2233), Color(0xFF07080B), Color(0xFF3A4766)),
                     image: backdrop?.image,
                     imageKey: backdrop?.key,
+                    imageDecoded: backdrop?.decoded ?? false,
                   ),
                 ),
                 Positioned.fill(
-                  child: IgnorePointer(
-                    child: ListenableBuilder(
-                      listenable: _scroll,
-                      builder: (context, _) => ColoredBox(
-                        color: VColors.background.withValues(
-                          alpha: ((_scroll.hasClients ? _scroll.offset : 0.0) / 500).clamp(0.0, 1.0) * 0.45,
+                  // 单独一层：滚动时只有这层随滚动位置变暗，不连带重画同一层里的其他内容
+                  child: RepaintBoundary(
+                    child: IgnorePointer(
+                      child: ListenableBuilder(
+                        listenable: _scroll,
+                        builder: (context, _) => ColoredBox(
+                          color: VColors.background.withValues(
+                            alpha: ((_scroll.hasClients ? _scroll.offset : 0.0) / 500).clamp(0.0, 1.0) * 0.45,
+                          ),
                         ),
                       ),
                     ),

@@ -62,7 +62,7 @@ class CachedNetImage extends ImageProvider<CachedNetImage> {
     if (kIsWeb) return null;
     try {
       final d = Directory('${(await getApplicationCacheDirectory()).path}${Platform.pathSeparator}viora_images');
-      if (!d.existsSync()) d.createSync(recursive: true);
+      await d.create(recursive: true);
       return d;
     } catch (_) {
       return null;
@@ -89,7 +89,8 @@ class CachedNetImage extends ImageProvider<CachedNetImage> {
   Future<Uint8List> _bytes() async {
     final dir = await _cacheDir();
     final file = dir == null ? null : File('${dir.path}${Platform.pathSeparator}${_name(url)}');
-    if (file != null && file.existsSync()) {
+    // 不用 existsSync：同步读磁盘会卡住界面线程，首页一屏几十张图同时加载时尤其明显
+    if (file != null) {
       try {
         final data = await file.readAsBytes();
         if (data.isNotEmpty) {

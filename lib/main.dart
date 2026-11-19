@@ -42,6 +42,12 @@ Future<void> main() async {
       ..maximumSizeBytes = 80 << 20;
     CachedNetImage.maxDownloads = 4;
     TmdbClient.maxRequests = 4;
+  } else if (PlatformProfile.isDesktop) {
+    // 电脑内存充足：已解码图片缓存加大到 320MB / 2000 张（默认 100MB）。背景图解码到 1920 宽每张约 8MB，
+    // 默认缓存只够十来张，鼠标在卡片间来回移动时背景图被挤出缓存、要重新解码，切换时会顿一下
+    PaintingBinding.instance.imageCache
+      ..maximumSize = 2000
+      ..maximumSizeBytes = 320 << 20;
   }
   MediaKit.ensureInitialized();
   await initDesktopWindow();
