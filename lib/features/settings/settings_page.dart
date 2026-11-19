@@ -949,9 +949,14 @@ const _settingIndex = <_SettingIndexEntry>[
   _SettingIndexEntry('导出日志', _Category.about, '日志 log 反馈 问题'),
 ];
 
-/// 按名字、分类名和别名搜索设置项（不分大小写，空格分开的多个词都要匹配）
+/// 搜索结果的「设置名 · 分类」（测试用）
 @visibleForTesting
-List<_SettingIndexEntry> searchSettings(String query) {
+List<String> settingSearchLabels(String query) => [
+  for (final e in _searchSettings(query)) '${e.title} · ${e.category.label}',
+];
+
+/// 按名字、分类名和别名搜索设置项（不分大小写，空格分开的多个词都要匹配）
+List<_SettingIndexEntry> _searchSettings(String query) {
   final words = query.toLowerCase().split(RegExp(r'\s+')).where((w) => w.isNotEmpty).toList();
   if (words.isEmpty) return const [];
   final tv = PlatformProfile.isTv;
