@@ -268,16 +268,26 @@ Future<void> _openPopupMenu(
     barrierDismissible: true,
     barrierLabel: '关闭菜单',
     barrierColor: const Color(0x00000000),
-    transitionDuration: const Duration(milliseconds: 120),
-    pageBuilder: (context, _, _) => CustomSingleChildLayout(
+    transitionDuration: const Duration(milliseconds: 160),
+    pageBuilder: (context, animation, _) => CustomSingleChildLayout(
       delegate: _PopupLayout(
         anchor ?? Offset(overlay.size.width / 2, overlay.size.height / 3),
         altX: altX,
         target: target,
       ),
-      child: _PopupMenu(title: title, actions: actions, depth: depth),
+      // 打开时从按钮那边略微放大展开（92% → 100%）并淡入，关闭时反向；系统关闭了动画时直接出现
+      child: VMotion.reduced(context)
+          ? _PopupMenu(title: title, actions: actions, depth: depth)
+          : ScaleTransition(
+              scale: Tween(begin: 0.92, end: 1.0).animate(
+                CurvedAnimation(parent: animation, curve: Curves.easeOutCubic, reverseCurve: Curves.easeInCubic),
+              ),
+              alignment: Alignment.topCenter,
+              child: _PopupMenu(title: title, actions: actions, depth: depth),
+            ),
     ),
-    transitionBuilder: (context, animation, _, child) => FadeTransition(opacity: animation, child: child),
+    transitionBuilder: (context, animation, _, child) =>
+        FadeTransition(opacity: CurvedAnimation(parent: animation, curve: Curves.easeOut), child: child),
   );
 }
 
