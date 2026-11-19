@@ -16,7 +16,7 @@ publish_to: 'none' # Remove this line if you wish to publish to pub.dev
 # https://developer.apple.com/library/archive/documentation/General/Reference/InfoPlistKeyReference/Articles/CoreFoundationKeys.html
 # In Windows, build-name is used as the major, minor, and patch parts
 # of the product and file versions while build-number is used as the build suffix.
-version: 0.17.3+65
+version: 0.17.4+66
 
 environment:
   sdk: ^3.13.5
@@ -100,12 +100,14 @@ flutter:
           weight: 700
         - asset: assets/fonts/RobotoDigits-900.ttf
           weight: 900
-    # Windows 的界面主字体：思源黑体（Noto Sans SC）子集，GB2312 全部汉字 + 西文标点，生僻字回退到微软雅黑
-    - family: VioraSans
+    # Windows 的界面主字体：小米 MiSans 子集（GB2312 全部汉字 + 西文标点，字形未改），生僻字回退到微软雅黑
+    - family: MiSans
       fonts:
-        - asset: assets/fonts/NotoSansSC-Subset-400.otf
+        - asset: assets/fonts/MiSans-Subset-400.ttf
           weight: 400
-        - asset: assets/fonts/NotoSansSC-Subset-700.otf
+        - asset: assets/fonts/MiSans-Subset-600.ttf
+          weight: 600
+        - asset: assets/fonts/MiSans-Subset-700.ttf
           weight: 700
 
   # An image asset can refer to one or more resolution-specific "variants", see
