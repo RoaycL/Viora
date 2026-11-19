@@ -428,11 +428,13 @@ class _PlayerPageState extends ConsumerState<PlayerPage> with WidgetsBindingObse
 
   void _pickDefaultSubtitle(EngineState s) {
     if (_subtitlePicked) return;
-    // 轨道列表出来了，或者已经开始播放（没有字幕轨的片子）
-    if (s.subtitleTracks.isEmpty && !s.playing) return;
+    // 等字幕轨列表出来再挑：内核的播放状态和轨道列表是分开上报的，开始播放时列表可能还是空的。
+    // 没有字幕轨的片子不用挑，一直等着也没有影响
+    if (s.subtitleTracks.isEmpty) return;
     _subtitlePicked = true;
     final (change, track) = pickSubtitle(s.subtitleTracks, ref.read(configProvider).playback.subtitlePreference);
-    if (change && track != s.subtitle) unawaited(_engine?.selectSubtitle(track));
+    // 不和 s.subtitle 比较：当前选中的轨道也是单独上报的，可能还没到（「不显示」时必须真的发关闭命令）
+    if (change) unawaited(_engine?.selectSubtitle(track));
   }
 
   void _onEngineState() {
