@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
@@ -8,9 +9,20 @@ import 'package:viora/data/config/app_config.dart';
 import 'package:viora/data/config/config_store.dart';
 import 'package:viora/data/media/server_registry.dart';
 
+const _server = ServerConfig(
+  id: 's',
+  type: ServerType.emby,
+  name: '服务器',
+  username: 'me',
+  token: 'tok',
+  userId: 'uid',
+  lines: [ServerLine(id: 'l', name: '线路', url: 'http://server.example')],
+);
+
 void main() {
   test('启动测速：限制同时测速的台数，所有结果合并成一次配置更新', () async {
     SharedPreferences.setMockInitialValues({});
+    ConfigStore.vault = MemoryVault();
     var active = 0, peak = 0;
     final fake = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
     addTearDown(() => fake.close(force: true));
@@ -62,5 +74,43 @@ void main() {
       expect(s.lines.single.latencyMs, isNotNull, reason: s.id);
     }
     expect(servers.firstWhere((s) => s.id == 's9').lines.single.latencyMs, isNull);
+    expect(container.read(availableAggregateServerIdsProvider), {'s0', 's1', 's2', 's3', 's4'});
+  });
+
+  test('有一条线路响应，即使后续测速超时，服务器仍可参加聚合', () async {
+    SharedPreferences.setMockInitialValues({});
+    ConfigStore.vault = MemoryVault();
+    final fake = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+    addTearDown(() => fake.close(force: true));
+    final gate = Completer<void>();
+    addTearDown(() => gate.complete());
+    var healthyRequests = 0;
+    fake.listen((request) async {
+      if (request.uri.path.startsWith('/working') && ++healthyRequests == 1) {
+        request.response.headers.contentType = ContentType.json;
+        request.response.write('{}');
+        await request.response.close();
+      } else {
+        await gate.future;
+      }
+    });
+    final mixed = _server.copyWith(
+      lines: [
+        ServerLine(id: 'working', name: '部分响应', url: 'http://127.0.0.1:${fake.port}/working'),
+        ServerLine(id: 'slow', name: '无响应', url: 'http://127.0.0.1:${fake.port}/slow'),
+      ],
+    );
+    final offline = _server.copyWith(lines: [mixed.lines.last]);
+    final container = ProviderContainer();
+    addTearDown(container.dispose);
+    final store = container.read(configProvider.notifier);
+    await store.update((c) => c.copyWith(servers: [mixed]));
+    await probeAllServers(container, concurrency: 1, timeout: const Duration(milliseconds: 300));
+    expect(container.read(availableAggregateServerIdsProvider), {'s'});
+    expect(container.read(configProvider).server('s')!.lines.first.latencyMs, isNotNull);
+    expect(container.read(configProvider).server('s')!.lines.last.latencyMs, isNull);
+    await store.update((c) => c.copyWith(servers: [offline]));
+    await probeAllServers(container, concurrency: 1, timeout: const Duration(milliseconds: 150));
+    expect(container.read(availableAggregateServerIdsProvider), isEmpty);
   });
 }

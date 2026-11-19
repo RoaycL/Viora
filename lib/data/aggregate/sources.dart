@@ -231,14 +231,14 @@ Future<MediaItem> _itemOrSeed(EmbyClient client, String serverId, String itemId)
 final sourceOptionsProvider = FutureProvider.family<List<SourceOption>, SourcesKey>((ref, key) async {
   ref.watch(mediaFeedScopeProvider);
   ref.watch(indexRevisionProvider);
+  final others = {...watchAggregateServers(ref)}..remove(key.serverId);
   final home = ref.watch(serverClientProvider(key.serverId));
   if (home == null) return const [];
   final target = await _itemOrSeed(home, key.serverId, key.itemId);
+  if (!ref.mounted) return const [];
   final index = await ref.read(mediaIndexProvider.future);
 
   // 1. 找到每台服务器上对应的条目：本地索引 + 到参与聚合搜索的服务器上实时搜索（索引里没对上的也能找到）
-  watchAggregateServers(ref);
-  final others = ref.read(configProvider).aggregateServerIds..remove(target.serverId);
   Future<List<MediaItem>> copiesOf(MediaItem title) async {
     final probe = TitleProbe(
       kind: title.kind,
@@ -271,6 +271,7 @@ final sourceOptionsProvider = FutureProvider.family<List<SourceOption>, SourcesK
     );
   }
   final preferred = await PreferredServers.get(titleKeyOf(titleItem));
+  if (!ref.mounted) return const [];
   final collector = _Collector(ref, itemSourcesKey(key), (o) => _rank(ref, o, preferred, home: target.serverId));
 
   // 2. 当前服务器的版本先查（不等其他服务器搜索），各服务器的版本谁先返回先显示
@@ -278,6 +279,7 @@ final sourceOptionsProvider = FutureProvider.family<List<SourceOption>, SourcesK
   final copies = <MediaItem>[];
   if (target.kind == MediaKind.episode && target.seriesId != null) {
     final series = await copiesOf(titleItem);
+    if (!ref.mounted) return const [];
     final found = await Future.wait(
       series.map((c) async {
         final client = ref.read(serverClientProvider(c.serverId));
@@ -287,7 +289,8 @@ final sourceOptionsProvider = FutureProvider.family<List<SourceOption>, SourcesK
           return eps
               .where((e) => e.seasonNumber == target.seasonNumber && e.episodeNumber == target.episodeNumber)
               .firstOrNull;
-        } catch (_) {
+        } catch (e) {
+          if (ref.mounted) ref.read(serverReachabilityProvider.notifier).reportAggregateFailure(client, e);
           return null;
         }
       }),
@@ -298,13 +301,14 @@ final sourceOptionsProvider = FutureProvider.family<List<SourceOption>, SourcesK
   }
 
   // 每台服务器只取一个条目（同一台服务器上重复入库的也保留，作为不同版本）
+  if (!ref.mounted) return const [];
   final seen = <String>{'${target.serverId}/${target.id}'};
   final rest = copies.where((it) => seen.add('${it.serverId}/${it.id}')).toList();
 
   // 先把其他服务器的请求发出去再等：当前服务器慢时不拖住其他服务器
   final restOptions = _optionsOf(ref, rest, onEach: collector.add);
   final options = [...await own, ...await restOptions];
-  return _rank(ref, options, preferred, home: target.serverId);
+  return ref.mounted ? _rank(ref, options, preferred, home: target.serverId) : const [];
 });
 
 /// 并发获取每个条目的播放信息，展开成可播放版本；单台超时 / 失败不拖累整体
@@ -336,6 +340,7 @@ Future<List<SourceOption>> _optionsOf(
         onEach?.call(options);
         return options;
       } catch (e) {
+        if (ref.mounted) ref.read(serverReachabilityProvider.notifier).reportAggregateFailure(client, e);
         debugPrint('playbackInfo ${server.name} failed: $e');
         return const <SourceOption>[];
       }
@@ -351,22 +356,25 @@ final tmdbSourceOptionsProvider = FutureProvider.autoDispose.family<List<SourceO
 ) async {
   ref.watch(mediaFeedScopeProvider);
   if (key.isTv) return const [];
+  final servers = watchAggregateServers(ref);
   // 本地索引里已对上的副本先查版本（不等各服务器实时搜索），谁先返回先显示
   final indexed = ref
       .read(libraryCopiesProvider((isTv: key.isTv, id: key.id)))
-      .where((c) => ref.read(configProvider).aggregateServerIds.contains(c.serverId))
+      .where((c) => servers.contains(c.serverId))
       .toList();
   final preferred = indexed.isEmpty ? null : await PreferredServers.get(titleKeyOf(indexed.first));
+  if (!ref.mounted) return const [];
   final collector = _Collector(ref, tmdbSourcesKey(key), (o) => _rank(ref, o, preferred));
   final early = _optionsOf(ref, indexed, onEach: collector.add);
   final copies = await ref.watch(tmdbLibrarySearchProvider(key).future);
+  if (!ref.mounted) return const [];
   final seen = {for (final c in indexed) '${c.serverId}/${c.id}'};
   final rest = copies.where((c) => seen.add('${c.serverId}/${c.id}')).toList();
   final later = _optionsOf(ref, rest, onEach: collector.add);
   final options = [...await early, ...await later];
   if (options.isEmpty && copies.isEmpty) return const [];
   final remembered = preferred ?? (copies.isEmpty ? null : await PreferredServers.get(titleKeyOf(copies.first)));
-  return _rank(ref, options, remembered);
+  return ref.mounted ? _rank(ref, options, remembered) : const [];
 });
 
 /// 播放某个版本时记下偏好服务器
@@ -439,6 +447,7 @@ Future<List<SourceOption>> _episodeOptions(
     if (!seen.add('${copy.serverId}/${copy.itemId}')) return const [];
     try {
       final episodes = await ref.watch(seriesEpisodesProvider(copy).future);
+      if (!ref.mounted) return const [];
       final matches = episodes.where((e) => e.seasonNumber == season && e.episodeNumber == episode).toList();
       if (matches.isEmpty) return const [];
       return await _optionsOf(ref, matches, onEach: onEach);
@@ -450,6 +459,7 @@ Future<List<SourceOption>> _episodeOptions(
 
   final early = [for (final k in known) one(k)];
   final found = await copies.catchError((Object _) => const <MediaItem>[]);
+  if (!ref.mounted) return const [];
   final later = [for (final c in found) one((serverId: c.serverId, itemId: c.id))];
   return [
     for (final list in await Future.wait([...early, ...later])) ...list,
@@ -462,7 +472,12 @@ Future<List<SourceOption>> _episodeOptions(
 final seriesEpisodesProvider = FutureProvider.autoDispose.family<List<MediaItem>, SourcesKey>((ref, key) async {
   final client = ref.watch(serverClientProvider(key.serverId));
   if (client == null) return const [];
-  return client.episodes(key.itemId).timeout(const Duration(seconds: 10));
+  try {
+    return await client.episodes(key.itemId).timeout(const Duration(seconds: 10));
+  } catch (e) {
+    if (ref.mounted) ref.read(serverReachabilityProvider.notifier).reportAggregateFailure(client, e);
+    rethrow;
+  }
 }, retry: (_, _) => null);
 
 typedef LibrarySeriesKey = ({SourcesKey home, TmdbSearchKey title});

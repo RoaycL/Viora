@@ -109,6 +109,7 @@ Future<List<MediaItem>> searchServersFor(Ref ref, TitleProbe probe, Iterable<Str
           final client = ref.read(serverClientProvider(id));
           if (client == null) return;
           for (final term in probe.terms) {
+            if (!ref.mounted) return;
             try {
               final page = await client
                   .items(searchTerm: term, types: probe.kind == MediaKind.series ? 'Series' : 'Movie', limit: 20)
@@ -116,23 +117,28 @@ Future<List<MediaItem>> searchServersFor(Ref ref, TitleProbe probe, Iterable<Str
               for (final it in page.items) {
                 if (probe.matches(it) && itemVisible(config, it)) found['${it.serverId}/${it.id}'] = it;
               }
-            } catch (_) {}
+            } catch (e) {
+              if (!ref.mounted || ref.read(serverReachabilityProvider.notifier).reportAggregateFailure(client, e)) {
+                return;
+              }
+            }
           }
         }(),
   ]);
   return found.values.toList();
 }
 
-/// 参与聚合搜索的服务器变化时刷新依赖它的 provider
-String watchAggregateServers(Ref ref) =>
-    ref.watch(configProvider.select((c) => (c.aggregateServerIds.toList()..sort()).join(',')));
+/// 只在跨服候选台数或成员变化时刷新，延迟读数变化不会重新搜索。
+Set<String> watchAggregateServers(Ref ref) {
+  ref.watch(availableAggregateServerIdsProvider.select((ids) => (ids.toList()..sort()).join('\u0000')));
+  return ref.read(availableAggregateServerIdsProvider);
+}
 
 /// 进入 TMDB 详情页时才做的聚合搜索：本地索引 + 到每台参与聚合搜索的服务器按中文名 / 原名实时搜索，
 /// 按 TMDB ID 匹配（服务器条目没有 TMDB ID 时按标题 + 年份 ±1）。首页、推荐行不触发（docs/04-aggregation.md §7）。
 final tmdbLibrarySearchProvider = FutureProvider.autoDispose.family<List<MediaItem>, TmdbSearchKey>((ref, key) async {
   ref.watch(mediaFeedScopeProvider);
-  watchAggregateServers(ref);
-  final servers = ref.read(configProvider).aggregateServerIds;
+  final servers = watchAggregateServers(ref);
   final found = <String, MediaItem>{
     for (final c in ref.read(libraryCopiesProvider((isTv: key.isTv, id: key.id))))
       if (servers.contains(c.serverId)) '${c.serverId}/${c.id}': c,

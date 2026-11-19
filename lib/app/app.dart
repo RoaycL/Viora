@@ -59,6 +59,12 @@ class _VioraAppState extends ConsumerState<VioraApp> with WidgetsBindingObserver
   static bool _isBackKey(LogicalKeyboardKey k) =>
       k == LogicalKeyboardKey.goBack || k == LogicalKeyboardKey.escape || k == LogicalKeyboardKey.gameButtonB;
 
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    // 回到前台：网络可能刚恢复，立即复测离线的服务器（不用等定时复测）
+    if (state == AppLifecycleState.resumed) ref.read(serverReachabilityProvider.notifier).recheckOffline();
+  }
+
   /// Android 系统的返回（没被按键处理的返回键、返回手势）：电视上一律按应用内返回处理，永远不直接关闭应用
   @override
   Future<bool> didPopRoute() async {
@@ -113,10 +119,8 @@ class _VioraAppState extends ConsumerState<VioraApp> with WidgetsBindingObserver
   void initState() {
     super.initState();
     InputMode.install();
-    if (PlatformProfile.isTv) {
-      // 先于路由注册：系统返回先到这里
-      WidgetsBinding.instance.addObserver(this);
-    }
+    // 电视上要先于路由注册：系统返回先到这里（电脑上 didPopRoute 直接放行，只用来接收回到前台）
+    WidgetsBinding.instance.addObserver(this);
     _router.routerDelegate.addListener(_scheduleCanGoBack);
     _autoCheckUpdate();
     // 上次异常退出时残留的播放缓存

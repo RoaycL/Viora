@@ -41,6 +41,14 @@ final serverClientProvider = Provider.family<EmbyClient?, String>((ref, serverId
     config: config,
     server: server,
     appVersion: appVersion,
+    onProbed: (reachable) {
+      if (ref.mounted) {
+        // 用户手动测速（服务器页、改地址后）：结果立即生效，并作废还在进行的后台测速
+        ref
+            .read(serverReachabilityProvider.notifier)
+            .record(serverId, config.clientKey(serverId), reachable, manual: true);
+      }
+    },
     onServerChanged: (s) => store.updateServer(
       s.id,
       (old) => accountScope(old) != accountScope(server)
@@ -50,27 +58,205 @@ final serverClientProvider = Provider.family<EmbyClient?, String>((ref, serverId
   );
 });
 
+/// 本次运行中已确认不可用的服务器。旧线路、旧账号的测速结果不用于新的连接配置。
+final serverReachabilityProvider = NotifierProvider<ServerReachability, Map<String, String>>(ServerReachability.new);
+
+class ServerReachability extends Notifier<Map<String, String>> {
+  /// 离线后复测的间隔：先快后慢（刚开机网络还没连好时很快就能恢复），最长半小时
+  static const retryIntervals = [
+    Duration(seconds: 30),
+    Duration(minutes: 1),
+    Duration(minutes: 2),
+    Duration(minutes: 5),
+    Duration(minutes: 10),
+    Duration(minutes: 20),
+    Duration(minutes: 30),
+  ];
+  static const _failureCheckCooldown = Duration(minutes: 1);
+  final _retries = <String, Timer>{};
+
+  /// 每台服务器连续复测失败的次数（决定下一次复测间隔）
+  final _failedChecks = <String, int>{};
+
+  /// 每台服务器的手动测速代次：后台测速开始后用户手动测过，后台的旧结果作废，不覆盖手动结果
+  final _epochs = <String, int>{};
+  int epochOf(String id) => _epochs[id] ?? 0;
+  Timer? _check;
+  final _pendingChecks = <String, ({String key, bool offline})>{};
+  final _lastFailureCheck = <String, ({String key, DateTime at})>{};
+  bool get _active => ref.mounted;
+
+  @override
+  Map<String, String> build() {
+    ref.onDispose(() {
+      for (final timer in _retries.values) {
+        timer.cancel();
+      }
+      _check?.cancel();
+    });
+    return const {};
+  }
+
+  bool _isCurrent(AppConfig config, String id, String key) =>
+      config.server(id)?.loggedIn == true && config.clientKey(id) == key;
+
+  /// [manual]：用户手动测速的结果，优先于正在进行的后台测速；[epoch]：后台测速开始时的 [epochOf]，期间有过手动测速就丢弃
+  void record(String id, String connectionKey, bool reachable, {bool manual = false, int? epoch}) {
+    if (!_isCurrent(ref.read(configProvider), id, connectionKey)) return;
+    if (manual) {
+      _epochs[id] = epochOf(id) + 1;
+    } else if (epoch != null && epoch != epochOf(id)) {
+      return;
+    }
+    if (reachable) {
+      _retries.remove(id)?.cancel();
+      _failedChecks.remove(id);
+      if (state.containsKey(id)) state = {...state}..remove(id);
+      return;
+    }
+    if (state[id] != connectionKey) {
+      _retries.remove(id)?.cancel();
+      _failedChecks.remove(id);
+      state = {...state, id: connectionKey};
+    } else if (manual) {
+      // 手动测过仍然不通：从最短间隔重新开始复测
+      _retries.remove(id)?.cancel();
+      _failedChecks.remove(id);
+    }
+    _scheduleRetry(id, connectionKey);
+  }
+
+  /// 应用回到前台（电视唤醒、电脑解锁等，网络可能刚恢复）：立即复测所有离线服务器
+  void recheckOffline() {
+    if (!_active) return;
+    final config = ref.read(configProvider);
+    for (final entry in state.entries) {
+      if (!_isCurrent(config, entry.key, entry.value)) continue;
+      _retries.remove(entry.key)?.cancel();
+      _failedChecks.remove(entry.key);
+      _queueCheck(entry.key, entry.value, offline: true);
+    }
+  }
+
+  /// 连接失败只触发测速；权限、资源不存在等错误不影响整台服务器的状态。
+  /// 返回 true 时，本轮可停止向这台服务器尝试其他关键词。
+  bool reportAggregateFailure(EmbyClient client, Object error) {
+    final suspect =
+        error is TimeoutException ||
+        error is MediaServerException && (error.connectionFailure || const {502, 503, 504}.contains(error.statusCode));
+    if (!suspect) return false;
+    final id = client.server.id;
+    final key = client.config.clientKey(id);
+    if (!_isCurrent(ref.read(configProvider), id, key) || state[id] == key) return true;
+    final now = DateTime.now();
+    final last = _lastFailureCheck[id];
+    if (last != null && last.key == key && now.difference(last.at) < _failureCheckCooldown) return true;
+    _lastFailureCheck[id] = (key: key, at: now);
+    _queueCheck(id, key, offline: false);
+    return true;
+  }
+
+  void _scheduleRetry(String id, String key) {
+    _retries.putIfAbsent(id, () {
+      final n = _failedChecks[id] ?? 0;
+      _failedChecks[id] = n + 1;
+      return Timer(retryIntervals[n.clamp(0, retryIntervals.length - 1)], () {
+        _retries.remove(id);
+        if (state[id] == key) _queueCheck(id, key, offline: true);
+      });
+    });
+  }
+
+  void _queueCheck(String id, String key, {required bool offline}) {
+    _pendingChecks[id] = (key: key, offline: offline);
+    _check ??= Timer(Duration.zero, _checkServers);
+  }
+
+  Future<void> _checkServers() async {
+    try {
+      while (_active && _pendingChecks.isNotEmpty) {
+        final config = ref.read(configProvider);
+        final candidates = {
+          for (final entry in _pendingChecks.entries)
+            if (_isCurrent(config, entry.key, entry.value.key) &&
+                (state[entry.key] == entry.value.key) == entry.value.offline)
+              entry.key: entry.value,
+        };
+        // 连接配置已经变了的离线记录：作废（不再复测它，留着的话配置改回去时会一直被排除而没人复测）
+        final stale = [
+          for (final entry in _pendingChecks.entries)
+            if (state[entry.key] == entry.value.key && !_isCurrent(config, entry.key, entry.value.key)) entry.key,
+        ];
+        if (stale.isNotEmpty) {
+          state = {...state}..removeWhere((id, _) => stale.contains(id));
+          for (final id in stale) {
+            _failedChecks.remove(id);
+          }
+        }
+        _pendingChecks.clear();
+        if (candidates.isEmpty) continue;
+        await probeAllServers(ref.container, concurrency: 4, only: candidates.keys.toSet());
+        if (!_active) return;
+        // 单台测速异常时也保留已经确认的离线状态，并继续定时复测。
+        final latest = ref.read(configProvider);
+        for (final entry in candidates.entries) {
+          final key = entry.value.key;
+          if (state[entry.key] == key && _isCurrent(latest, entry.key, key)) _scheduleRetry(entry.key, key);
+        }
+      }
+    } finally {
+      _check = null;
+    }
+  }
+}
+
+final availableAggregateServerIdsProvider = Provider<Set<String>>((ref) {
+  final config = ref.watch(configProvider);
+  final offline = ref.watch(serverReachabilityProvider);
+  return {
+    for (final server in config.servers)
+      if (server.aggregate && server.loggedIn && offline[server.id] != config.clientKey(server.id)) server.id,
+  };
+});
+
 /// 启动时给所有服务器测速：同时最多测 [concurrency] 台，全部测完后把延迟合并成一次配置保存。
 /// 每台测完各保存一次的话，十几台服务器就是首页加载期间十几次配置写入和界面刷新
 Future<void> probeAllServers(
   ProviderContainer container, {
   required int concurrency,
   Duration timeout = const Duration(seconds: 10),
+  Set<String>? only,
 }) async {
   final read = container.read;
-  final pending = [...read(configProvider).servers];
-  final latency = <String, Map<String, int?>>{};
+  final reachability = read(serverReachabilityProvider.notifier);
+  final pending = read(configProvider).servers.where((s) => only == null || only.contains(s.id)).toList();
+  final latency = <String, ({String connectionKey, int epoch, Map<String, int?> lines})>{};
   Future<void> worker() async {
-    while (pending.isNotEmpty) {
+    while (pending.isNotEmpty && reachability._active) {
       final s = pending.removeAt(0);
       try {
-        final probed = await read(serverClientProvider(s.id))?.probeAll(notify: false).timeout(timeout);
-        if (probed != null) latency[s.id] = {for (final l in probed.lines) l.id: l.latencyMs};
+        final connectionKey = read(configProvider).clientKey(s.id);
+        final epoch = reachability.epochOf(s.id);
+        final probed = await read(serverClientProvider(s.id))?.probeAll(notify: false, timeout: timeout);
+        if (probed == null || !reachability._active) continue;
+        final lines = {for (final line in probed.lines) line.id: line.latencyMs};
+        latency[s.id] = (connectionKey: connectionKey, epoch: epoch, lines: lines);
+        reachability.record(s.id, connectionKey, lines.values.any((ms) => ms != null), epoch: epoch);
       } catch (_) {}
     }
   }
 
   await Future.wait([for (var i = 0; i < concurrency; i++) worker()]);
+  if (!reachability._active) return;
+  final config = read(configProvider);
+  latency.removeWhere((id, result) {
+    final server = config.server(id);
+    return server == null ||
+        config.clientKey(id) != result.connectionKey ||
+        // 测速期间用户手动测过：保留手动测速的延迟
+        reachability.epochOf(id) != result.epoch ||
+        !server.lines.any((l) => result.lines.containsKey(l.id) && result.lines[l.id] != l.latencyMs);
+  });
   if (latency.isEmpty) return;
   await container
       .read(configProvider.notifier)
@@ -83,8 +269,8 @@ Future<void> probeAllServers(
                   lines: [
                     for (final l in s.lines)
                       // 测速期间新加的线路没有结果：保持原样
-                      probed.containsKey(l.id)
-                          ? l.copyWith(latencyMs: probed[l.id], clearLatency: probed[l.id] == null)
+                      probed.lines.containsKey(l.id)
+                          ? l.copyWith(latencyMs: probed.lines[l.id], clearLatency: probed.lines[l.id] == null)
                           : l,
                   ],
                 )

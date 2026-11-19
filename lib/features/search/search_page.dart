@@ -148,7 +148,8 @@ class _SearchPageState extends ConsumerState<SearchPage> {
 
     // 2. 各服务器实时搜索：只有一个字母时不查（结果太多也没意义，16 台服务器一起查会把电视卡死）
     if (q.characters.length < 2) return;
-    final servers = ref.read(configProvider).servers.toList();
+    final offline = ref.read(serverReachabilityProvider);
+    final servers = config.servers.where((s) => offline[s.id] != config.clientKey(s.id)).toList();
     setState(() {
       _searchingRemote = true;
       _pendingServers = servers.length;
@@ -200,7 +201,10 @@ class _SearchPageState extends ConsumerState<SearchPage> {
             trace.event('first_remote', count: page.items.length, sources: servers.length);
           }
           scheduleRegroup();
-        } catch (_) {
+        } catch (e) {
+          if (mounted && client != null) {
+            ref.read(serverReachabilityProvider.notifier).reportAggregateFailure(client, e);
+          }
         } finally {
           if (gen == _generation && mounted) setState(() => _pendingServers--);
         }
