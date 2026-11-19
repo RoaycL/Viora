@@ -94,13 +94,16 @@ class _VTextFieldState extends State<VTextField> {
   @override
   Widget build(BuildContext context) {
     final focused = _node.hasFocus;
+    final compact = InfoTipScope.compact(context);
+    final h = compact ? 52.0 : 68.0;
+    final text = compact ? VText.label.copyWith(fontSize: 19) : VText.label;
     return SizedBox(
       width: widget.width,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(widget.label, style: VText.caption.copyWith(color: VColors.textTertiary)),
-          const SizedBox(height: 10),
+          Text(widget.label, style: VText.caption.copyWith(color: VColors.textTertiary, fontSize: compact ? 17 : null)),
+          SizedBox(height: compact ? 8 : 10),
           Row(
             children: [
               Expanded(
@@ -110,14 +113,14 @@ class _VTextFieldState extends State<VTextField> {
                   onKeyEvent: _onKey,
                   child: AnimatedContainer(
                     duration: VMotion.duration(context, VMotion.focus),
-                    padding: const EdgeInsets.symmetric(horizontal: 22),
-                    height: 68,
+                    padding: EdgeInsets.symmetric(horizontal: compact ? 18 : 22),
+                    height: h,
                     decoration: BoxDecoration(
-                      color: focused ? const Color(0x24FFFFFF) : const Color(0x12FFFFFF),
+                      color: focused ? const Color(0x24FFFFFF) : Color(compact ? 0x0AFFFFFF : 0x12FFFFFF),
                       borderRadius: BorderRadius.circular(VRadius.md),
                       border: Border.all(
-                        color: focused ? Colors.white : const Color(0x1FFFFFFF),
-                        width: focused ? 3 : 1,
+                        color: focused ? Colors.white : Color(compact ? 0x14FFFFFF : 0x1FFFFFFF),
+                        width: focused ? (compact ? 2 : 3) : 1,
                       ),
                     ),
                     alignment: Alignment.centerLeft,
@@ -140,12 +143,12 @@ class _VTextFieldState extends State<VTextField> {
                         }
                       },
                       cursorColor: VColors.accent,
-                      style: VText.label,
+                      style: text,
                       decoration: InputDecoration(
                         border: InputBorder.none,
                         isCollapsed: true,
                         hintText: widget.hint,
-                        hintStyle: VText.label.copyWith(color: VColors.textMuted),
+                        hintStyle: text.copyWith(color: VColors.textMuted),
                       ),
                     ),
                   ),
@@ -165,15 +168,15 @@ class _VTextFieldState extends State<VTextField> {
                     message: _reveal ? '隐藏密码' : '显示密码',
                     child: AnimatedContainer(
                       duration: VMotion.duration(context, VMotion.focus),
-                      width: 68,
-                      height: 68,
+                      width: h,
+                      height: h,
                       decoration: BoxDecoration(
-                        color: focused ? Colors.white : const Color(0x12FFFFFF),
+                        color: focused ? Colors.white : Color(compact ? 0x0AFFFFFF : 0x12FFFFFF),
                         borderRadius: BorderRadius.circular(VRadius.md),
                       ),
                       child: Icon(
                         _reveal ? Icons.visibility_off_rounded : Icons.visibility_rounded,
-                        size: 28,
+                        size: compact ? 22 : 28,
                         color: focused ? const Color(0xFF0B0C10) : Colors.white,
                       ),
                     ),
@@ -184,7 +187,7 @@ class _VTextFieldState extends State<VTextField> {
           ),
           if (widget.helper != null) ...[
             const SizedBox(height: 8),
-            Text(widget.helper!, style: VText.small.copyWith(color: VColors.textMuted)),
+            Text(widget.helper!, style: VText.small.copyWith(color: VColors.textMuted, fontSize: compact ? 16 : null)),
           ],
         ],
       ),
@@ -221,6 +224,10 @@ class VToggle extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final compact = InfoTipScope.compact(context);
+    final text = compact ? VText.label.copyWith(fontSize: 19) : VText.label;
+    // 开关：紧凑时 52×30（原 64×36）
+    final trackW = compact ? 52.0 : 64.0, trackH = compact ? 30.0 : 36.0, knob = compact ? 22.0 : 28.0;
     return VFocusable(
       semanticLabel: label,
       semanticValue: subtitle,
@@ -232,10 +239,10 @@ class VToggle extends StatelessWidget {
       builder: (context, focused) => AnimatedContainer(
         duration: VMotion.duration(context, VMotion.focus),
         width: width,
-        constraints: const BoxConstraints(minHeight: 72),
-        padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
+        constraints: BoxConstraints(minHeight: compact ? 56 : 72),
+        padding: EdgeInsets.symmetric(horizontal: compact ? 20 : 24, vertical: compact ? 8 : 12),
         decoration: BoxDecoration(
-          color: focused ? const Color(0x29FFFFFF) : const Color(0x0DFFFFFF),
+          color: focused ? Color(compact ? 0x1AFFFFFF : 0x29FFFFFF) : Color(compact ? 0x08FFFFFF : 0x0DFFFFFF),
           borderRadius: BorderRadius.circular(VRadius.md),
         ),
         child: Row(
@@ -249,13 +256,14 @@ class VToggle extends StatelessWidget {
                     Row(
                       mainAxisSize: MainAxisSize.min,
                       children: [
-                        Flexible(child: Text(label, style: VText.label)),
+                        Flexible(child: Text(label, style: text)),
                         InfoTip(subtitle!),
                       ],
                     )
                   else ...[
-                    Text(label, style: VText.label),
-                    if (subtitle != null) Text(subtitle!, style: VText.small.copyWith(color: VColors.textTertiary)),
+                    Text(label, style: text),
+                    if (subtitle != null)
+                      Text(subtitle!, style: VText.small.copyWith(color: VColors.textTertiary, fontSize: compact ? 16 : null)),
                   ],
                 ],
               ),
@@ -263,8 +271,8 @@ class VToggle extends StatelessWidget {
             const SizedBox(width: 16),
             AnimatedContainer(
               duration: VMotion.duration(context, VMotion.focus),
-              width: 64,
-              height: 36,
+              width: trackW,
+              height: trackH,
               padding: const EdgeInsets.all(4),
               alignment: value ? Alignment.centerRight : Alignment.centerLeft,
               decoration: BoxDecoration(
@@ -272,8 +280,8 @@ class VToggle extends StatelessWidget {
                 borderRadius: BorderRadius.circular(VRadius.md),
               ),
               child: Container(
-                width: 28,
-                height: 28,
+                width: knob,
+                height: knob,
                 decoration: const BoxDecoration(color: Colors.white, shape: BoxShape.circle),
               ),
             ),
@@ -296,17 +304,18 @@ class VChoice<T> extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final (title, hint) = PlatformProfile.isDesktop && InfoTipScope.enabled(context) ? splitHint(label) : (label, null);
+    final compact = InfoTipScope.compact(context);
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Row(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Flexible(child: Text(title, style: VText.caption.copyWith(color: VColors.textTertiary))),
+            Flexible(child: Text(title, style: VText.caption.copyWith(color: VColors.textTertiary, fontSize: compact ? 17 : null))),
             if (hint != null) InfoTip(hint),
           ],
         ),
-        const SizedBox(height: 10),
+        SizedBox(height: compact ? 8 : 10),
         Row(
           children: [
             for (final (v, text) in options) ...[
@@ -321,28 +330,31 @@ class VChoice<T> extends StatelessWidget {
                   final selected = v == value;
                   return AnimatedContainer(
                     duration: VMotion.duration(context, VMotion.focus),
-                    height: 60,
-                    padding: const EdgeInsets.symmetric(horizontal: 30),
+                    height: compact ? 44 : 60,
+                    padding: EdgeInsets.symmetric(horizontal: compact ? 22 : 30),
                     alignment: Alignment.center,
                     decoration: BoxDecoration(
-                      color: focused ? Colors.white : (selected ? const Color(0x33FFFFFF) : const Color(0x0DFFFFFF)),
+                      color: focused
+                          ? Colors.white
+                          : (selected ? Color(compact ? 0x29FFFFFF : 0x33FFFFFF) : Color(compact ? 0x0AFFFFFF : 0x0DFFFFFF)),
                       borderRadius: BorderRadius.circular(999),
                       border: Border.all(
-                        color: selected && !focused ? Colors.white : const Color(0x00000000),
-                        width: 2,
+                        color: selected && !focused ? Color(compact ? 0xB3FFFFFF : 0xFFFFFFFF) : const Color(0x00000000),
+                        width: compact ? 1.5 : 2,
                       ),
                     ),
                     child: Text(
                       text,
                       style: VText.label.copyWith(
+                        fontSize: compact ? 18 : null,
                         color: focused ? const Color(0xFF0B0C10) : Colors.white,
-                        fontWeight: selected ? FontWeight.w700 : FontWeight.w400,
+                        fontWeight: selected ? (compact ? FontWeight.w600 : FontWeight.w700) : FontWeight.w400,
                       ),
                     ),
                   );
                 },
               ),
-              const SizedBox(width: 14),
+              SizedBox(width: compact ? 10 : 14),
             ],
           ],
         ),
@@ -358,10 +370,13 @@ class SectionTitle extends StatelessWidget {
   final String text;
 
   @override
-  Widget build(BuildContext context) => Padding(
-    padding: const EdgeInsets.only(bottom: 20),
-    child: Text(text, style: VText.rowTitle),
-  );
+  Widget build(BuildContext context) {
+    final compact = InfoTipScope.compact(context);
+    return Padding(
+      padding: EdgeInsets.only(bottom: compact ? 16 : 20),
+      child: Text(text, style: compact ? VText.rowTitle.copyWith(fontSize: 24, fontWeight: FontWeight.w600) : VText.rowTitle),
+    );
+  }
 }
 
 /// 「标题（说明）」拆成标题和说明；没有括号说明时说明为 null
@@ -376,6 +391,9 @@ class InfoTipScope extends InheritedWidget {
   const InfoTipScope({super.key, required super.child});
 
   static bool enabled(BuildContext context) => context.dependOnInheritedWidgetOfExactType<InfoTipScope>() != null;
+
+  /// Windows 设置页用更轻、更紧凑的表单尺寸（行更矮、字更小、底色更淡）；电视在几米外看，保持原来的尺寸
+  static bool compact(BuildContext context) => PlatformProfile.isDesktop && enabled(context);
 
   @override
   bool updateShouldNotify(InfoTipScope oldWidget) => false;

@@ -4,6 +4,7 @@ import '../../app/platform_profile.dart';
 import '../../app/theme.dart';
 import '../focus/focusable.dart';
 import '../glass/glass.dart';
+import 'form.dart';
 
 const _darkInk = Color(0xFF0B0C10);
 
@@ -36,7 +37,9 @@ class PillButton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final height = large ? 76.0 : 68.0;
+    // Windows 设置页里更轻、更矮（[InfoTipScope.compact]）
+    final compact = !large && InfoTipScope.compact(context);
+    final height = large ? 76.0 : (compact ? 48.0 : 68.0);
     return VFocusable(
       focusNode: focusNode,
       autofocus: autofocus,
@@ -51,7 +54,9 @@ class PillButton extends StatelessWidget {
       builder: (context, focused) {
         final fg = onPressed == null ? VColors.textTertiary : (focused ? _darkInk : Colors.white);
         final content = Padding(
-          padding: EdgeInsets.only(left: icon == null && !busy ? 32 : 28, right: large ? 40 : 32),
+          padding: compact
+              ? EdgeInsets.only(left: icon == null && !busy ? 24 : 20, right: 24)
+              : EdgeInsets.only(left: icon == null && !busy ? 32 : 28, right: large ? 40 : 32),
           child: Row(
             mainAxisSize: MainAxisSize.min,
             children: [
@@ -66,14 +71,14 @@ class PillButton extends StatelessWidget {
                 ),
                 const SizedBox(width: 16),
               ] else if (icon != null) ...[
-                Icon(icon, size: large ? 32 : 28, color: fg),
-                const SizedBox(width: 12),
+                Icon(icon, size: large ? 32 : (compact ? 21 : 28), color: fg),
+                SizedBox(width: compact ? 10 : 12),
               ],
               if (subtitle == null)
                 Text(
                   label,
                   style: TextStyle(
-                    fontSize: large ? 26 : 24,
+                    fontSize: large ? 26 : (compact ? 19 : 24),
                     fontWeight: large ? FontWeight.w700 : FontWeight.w500,
                     color: fg,
                   ),
