@@ -236,6 +236,21 @@ void main() {
     expect(AssrtClient.pickFile(files)!['f'], 'movie.chs.srt');
   });
 
+  test('射手网（伪）整季字幕包：挑正在看的那一集；包里没有这一集时不乱挑', () {
+    final files = [
+      {'f': 'Show.S01E01.chs.ass'},
+      {'f': 'Show.S01E02.chs.ass'},
+      {'f': 'Show.S01E02.eng.srt'},
+    ];
+    expect(AssrtClient.pickFile(files, SubtitleLanguage.chinese, 1, 2)!['f'], 'Show.S01E02.chs.ass');
+    expect(AssrtClient.pickFile(files, SubtitleLanguage.english, 1, 2)!['f'], 'Show.S01E02.eng.srt');
+    expect(AssrtClient.pickFile(files, SubtitleLanguage.chinese, 1, 5), isNull);
+    // 文件名里认不出集数（单集字幕）：照常挑
+    expect(AssrtClient.pickFile([{'f': 'a.chs.srt'}], SubtitleLanguage.chinese, 1, 5)!['f'], 'a.chs.srt');
+    expect(AssrtClient.episodeOf('[字幕组] 某剧 第03集.ass'), (null, 3));
+    expect(AssrtClient.episodeOf('show.1x04.srt'), (1, 4));
+  });
+
   test('OpenSubtitles：登录令牌被拒（过期）时重新登录再下载一次', () async {
     final s = _FakeServer();
     await s.start();

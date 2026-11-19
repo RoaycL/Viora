@@ -58,6 +58,8 @@ class OnlineSubtitle {
     this.format,
     this.downloads,
     this.searchLanguage,
+    this.season,
+    this.episode,
   });
 
   /// [OpenSubtitlesClient.providerName] / [AssrtClient.providerName]
@@ -72,6 +74,10 @@ class OnlineSubtitle {
 
   /// 搜索时要的语言：字幕包里有多种语言的文件时，按它挑
   final SubtitleLanguage? searchLanguage;
+
+  /// 搜索的是第几季第几集：整季打包的字幕里按它挑对应那一集的文件
+  final int? season;
+  final int? episode;
 }
 
 /// 下载下来的字幕文件
@@ -394,6 +400,8 @@ class AssrtClient implements OnlineSubtitleProvider {
               language: (s['lang'] as Map?)?['desc']?.toString(),
               format: s['subtype']?.toString(),
               searchLanguage: language,
+              season: query.season,
+              episode: query.episode,
             ),
       ];
       if (list.isNotEmpty) return list;
@@ -402,12 +410,29 @@ class AssrtClient implements OnlineSubtitleProvider {
   }
 
   /// 字幕包里挑一个文件：要求是文本字幕；中文优先挑简体，其次繁体；英文优先挑英文文件，避开纯中文的
-  static Map<String, dynamic>? pickFile(List<Map<String, dynamic>> files, [SubtitleLanguage? language]) {
-    final text = [
+  static Map<String, dynamic>? pickFile(
+    List<Map<String, dynamic>> files, [
+    SubtitleLanguage? language,
+    int? season,
+    int? episode,
+  ]) {
+    var text = [
       for (final f in files)
         if (_textFormats.contains(_ext('${f['f'] ?? ''}'))) f,
     ];
     if (text.isEmpty) return null;
+    // 整季打包：只在对应那一集的文件里挑（文件名里认不出集数时不过滤）
+    if (episode != null) {
+      final sameEpisode = [
+        for (final f in text)
+          if (episodeOf('${f['f']}') case (final s, final e) when e == episode && (s == null || season == null || s == season)) f,
+      ];
+      if (sameEpisode.isNotEmpty) {
+        text = sameEpisode;
+      } else if (text.any((f) => episodeOf('${f['f']}') != null)) {
+        return null;
+      }
+    }
     int score(Map<String, dynamic> f) {
       final n = '${f['f']}'.toLowerCase();
       var s = 0;
@@ -428,19 +453,32 @@ class AssrtClient implements OnlineSubtitleProvider {
     return (text..sort((a, b) => score(b).compareTo(score(a)))).first;
   }
 
+  /// 文件名里的季和集：S01E02 / 1x02 / EP02 / 第02集
+  static (int?, int)? episodeOf(String fileName) {
+    final n = fileName.toLowerCase();
+    final se = RegExp(r's(\d{1,2})[ ._-]?e(\d{1,3})').firstMatch(n) ?? RegExp(r'\b(\d{1,2})x(\d{2,3})\b').firstMatch(n);
+    if (se != null) return (int.parse(se[1]!), int.parse(se[2]!));
+    final e = RegExp(r'(?:\bep?|第)(\d{1,3})(?:\b|集|话)').firstMatch(n);
+    if (e != null) return (null, int.parse(e[1]!));
+    return null;
+  }
+
   @override
   Future<SubtitleFile> download(OnlineSubtitle subtitle) async {
     final j = await _get('/sub/detail', {'id': subtitle.id});
     final sub = ((j['sub'] as Map?)?['subs'] as List? ?? const []).whereType<Map<String, dynamic>>().firstOrNull;
     if (sub == null) throw const OnlineSubtitleException('射手网（伪）没有这条字幕的详情');
     final files = (sub['filelist'] as List? ?? const []).whereType<Map<String, dynamic>>().toList();
-    var file = pickFile(files, subtitle.searchLanguage);
+    var file = pickFile(files, subtitle.searchLanguage, subtitle.season, subtitle.episode);
     // 单个文件（没有打包）时 filelist 为空，直接用 url
     if (file == null && files.isEmpty && _textFormats.contains(_ext('${sub['filename'] ?? ''}'))) {
       file = {'url': sub['url'], 'f': sub['filename']};
     }
     final url = file?['url']?.toString();
     if (file == null || url == null || url.isEmpty) {
+      if (subtitle.episode != null && pickFile(files, subtitle.searchLanguage) != null) {
+        throw OnlineSubtitleException('这个字幕包里没有第 ${subtitle.episode} 集，换一条试试');
+      }
       throw const OnlineSubtitleException('这条字幕只有压缩包，没有可直接加载的字幕文件，换一条试试');
     }
     try {
