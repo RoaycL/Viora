@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 import 'package:window_manager/window_manager.dart';
 
 import 'desktop_prefs.dart';
+import 'native_minimize.dart' if (dart.library.js_interop) 'native_minimize_stub.dart';
 
 /// Windows 沉浸式窗口：去掉系统标题栏，内容铺到窗口顶端，
 /// 顶部透明条用于拖动（双击最大化），右上角为自绘的窗口按钮。
@@ -71,6 +72,17 @@ Future<void> setWindowMaximized(bool max) {
       debugPrint('maximize: $e');
     }
   });
+}
+
+/// 最小化窗口。全屏时 window_manager 的 minimize() 不起作用，改用 Win32 ShowWindow 直接最小化
+Future<void> minimizeWindow() async {
+  if (!isDesktopWindow) return;
+  try {
+    if (await windowManager.isFullScreen() && nativeMinimize(await windowManager.getId())) return;
+    await windowManager.minimize();
+  } catch (e) {
+    debugPrint('minimize: $e');
+  }
 }
 
 /// 沉浸：播放页控制层隐藏时，标题栏的窗口按钮也隐藏（鼠标一动控制层出来，标题栏跟着出来）
@@ -326,7 +338,7 @@ class _WindowTitleBarState extends State<WindowTitleBar> with WindowListener {
               onDoubleTap: _fullScreen ? toggleFullScreen : _toggleMaximize,
             ),
           ),
-          _CaptionButton(icon: Icons.remove_rounded, tooltip: '最小化', onPressed: windowManager.minimize),
+          _CaptionButton(icon: Icons.remove_rounded, tooltip: '最小化', onPressed: minimizeWindow),
           if (_fullScreen)
             const _CaptionButton(icon: Icons.fullscreen_exit_rounded, iconSize: 18, tooltip: '退出全屏', onPressed: toggleFullScreen)
           else

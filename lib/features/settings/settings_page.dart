@@ -855,7 +855,11 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                const Text('设置', style: VText.h1),
+                Text(
+                  '设置',
+                  // Windows：标题和右边的设置项一样轻一点
+                  style: PlatformProfile.isDesktop ? VText.h1.copyWith(fontSize: 40, fontWeight: FontWeight.w700) : VText.h1,
+                ),
                 SizedBox(height: PlatformProfile.isDesktop ? 24 : 40),
                 if (PlatformProfile.isDesktop) ...[_SearchBox(controller: _search), const SizedBox(height: 20)],
                 Expanded(
@@ -876,10 +880,16 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
           child: Padding(
             padding: EdgeInsets.fromLTRB(0, VSpace.pageTop, VSpace.safeH, VSpace.safeV),
             child: Glass(
+              // Windows：面板更通透（填充 5%，原 8%）、描边更淡、内边距更小
+              fill: PlatformProfile.isDesktop ? const Color(0x0DFFFFFF) : VColors.glassFill,
+              border: PlatformProfile.isDesktop ? const Color(0x14FFFFFF) : VColors.glassBorder,
               child: ClipRRect(
                 borderRadius: BorderRadius.circular(VRadius.panel),
                 child: FocusAutoScroll(
-                  child: SingleChildScrollView(padding: const EdgeInsets.all(44), child: sections[current]),
+                  child: SingleChildScrollView(
+                    padding: EdgeInsets.all(PlatformProfile.isDesktop ? 36 : 44),
+                    child: sections[current],
+                  ),
                 ),
               ),
             ),
@@ -988,23 +998,23 @@ class _SearchBox extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Container(
-      height: 52,
+      height: 48,
       padding: const EdgeInsets.symmetric(horizontal: 16),
-      decoration: BoxDecoration(color: const Color(0x14FFFFFF), borderRadius: BorderRadius.circular(VRadius.sm)),
+      decoration: BoxDecoration(color: const Color(0x0FFFFFFF), borderRadius: BorderRadius.circular(VRadius.sm)),
       child: Row(
         children: [
-          const Icon(Icons.search_rounded, size: 22, color: VColors.textTertiary),
+          const Icon(Icons.search_rounded, size: 20, color: VColors.textTertiary),
           const SizedBox(width: 10),
           Expanded(
             child: TextField(
               controller: controller,
-              style: VText.label,
+              style: VText.label.copyWith(fontSize: 19),
               cursorColor: Colors.white,
               decoration: InputDecoration(
                 isCollapsed: true,
                 border: InputBorder.none,
                 hintText: '搜索设置',
-                hintStyle: VText.label.copyWith(color: VColors.textTertiary),
+                hintStyle: VText.label.copyWith(fontSize: 19, color: VColors.textTertiary),
               ),
             ),
           ),
@@ -1104,28 +1114,32 @@ class _CategoryItem extends StatelessWidget {
             : (selected || focused ? Colors.white : VColors.textSecondary);
         final bg = tv
             ? (focused ? Colors.white : (selected ? const Color(0x29FFFFFF) : const Color(0x00FFFFFF)))
-            : (selected ? const Color(0x1FFFFFFF) : (focused ? const Color(0x0FFFFFFF) : const Color(0x00FFFFFF)));
+            : (selected ? const Color(0x14FFFFFF) : (focused ? const Color(0x0AFFFFFF) : const Color(0x00FFFFFF)));
         return AnimatedContainer(
           duration: VMotion.duration(context, VMotion.focus),
-          height: tv ? 68 : 56,
-          padding: const EdgeInsets.symmetric(horizontal: 22),
+          height: tv ? 68 : 48,
+          padding: EdgeInsets.symmetric(horizontal: tv ? 22 : 16),
           decoration: BoxDecoration(color: bg, borderRadius: BorderRadius.circular(VRadius.sm)),
           child: Row(
             children: [
               if (!tv) ...[
                 AnimatedContainer(
                   duration: VMotion.focus,
-                  width: 4,
-                  height: selected ? 24 : 0,
+                  width: 3,
+                  height: selected ? 20 : 0,
                   decoration: BoxDecoration(color: VColors.accent, borderRadius: BorderRadius.circular(2)),
                 ),
                 const SizedBox(width: 14),
               ],
-              Icon(category.icon, size: tv ? 28 : 24, color: fg),
-              const SizedBox(width: 16),
+              Icon(category.icon, size: tv ? 28 : 21, color: fg),
+              SizedBox(width: tv ? 16 : 14),
               Text(
                 category.label,
-                style: VText.label.copyWith(color: fg, fontWeight: selected ? FontWeight.w700 : FontWeight.w400),
+                style: VText.label.copyWith(
+                  fontSize: tv ? null : 19,
+                  color: fg,
+                  fontWeight: selected ? (tv ? FontWeight.w700 : FontWeight.w600) : FontWeight.w400,
+                ),
               ),
             ],
           ),
@@ -1156,7 +1170,13 @@ class _Subtitle extends StatelessWidget {
   @override
   Widget build(BuildContext context) => Padding(
     padding: const EdgeInsets.only(bottom: 14),
-    child: Text(text, style: VText.rowTitle.copyWith(fontSize: 26)),
+    child: Text(
+      text,
+      style: VText.rowTitle.copyWith(
+        fontSize: PlatformProfile.isDesktop ? 21 : 26,
+        fontWeight: PlatformProfile.isDesktop ? FontWeight.w600 : null,
+      ),
+    ),
   );
 }
 
