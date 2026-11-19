@@ -55,6 +55,9 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
   late final _tmdbKey = TextEditingController();
   late final _tmdbBase = TextEditingController();
   _Category _category = _Category.playback;
+
+  /// Windows：左上角的设置搜索
+  late final _search = TextEditingController()..addListener(() => setState(() {}));
   String _version = '';
   String _source = '';
 
@@ -107,7 +110,7 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
       save();
     }
     _pending.clear();
-    for (final c in [_ua, _client, _device, _proxy, _manifest, _tmdbKey, _tmdbBase]) {
+    for (final c in [_ua, _client, _device, _proxy, _manifest, _tmdbKey, _tmdbBase, _search]) {
       c.dispose();
     }
     super.dispose();
@@ -329,6 +332,42 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
                         old.copyWith(lines: [for (final x in old.lines) x.id == l.id ? x.copyWith(proxied: v) : x]),
                   ),
             ),
+    ];
+  }
+
+  List<Widget> _categoryItems() => [
+    for (final c in _Category.values) ...[
+      _CategoryItem(
+        category: c,
+        selected: c == _category,
+        autofocus: c == _Category.values.first,
+        onSelect: () => setState(() => _category = c),
+      ),
+      const SizedBox(height: 10),
+    ],
+  ];
+
+  List<Widget> _searchResults(String query) {
+    final hits = _searchSettings(query);
+    if (hits.isEmpty) {
+      return [
+        Padding(
+          padding: const EdgeInsets.only(left: 8, top: 8),
+          child: Text('没有找到相关设置', style: VText.label.copyWith(color: VColors.textTertiary)),
+        ),
+      ];
+    }
+    return [
+      for (final h in hits) ...[
+        _SearchHit(
+          entry: h,
+          onSelect: () {
+            _search.clear();
+            setState(() => _category = h.category);
+          },
+        ),
+        const SizedBox(height: 6),
+      ],
     ];
   }
 
@@ -654,9 +693,9 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
       // ───────── 同步与备份 ─────────
       const _Section(title: '同步与备份', children: [SyncSettingsSection()]),
 
-      // ───────── 通用与关于 ─────────
+      // ───────── 界面与窗口 ─────────
       _Section(
-        title: '通用与关于',
+        title: _Category.display.label,
         children: [
           // 仅电视：低配模式（默认开，只存在本机）
           if (PlatformProfile.isTv) ...[
@@ -725,11 +764,16 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
             ),
             const SizedBox(height: 12),
           ],
-          const SizedBox(height: 24),
-          const _Subtitle('家长控制'),
-          const ParentalSettingsSection(),
-          const SizedBox(height: 36),
-          const _Subtitle('关于与更新'),
+        ],
+      ),
+
+      // ───────── 家长控制 ─────────
+      const _Section(title: '家长控制', children: [ParentalSettingsSection()]),
+
+      // ───────── 关于与更新 ─────────
+      _Section(
+        title: '关于与更新',
+        children: [
           _InfoLine(label: '当前版本', value: _version),
           _InfoLine(
             label: '更新来源',
@@ -804,16 +848,16 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 const Text('设置', style: VText.h1),
-                const SizedBox(height: 40),
-                for (final c in _Category.values) ...[
-                  _CategoryItem(
-                    category: c,
-                    selected: c == _category,
-                    autofocus: c == _Category.values.first,
-                    onSelect: () => setState(() => _category = c),
+                SizedBox(height: PlatformProfile.isDesktop ? 24 : 40),
+                if (PlatformProfile.isDesktop) ...[_SearchBox(controller: _search), const SizedBox(height: 20)],
+                Expanded(
+                  child: SingleChildScrollView(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: _search.text.trim().isEmpty ? _categoryItems() : _searchResults(_search.text),
+                    ),
                   ),
-                  const SizedBox(height: 10),
-                ],
+                ),
               ],
             ),
           ),
@@ -838,6 +882,166 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
   }
 }
 
+/// 设置搜索的索引：每个设置项的名字、所在分类和别名（搜「代理」「UA」「字幕」等都能找到）
+class _SettingIndexEntry {
+  const _SettingIndexEntry(this.title, this.category, [this.keywords = '']);
+
+  final String title;
+  final _Category category;
+  final String keywords;
+}
+
+const _settingIndex = <_SettingIndexEntry>[
+  // 播放
+  _SettingIndexEntry('播放预加载', _Category.playback, '预热 流量 下一集'),
+  _SettingIndexEntry('起播预热量', _Category.playback, '预加载 MB'),
+  _SettingIndexEntry('播放缓冲', _Category.playback, '缓存 内存 buffer'),
+  _SettingIndexEntry('资源排序', _Category.playback, '多版本 画质优先 速度优先 指定服务器 换源'),
+  _SettingIndexEntry('默认字幕', _Category.playback, '字幕语言 简体 繁体 英文 内封 subtitle'),
+  _SettingIndexEntry('关闭播放器后清除播放缓存', _Category.playback, '缓存 磁盘'),
+  _SettingIndexEntry('还在观看吗', _Category.playback, '连续播放 自动播放 睡着'),
+  _SettingIndexEntry('立即清除播放缓存', _Category.playback, '缓存 清理'),
+  _SettingIndexEntry('快进 / 快退步长', _Category.playback, '快进 快退 秒'),
+  _SettingIndexEntry('播放内核', _Category.playback, 'mpv ExoPlayer 安卓 电视'),
+  _SettingIndexEntry('自动帧率切换', _Category.playback, '刷新率 帧率 电视'),
+  _SettingIndexEntry('隧道播放', _Category.playback, 'ExoPlayer 音画同步'),
+  // 片头片尾
+  _SettingIndexEntry('自动跳过片头 / 前情提要 / 片尾', _Category.segments, '跳过 片头 片尾 前情提要 下一集 skip'),
+  _SettingIndexEntry('第一集不自动跳过片头', _Category.segments, '第一集 片头'),
+  _SettingIndexEntry('片头片尾数据来源', _Category.segments, 'TheIntroDB 手动标记 章节 Intro Skipper API Key'),
+  // 弹幕
+  _SettingIndexEntry('弹幕服务器', _Category.danmaku, '弹幕源 danmu_api 地址 token'),
+  _SettingIndexEntry('播放时显示弹幕', _Category.danmaku, '弹幕开关'),
+  _SettingIndexEntry('弹幕数量上限', _Category.danmaku, '密度 数量'),
+  _SettingIndexEntry('弹幕字号 / 不透明度 / 显示区域 / 速度', _Category.danmaku, '字号 透明度 区域 速度 大小'),
+  _SettingIndexEntry('顶部 / 底部弹幕、繁简转换、弹幕颜色', _Category.danmaku, '繁简 颜色 固定弹幕'),
+  _SettingIndexEntry('弹幕屏蔽词', _Category.danmaku, '屏蔽 关键词 剧透'),
+  // 媒体服务器
+  _SettingIndexEntry('播放 UA', _Category.servers, 'User-Agent UA 客户端'),
+  _SettingIndexEntry('客户端名称 / 设备名称', _Category.servers, 'Emby Jellyfin 设备'),
+  _SettingIndexEntry('API 与图片请求也使用播放 UA', _Category.servers, 'UA'),
+  _SettingIndexEntry('聚合搜索', _Category.servers, '搜索 服务器'),
+  _SettingIndexEntry('本地索引', _Category.servers, '索引 搜索 拼音'),
+  // 接口与网络
+  _SettingIndexEntry('反向代理', _Category.network, '代理 proxy emby-reverse-proxy-go 线路'),
+  _SettingIndexEntry('跟随 Windows 系统代理', _Category.network, '系统代理 Clash VPN proxy'),
+  _SettingIndexEntry('TMDB API', _Category.network, 'TMDB API Key 元数据 推荐 中文标题'),
+  _SettingIndexEntry('评分', _Category.network, 'OMDb Trakt MDBList IMDb 烂番茄'),
+  _SettingIndexEntry('片头片尾数据库', _Category.network, 'TheIntroDB 代理'),
+  _SettingIndexEntry('自定义更新地址', _Category.network, 'latest.json GitHub 更新'),
+  // 同步与备份
+  _SettingIndexEntry('发送到电视 / 接收配置', _Category.sync, '扫码 二维码 电视 手机 同步'),
+  _SettingIndexEntry('配置备份', _Category.sync, '导入 导出 备份 文件'),
+  _SettingIndexEntry('WebDAV 同步', _Category.sync, 'WebDAV 坚果云 同步 云'),
+  // 界面与窗口
+  _SettingIndexEntry('流畅优先', _Category.display, '低配 动画 毛玻璃 性能 电视'),
+  _SettingIndexEntry('打开软件时全屏', _Category.display, '全屏 启动'),
+  _SettingIndexEntry('开始播放时全屏', _Category.display, '全屏 播放'),
+  _SettingIndexEntry('桌面图标', _Category.display, '图标 任务栏 快捷方式 日间 夜间'),
+  _SettingIndexEntry('左侧导航栏', _Category.display, '导航 紧凑'),
+  _SettingIndexEntry('关闭窗口时最小化到托盘', _Category.display, '托盘 关闭 退出 后台'),
+  // 家长控制
+  _SettingIndexEntry('家长控制', _Category.parental, '儿童 分级 PIN 年龄'),
+  // 关于与更新
+  _SettingIndexEntry('检查更新', _Category.about, '版本 更新 升级'),
+  _SettingIndexEntry('启动时自动检查更新', _Category.about, '自动更新'),
+  _SettingIndexEntry('检查测试版', _Category.about, '测试版 预发布 beta'),
+  _SettingIndexEntry('导出日志', _Category.about, '日志 log 反馈 问题'),
+];
+
+/// 按名字、分类名和别名搜索设置项（不分大小写，空格分开的多个词都要匹配）
+@visibleForTesting
+List<_SettingIndexEntry> searchSettings(String query) {
+  final words = query.toLowerCase().split(RegExp(r'\s+')).where((w) => w.isNotEmpty).toList();
+  if (words.isEmpty) return const [];
+  final tv = PlatformProfile.isTv;
+  return [
+    for (final e in _settingIndex)
+      // 电视上没有的 Windows 专属设置不列出来
+      if (!(tv && e.category == _Category.display && e.title != '流畅优先') &&
+          !(!tv && const {'流畅优先', '播放内核', '自动帧率切换', '隧道播放'}.contains(e.title)))
+        if (words.every('${e.title} ${e.category.label} ${e.keywords}'.toLowerCase().contains)) e,
+  ];
+}
+
+/// 设置搜索框（Windows）
+class _SearchBox extends StatelessWidget {
+  const _SearchBox({required this.controller});
+
+  final TextEditingController controller;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      height: 52,
+      padding: const EdgeInsets.symmetric(horizontal: 16),
+      decoration: BoxDecoration(color: const Color(0x14FFFFFF), borderRadius: BorderRadius.circular(VRadius.sm)),
+      child: Row(
+        children: [
+          const Icon(Icons.search_rounded, size: 22, color: VColors.textTertiary),
+          const SizedBox(width: 10),
+          Expanded(
+            child: TextField(
+              controller: controller,
+              style: VText.label,
+              cursorColor: Colors.white,
+              decoration: InputDecoration(
+                isCollapsed: true,
+                border: InputBorder.none,
+                hintText: '搜索设置',
+                hintStyle: VText.label.copyWith(color: VColors.textTertiary),
+              ),
+            ),
+          ),
+          if (controller.text.isNotEmpty)
+            GestureDetector(
+              onTap: controller.clear,
+              child: const MouseRegion(
+                cursor: SystemMouseCursors.click,
+                child: Icon(Icons.close_rounded, size: 20, color: VColors.textTertiary),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+}
+
+/// 搜索结果：设置名 + 所在分类，点击跳到那个分类
+class _SearchHit extends StatelessWidget {
+  const _SearchHit({required this.entry, required this.onSelect});
+
+  final _SettingIndexEntry entry;
+  final VoidCallback onSelect;
+
+  @override
+  Widget build(BuildContext context) {
+    return VFocusable(
+      semanticLabel: entry.title,
+      radius: VRadius.sm,
+      scale: 1,
+      alignment: Alignment.centerLeft,
+      showRing: false,
+      onActivate: onSelect,
+      builder: (context, focused) => AnimatedContainer(
+        duration: VMotion.duration(context, VMotion.focus),
+        padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 10),
+        decoration: BoxDecoration(
+          color: focused ? const Color(0x1FFFFFFF) : const Color(0x00FFFFFF),
+          borderRadius: BorderRadius.circular(VRadius.sm),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(entry.title, style: VText.label),
+            Text(entry.category.label, style: VText.small.copyWith(color: VColors.textTertiary)),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
 enum _Category {
   playback('播放', Icons.play_circle_outline_rounded),
   segments('片头片尾', Icons.fast_forward_outlined),
@@ -845,7 +1049,9 @@ enum _Category {
   servers('媒体服务器', Icons.dns_outlined),
   network('接口与网络', Icons.hub_outlined),
   sync('同步与备份', Icons.qr_code_2_rounded),
-  general('通用与关于', Icons.tune_rounded);
+  display('界面与窗口', Icons.tune_rounded),
+  parental('家长控制', Icons.shield_outlined),
+  about('关于与更新', Icons.info_outline_rounded);
 
   const _Category(this.label, this.icon);
   final String label;

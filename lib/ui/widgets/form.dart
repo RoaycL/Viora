@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import '../../app/platform_profile.dart';
 import '../../app/theme.dart';
 import '../focus/focusable.dart';
 
@@ -210,6 +211,9 @@ class VToggle extends StatelessWidget {
   /// null = 填满父级宽度
   final double? width;
 
+  /// Windows 上较长的说明收进标题旁的「i」，鼠标悬停显示；短的状态说明（如「已开启」）和电视上照常显示在下面
+  bool get _tipOnly => subtitle != null && PlatformProfile.isDesktop && subtitle!.characters.length > 16;
+
   @override
   Widget build(BuildContext context) {
     return VFocusable(
@@ -236,8 +240,18 @@ class VToggle extends StatelessWidget {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  Text(label, style: VText.label),
-                  if (subtitle != null) Text(subtitle!, style: VText.small.copyWith(color: VColors.textTertiary)),
+                  if (_tipOnly)
+                    Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Flexible(child: Text(label, style: VText.label)),
+                        InfoTip(subtitle!),
+                      ],
+                    )
+                  else ...[
+                    Text(label, style: VText.label),
+                    if (subtitle != null) Text(subtitle!, style: VText.small.copyWith(color: VColors.textTertiary)),
+                  ],
                 ],
               ),
             ),
@@ -276,10 +290,17 @@ class VChoice<T> extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final (title, hint) = PlatformProfile.isDesktop ? splitHint(label) : (label, null);
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text(label, style: VText.caption.copyWith(color: VColors.textTertiary)),
+        Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Flexible(child: Text(title, style: VText.caption.copyWith(color: VColors.textTertiary))),
+            if (hint != null) InfoTip(hint),
+          ],
+        ),
         const SizedBox(height: 10),
         Row(
           children: [
@@ -336,4 +357,38 @@ class SectionTitle extends StatelessWidget {
     padding: const EdgeInsets.only(bottom: 20),
     child: Text(text, style: VText.rowTitle),
   );
+}
+
+/// 「标题（说明）」拆成标题和说明；没有括号说明时说明为 null
+(String, String?) splitHint(String label) {
+  final i = label.indexOf('（');
+  if (i <= 0 || !label.endsWith('）')) return (label, null);
+  return (label.substring(0, i), label.substring(i + 1, label.length - 1));
+}
+
+/// 标题旁的「i」：鼠标悬停显示说明（Windows 设置页用，把长说明收起来）
+class InfoTip extends StatelessWidget {
+  const InfoTip(this.message, {super.key});
+
+  final String message;
+
+  @override
+  Widget build(BuildContext context) {
+    return Tooltip(
+      message: message,
+      waitDuration: const Duration(milliseconds: 150),
+      preferBelow: false,
+      constraints: const BoxConstraints(maxWidth: 520),
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+      decoration: BoxDecoration(color: const Color(0xF21C1F2A), borderRadius: BorderRadius.circular(VRadius.sm)),
+      textStyle: VText.small.copyWith(color: Colors.white, height: 1.5),
+      child: const Padding(
+        padding: EdgeInsets.only(left: 8),
+        child: MouseRegion(
+          cursor: SystemMouseCursors.help,
+          child: Icon(Icons.info_outline_rounded, size: 20, color: VColors.textTertiary),
+        ),
+      ),
+    );
+  }
 }
