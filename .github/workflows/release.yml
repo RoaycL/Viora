@@ -2,11 +2,12 @@
 #
 # 版本号来自 pubspec.yaml 的 `version:`，发正式版还是测试版看仓库根目录的 `release-channel` 文件：
 #   stable → 标签 v<版本>，正式版（GitHub 上标为 Latest）
-#   betaN  → 标签 v<版本>-betaN（如 v0.17.6-beta1），测试版（预发布）。测试版不单独占版本号：
+#   betaN  → 标签 beta-v<版本>-betaN（如 beta-v0.17.6-beta1），测试版（预发布）。测试版不单独占版本号：
 #            pubspec 里写下一个正式版的版本号，同一个版本号下按 beta1、beta2… 发，最后发正式版
 #            （release-channel 改回 stable）。应用里打包时注入 VIORA_PRERELEASE=betaN，显示为 0.17.6-beta1，
 #            比较新旧时 beta1 < beta2 < 正式版；按「设置 → 检查测试版」决定要不要提示测试版
-#   v0.17.5 及以前的测试版用的是 beta-v<版本> 标签（每个测试版占一个版本号），应用仍能识别
+#   标签保留 beta- 前缀：v0.15.33 及以前的应用不区分预发布，前缀让它们解析不了测试版标签，只会更新到正式版。
+#   v0.17.5 及以前的测试版是 beta-v<版本>（每个测试版占一个版本号），应用仍能识别
 # 每个标签只发一次；正式版发过之后不能再发这个版本号的测试版。当这个标签还没有发布时，创建 Release 并上传：
 #   Viora-<版本>-android.split-arm64-v8a.apk   Android / Android TV（64 位，应用内更新优先用按架构拆分的包）
 #   Viora-<版本>-android.split-armeabi-v7a.apk Android / Android TV（32 位，多数电视盒子）
@@ -82,7 +83,7 @@ jobs:
           channel=$(tr -d '[:space:]' < release-channel 2>/dev/null || echo stable)
           case "$channel" in
             stable) beta=false; pre=""; display="$version"; tag="v$version" ;;
-            beta[1-9]|beta[1-9][0-9]) beta=true; pre="$channel"; display="$version-$channel"; tag="v$display" ;;
+            beta[1-9]|beta[1-9][0-9]) beta=true; pre="$channel"; display="$version-$channel"; tag="beta-v$display" ;;
             *) echo "release-channel 只能是 stable 或 beta1、beta2…：$channel"; exit 1 ;;
           esac
           # 这个标签发过就不再发；正式版（或旧规则下同版本号的测试版 beta-v<版本>）发过之后，也不再发这个版本号的测试版

@@ -66,7 +66,7 @@ void main() {
     expect(parseReleaseTag('v0.15.32', prerelease: true)!.$2, isTrue);
   });
 
-  test('新的测试版标签 v<下一个正式版>-betaN：beta1 < beta2 < 正式版', () async {
+  test('新的测试版标签 beta-v<下一个正式版>-betaN：beta1 < beta2 < 正式版', () async {
     final b1 = AppVersion.tryParse('0.17.6-beta1+68')!;
     final b2 = AppVersion.tryParse('v0.17.6-beta2')!;
     final stable = AppVersion.tryParse('v0.17.6')!;
@@ -76,15 +76,18 @@ void main() {
     expect(b1 > AppVersion.tryParse('0.17.5+67')!, isTrue);
     expect(AppVersion.tryParse('0.17.7-beta1')! > stable, isTrue);
     expect(b2.toString(), '0.17.6-beta2');
-    expect(parseReleaseTag('v0.17.6-beta2')!.$2, isTrue);
+    expect(parseReleaseTag('beta-v0.17.6-beta2')!.$1, b2);
+    expect(parseReleaseTag('beta-v0.17.6-beta2')!.$2, isTrue);
+    // v0.15.33 及以前直接用 AppVersion.tryParse(tag)、不看预发布：保留 beta- 前缀让它们解析不了
+    expect(AppVersion.tryParse('beta-v0.17.6-beta1'), isNull);
 
-    body = [release('v0.17.6-beta2', prerelease: true), release('v0.17.6-beta1', prerelease: true), release('v0.17.5')];
+    body = [release('beta-v0.17.6-beta2', prerelease: true), release('beta-v0.17.6-beta1', prerelease: true), release('v0.17.5')];
     final beta = await source(beta: true).latest(UpdatePlatform.windows);
     expect(beta!.version, b2);
     expect(beta.label, 'v0.17.6-beta2（测试版）');
     expect((await source(beta: false).latest(UpdatePlatform.windows))!.label, 'v0.17.5');
 
-    body = [release('v0.17.6'), release('v0.17.6-beta2', prerelease: true)];
+    body = [release('v0.17.6'), release('beta-v0.17.6-beta2', prerelease: true)];
     expect((await source(beta: true).latest(UpdatePlatform.windows))!.label, 'v0.17.6');
   });
 
