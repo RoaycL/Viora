@@ -56,6 +56,7 @@ class SegmentPlaybackSession {
     bool hasNextEpisode = false,
     Duration? position,
     List<Segment> manual = const [],
+    List<Segment> handled = const [],
   }) {
     final generation = ++_generation;
     _position = position ?? Duration.zero;
@@ -65,6 +66,10 @@ class SegmentPlaybackSession {
     _resolved = const [];
     _manual = manual;
     final controller = SegmentSkipController(query: query, settings: settings, hasNextEpisode: hasNextEpisode);
+    // 起播前已经跳过的（直接从片头结束处打开）：之后倒回去看不再被自动跳走
+    for (final s in handled) {
+      controller.markHandled(SegmentSkipAction(segment: s, kind: SegmentSkipActionKind.seek, automatic: true));
+    }
     _controller = controller;
     onPrompt(null);
     if (manual.isNotEmpty) {

@@ -71,13 +71,13 @@ class SegmentSkipController {
     return null;
   }
 
-  /// 从头播放时开头就要自动跳过的片头：返回应该直接开始播放的位置（片头结束处），没有就 null
-  Duration? autoIntroStart() {
+  /// 从头播放时开头就要自动跳过的片头（直接从它的结束处开始播放），没有就 null
+  Segment? autoIntroAtStart() {
     for (final s in segments) {
       if (s.type != SegmentType.intro || s.start > const Duration(seconds: 1)) continue;
       final action = at(s.start);
       if (action != null && action.automatic && action.segment == s && action.kind == SegmentSkipActionKind.seek) {
-        return action.target;
+        return s;
       }
     }
     return null;

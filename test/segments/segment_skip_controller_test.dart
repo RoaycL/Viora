@@ -126,14 +126,11 @@ void main() {
       confidence: 1,
     );
     final auto = SegmentSettings.defaults().copyWith(intro: SegmentSkipMode.auto);
-    expect(
-      (SegmentSkipController(query: episode, settings: auto)..segments = [opening]).autoIntroStart(),
-      const Duration(seconds: 85),
-    );
+    expect((SegmentSkipController(query: episode, settings: auto)..segments = [opening]).autoIntroAtStart(), opening);
     // 片头前还有内容（冷开场）：不能直接跳过开头
-    expect((SegmentSkipController(query: episode, settings: auto)..segments = [intro]).autoIntroStart(), isNull);
+    expect((SegmentSkipController(query: episode, settings: auto)..segments = [intro]).autoIntroAtStart(), isNull);
     final button = SegmentSettings.defaults().copyWith(intro: SegmentSkipMode.button);
-    expect((SegmentSkipController(query: episode, settings: button)..segments = [opening]).autoIntroStart(), isNull);
+    expect((SegmentSkipController(query: episode, settings: button)..segments = [opening]).autoIntroAtStart(), isNull);
     const first = SegmentQuery(
       titleKey: 'series',
       kind: SegmentMediaKind.episode,
@@ -145,7 +142,7 @@ void main() {
       (SegmentSkipController(
         query: first,
         settings: auto.copyWith(firstEpisodeException: true),
-      )..segments = [opening]).autoIntroStart(),
+      )..segments = [opening]).autoIntroAtStart(),
       isNull,
     );
   });

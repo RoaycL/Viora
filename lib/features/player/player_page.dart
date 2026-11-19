@@ -687,7 +687,8 @@ class _PlayerPageState extends ConsumerState<PlayerPage> with WidgetsBindingObse
         // 最多多等半秒（通常是本机读取，几毫秒）；拿不到就照常从头播，开播后再查、再跳
         final skipTo = await introStart.timeout(const Duration(milliseconds: 500), onTimeout: () => null);
         if (skipTo != null && mounted) {
-          from = skipTo;
+          from = skipTo.end;
+          _startupSkipped = skipTo;
           showToast('已为您跳过片头，如需调整请到「设置 → 片头片尾」', duration: const Duration(seconds: 4));
         }
       }
@@ -795,6 +796,9 @@ class _PlayerPageState extends ConsumerState<PlayerPage> with WidgetsBindingObse
     _segments?.dispose();
     _segments = null;
     _creditsStart = null;
+    _startupSkipped = null;
+    // 换版本时内核会沿用：先把上一个版本设的预读上限恢复掉
+    if (_readaheadSecs != null) _engine?.setReadaheadLimit(null);
     _readaheadSecs = null;
     if (mounted) {
       setState(() {
@@ -818,7 +822,7 @@ class _PlayerPageState extends ConsumerState<PlayerPage> with WidgetsBindingObse
 
   /// 从头播放、片头设为自动跳过时，起播前就知道片头在哪（手动标记，或之前查过的缓存）：
   /// 直接从片头结束处打开，比从头加载再跳快，也不会先闪一下片头。不联网查询，拿不到就从头播
-  Future<Duration?> _introSkipStart(Future<MediaItem> itemFuture, EmbyClient client, MediaSourceInfo source) async {
+  Future<Segment?> _introSkipStart(Future<MediaItem> itemFuture, EmbyClient client, MediaSourceInfo source) async {
     try {
       final item = await itemFuture;
       if (item.kind != MediaKind.movie && item.kind != MediaKind.episode) return null;
@@ -835,7 +839,7 @@ class _PlayerPageState extends ConsumerState<PlayerPage> with WidgetsBindingObse
       final cached = await resolver.cached(query) ?? const [];
       final controller = SegmentSkipController(query: query, settings: settings)
         ..segments = mergeManualSegments(cached, mark.segmentsFor(duration));
-      return controller.autoIntroStart();
+      return controller.autoIntroAtStart();
     } catch (_) {
       return null;
     }
@@ -863,6 +867,9 @@ class _PlayerPageState extends ConsumerState<PlayerPage> with WidgetsBindingObse
     _readaheadSecs = want;
     _engine?.setReadaheadLimit(want == null ? null : Duration(seconds: want));
   }
+
+  /// 起播前就跳过了的片头（直接从它的结束处打开）
+  Segment? _startupSkipped;
 
   /// 最近一次会自动跳到下一集的片尾开始位置
   Duration? _creditsStart;
@@ -945,6 +952,7 @@ class _PlayerPageState extends ConsumerState<PlayerPage> with WidgetsBindingObse
             hasNextEpisode: hasNext,
             position: _started ? _state.position : null,
             manual: mark.segmentsFor(duration),
+            handled: [?_startupSkipped],
           );
     } catch (e) {
       debugPrint('segments unavailable: $e');

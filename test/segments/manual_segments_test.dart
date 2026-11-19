@@ -142,4 +142,25 @@ void main() {
     session.onPosition(const Duration(seconds: 91));
     expect(seeks, hasLength(2));
   });
+
+  test('起播前已经跳过的片头：倒回去看不再被自动跳走', () async {
+    final seeks = <Duration>[];
+    final manual = const ManualMark(introEnd: Duration(seconds: 90)).segmentsFor(_ep.duration);
+    final session = SegmentPlaybackSession(
+      resolver: SegmentResolver(providers: []),
+      seek: (p) async => seeks.add(p),
+      nextEpisode: () async {},
+      onPrompt: (_) {},
+    );
+    session.begin(
+      _ep,
+      SegmentSettings.defaults().copyWith(intro: SegmentSkipMode.auto),
+      manual: manual,
+      handled: [manual.first],
+    );
+    session.onPosition(const Duration(seconds: 95));
+    session.onPosition(const Duration(seconds: 10));
+    await Future<void>.delayed(Duration.zero);
+    expect(seeks, isEmpty);
+  });
 }
