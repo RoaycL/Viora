@@ -100,6 +100,13 @@ flutter:
           weight: 700
         - asset: assets/fonts/RobotoDigits-900.ttf
           weight: 900
+    # Windows 的界面主字体：思源黑体（Noto Sans SC）子集，GB2312 全部汉字 + 西文标点，生僻字回退到微软雅黑
+    - family: VioraSans
+      fonts:
+        - asset: assets/fonts/NotoSansSC-Subset-400.otf
+          weight: 400
+        - asset: assets/fonts/NotoSansSC-Subset-700.otf
+          weight: 700
 
   # An image asset can refer to one or more resolution-specific "variants", see
   # https://flutter.dev/to/resolution-aware-images
