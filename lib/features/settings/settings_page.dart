@@ -740,7 +740,7 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
             ValueListenableBuilder<AppIconStyle>(
               valueListenable: DesktopPrefs.instance.iconStyle,
               builder: (context, v, _) => VChoice<AppIconStyle>(
-                label: '桌面图标（任务栏、桌面和开始菜单的快捷方式；应用里的图标不变）',
+                label: '桌面图标',
                 options: [for (final s in AppIconStyle.values) (s, s.label)],
                 value: v,
                 onChanged: DesktopPrefs.instance.setIconStyle,
@@ -751,7 +751,7 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
               valueListenable: DesktopPrefs.instance.navCompact,
               builder: (context, compact, _) => VChoice<bool>(
                 label: '左侧导航栏',
-                options: const [(false, '默认（一长条）'), (true, '紧凑（上下居中）')],
+                options: const [(false, '默认'), (true, '居中')],
                 value: compact,
                 onChanged: DesktopPrefs.instance.setNavCompact,
               ),

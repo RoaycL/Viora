@@ -5,6 +5,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../app/theme.dart';
+import '../../core/net/error_text.dart';
 import '../../data/aggregate/sources.dart';
 import '../../data/aggregate/tmdb_link.dart';
 import '../../data/cache/account_scope.dart';
@@ -155,7 +156,14 @@ class _ItemDetailPageState extends ConsumerState<ItemDetailPage> {
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              Text(error.toString(), style: VText.label.copyWith(color: VColors.bad)),
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 120),
+                child: Text(
+                  '加载失败：${errorText(error)}',
+                  textAlign: TextAlign.center,
+                  style: VText.label.copyWith(color: VColors.bad),
+                ),
+              ),
               const SizedBox(height: 24),
               PillButton(
                 autofocus: true,
@@ -355,7 +363,6 @@ class _ItemDetailPageState extends ConsumerState<ItemDetailPage> {
               'play',
               if (resumeAt > Duration.zero) 'restart',
               if (seriesOfEpisode != null) 'series',
-              if (optionsAsync != null) 'resources',
               if (zh.overview?.isNotEmpty == true) 'overview',
               'favorite',
               'played',
@@ -382,13 +389,6 @@ class _ItemDetailPageState extends ConsumerState<ItemDetailPage> {
                   icon: Icons.format_list_numbered_rounded,
                   label: '选集',
                   onPressed: () => openWatchedItem(context, item),
-                ),
-              if (optionsAsync != null)
-                (node) => PillButton(
-                  focusNode: node,
-                  icon: Icons.video_library_outlined,
-                  label: '选择资源',
-                  onPressed: () => _sources.currentState?.reveal(),
                 ),
               if (zh.overview?.isNotEmpty == true)
                 (node) => PillButton(

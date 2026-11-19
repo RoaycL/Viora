@@ -5,6 +5,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../app/theme.dart';
+import '../../core/net/error_text.dart';
 import '../../data/aggregate/sources.dart';
 import '../../data/aggregate/tmdb_link.dart';
 import '../../data/config/config_store.dart';
@@ -26,7 +27,7 @@ import '../metadata/external_ratings.dart';
 import 'tmdb_cards.dart';
 
 /// TMDB 作品详情：媒体库里没有的作品（首页推荐、人物作品、相似推荐点进来）。
-/// 进入后才到各服务器搜索资源（[tmdbLibrarySearchProvider]），找到时可直接播放或选择资源。
+/// 进入后才到各服务器搜索资源（[tmdbLibrarySearchProvider]），找到时可直接播放，资源列在下方。
 class TmdbDetailPage extends ConsumerWidget {
   const TmdbDetailPage({super.key, required this.isTv, required this.id});
 
@@ -42,7 +43,7 @@ class TmdbDetailPage extends ConsumerWidget {
         AsyncData(value: final t?) => _TmdbDetail(t),
         AsyncData() => const _Message('没有配置 TMDB'),
         AsyncError(:final error) => _Message(
-          '加载失败：$error',
+          '加载失败：${errorText(error)}',
           onRetry: () => ref.invalidate(tmdbTitleProvider((isTv: isTv, id: id))),
         ),
         _ => DetailLoading(seed: '${isTv ? 'tv' : 'movie'}/$id', onBack: () => context.pop()),
@@ -235,7 +236,6 @@ class _TmdbDetailState extends ConsumerState<_TmdbDetail> {
             itemKeys: [
               'play',
               if (selected != null && resumeAt > Duration.zero) 'restart',
-              'resources',
               if (t.overview.isNotEmpty) 'overview',
               if (copies.isNotEmpty) 'library',
             ],
@@ -256,12 +256,6 @@ class _TmdbDetailState extends ConsumerState<_TmdbDetail> {
                   label: '从头播放',
                   onPressed: () => _play(selected, fromStart: true),
                 ),
-              (node) => PillButton(
-                focusNode: node,
-                icon: Icons.video_library_outlined,
-                label: '选择资源',
-                onPressed: () => _sources.currentState?.reveal(),
-              ),
               if (t.overview.isNotEmpty)
                 (node) => PillButton(
                   focusNode: node,

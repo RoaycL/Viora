@@ -495,6 +495,7 @@ class _HeroInfo extends StatelessWidget {
         Wrap(
           spacing: 12,
           runSpacing: 8,
+          crossAxisAlignment: WrapCrossAlignment.center,
           children: [
             Container(
               padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
