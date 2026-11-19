@@ -76,6 +76,7 @@ class PlayerPage extends ConsumerStatefulWidget {
     this.sourceId,
     this.triedSources = const [],
     this.resume = false,
+    this.progressAt,
   });
 
   final String serverId;
@@ -86,6 +87,10 @@ class PlayerPage extends ConsumerStatefulWidget {
   /// 卡片 / 详情页上的进度可能是缓存的旧数据，别的设备看到了更后面时，从旧位置播放、上报会把服务器进度覆盖回去。
   /// 「从头播放」、切换资源时接着当前位置等明确指定了位置的不设
   final bool resume;
+
+  /// 和 [resume] 一起用：[startMs] 是另一台服务器上的进度，这是那次播放的时间（毫秒时间戳）。
+  /// 这台服务器上的进度比它新时用这台的，否则用 [startMs]（这台的 0 / 旧进度不能把它覆盖掉）
+  final int? progressAt;
   final String? sourceId;
 
   /// 自动换源时已经试过、打不开的版本（「服务器/版本 ID」），换到其他服务器时带过去，避免来回切
@@ -545,6 +550,12 @@ class _PlayerPageState extends ConsumerState<PlayerPage> with WidgetsBindingObse
     if (!widget.resume) return fallback;
     try {
       final item = await fresh.timeout(const Duration(seconds: 3));
+      final carriedAt = widget.progressAt;
+      if (carriedAt != null) {
+        final at = PlayHistory.lastPlayed(item);
+        final newer = at != null && at.millisecondsSinceEpoch > carriedAt;
+        return newer && !item.played ? item.position : (newer ? Duration.zero : fallback);
+      }
       // 服务器上是 0 又没标看完：多半是这台还没收到进度（上报没发出去、刚换过版本），用带来的位置，不从头播
       if (item.position == Duration.zero && !item.played) return fallback;
       if (item.position != fallback) {

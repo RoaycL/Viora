@@ -221,7 +221,7 @@ void main() {
     final all = [best, watched, older];
     expect(latestProgress(all)?.serverId, 'b');
     expect(playRouteFor(best, all), contains('pos=1200000'));
-    expect(playRouteFor(best, all), isNot(contains('resume=1')));
+    expect(playRouteFor(best, all), contains('&at=${DateTime(2026, 11, 19, 10).millisecondsSinceEpoch}'));
     // 就是这个版本自己的进度：让播放页再向服务器确认最新进度
     expect(playRouteFor(watched, all), contains('resume=1'));
     expect(playRouteFor(best, all, fromStart: true), contains('pos=0'));

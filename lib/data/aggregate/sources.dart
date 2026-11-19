@@ -52,8 +52,10 @@ class SourceOption {
   };
 
   /// [resume]：继续播放（播放页起播前取服务器上最新的进度），见 PlayerPage.resume
-  String playRoute({Duration position = Duration.zero, bool resume = false}) =>
-      '/play/${item.serverId}/${item.id}?pos=${position.inMilliseconds}&source=${source.id}${resume ? '&resume=1' : ''}';
+  /// [progressAt]：[position] 来自另一台服务器时那次播放的时间，见 PlayerPage.progressAt
+  String playRoute({Duration position = Duration.zero, bool resume = false, DateTime? progressAt}) =>
+      '/play/${item.serverId}/${item.id}?pos=${position.inMilliseconds}&source=${source.id}${resume ? '&resume=1' : ''}'
+      '${resume && progressAt != null ? '&at=${progressAt.millisecondsSinceEpoch}' : ''}';
 }
 
 /// 这一集在各服务器上最近一次没看完的进度。各台的进度互不相通：在 A 服务器看到一半，
@@ -73,15 +75,19 @@ MediaItem? latestProgress(Iterable<SourceOption> options) {
   return best;
 }
 
-/// 播放 [o] 的路由。接着看时用 [all] 里最近的进度：就是这个版本自己的进度时让播放页再向服务器确认最新进度；
-/// 进度来自别的服务器时直接从那个位置开始（这台服务器上的进度是 0，不能拿它覆盖）
+/// 播放 [o] 的路由。接着看时用 [all] 里最近的进度，播放页起播前都再向这台服务器确认：
+/// 进度来自别的服务器时带上那次播放的时间，这台上的进度更新（详情页的列表是旧的，刚在这台看过）才用这台的
 String playRouteFor(SourceOption o, Iterable<SourceOption> all, {bool fromStart = false}) {
   if (fromStart) return o.playRoute();
   final latest = latestProgress(all);
   if (latest == null || (latest.serverId == o.serverId && latest.id == o.item.id)) {
     return o.playRoute(position: o.item.position, resume: true);
   }
-  return o.playRoute(position: latest.position);
+  return o.playRoute(
+    position: latest.position,
+    resume: true,
+    progressAt: PlayHistory.lastPlayed(latest) ?? DateTime.fromMillisecondsSinceEpoch(0),
+  );
 }
 
 /// 同一账号刷新时保留可用资源；账号 / 家长限制变化时不能复用旧 AsyncValue 中的资源。
