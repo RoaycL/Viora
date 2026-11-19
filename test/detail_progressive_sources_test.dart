@@ -37,7 +37,7 @@ class _Client extends EmbyClient {
 
   Future<MediaItem> Function(String id) onItem = (_) => throw const MediaServerException('HTTP 502', statusCode: 502);
   List<MediaItem> found = const [];
-  Future<PlaybackInfoResult> Function(String id) onInfo = (_) async => (sources: const [], playSessionId: null);
+  Future<PlaybackInfoResult> Function(String id) onInfo = (_) async => (sources: const <MediaSourceInfo>[], playSessionId: null);
 
   @override
   Future<MediaItem> item(String id) => onItem(id);
