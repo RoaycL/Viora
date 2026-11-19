@@ -122,6 +122,7 @@ class SourcesSectionState extends State<SourcesSection> {
               [
                 if (options.isNotEmpty) '${options.length} 个版本 · ${options.map((o) => o.serverId).toSet().length} 台服务器',
                 ?widget.caption,
+                if (options.isNotEmpty && widget.loading) '正在获取其他服务器的资源…',
               ].join(' · '),
               style: VText.caption.copyWith(color: VColors.textTertiary),
             ),

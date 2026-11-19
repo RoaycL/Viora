@@ -218,6 +218,25 @@ final latestProvider = FutureProvider.family<List<MediaItem>, ({String serverId,
   return client.latest(parentId: key.libraryId, limit: 16);
 });
 
+/// 卡片上已有的条目信息（首页各行、媒体库、搜索结果的字段和单条详情一样）：
+/// 打开详情页时先用它显示，不等这台服务器返回；这台服务器出错时页面照样能打开，资源从其他服务器聚合
+class ItemSeeds {
+  static final _items = <String, MediaItem>{};
+
+  static void remember(MediaItem item) {
+    final key = '${item.serverId}/${item.id}';
+    _items
+      ..remove(key)
+      ..[key] = item;
+    if (_items.length > 200) _items.remove(_items.keys.first);
+  }
+
+  static MediaItem? of(String serverId, String itemId) => _items['$serverId/$itemId'];
+
+  /// 换账号 / 家长控制变化后旧卡片的信息不再可信
+  static void clear() => _items.clear();
+}
+
 final itemProvider = FutureProvider.family<MediaItem, ({String serverId, String itemId})>((ref, key) async {
   final client = ref.watch(serverClientProvider(key.serverId));
   if (client == null) throw const MediaServerException('服务器不存在');

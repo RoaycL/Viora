@@ -122,7 +122,17 @@ class _TmdbDetailState extends ConsumerState<_TmdbDetail> {
     final optionsAsync = t.isTv
         ? ref.watch(tmdbEpisodeSourcesProvider((title: key, season: season, episode: episode)))
         : ref.watch(tmdbSourceOptionsProvider(key));
-    final options = visibleSourceOptions(ref.read(configProvider), optionsAsync.value ?? const <SourceOption>[]);
+    // 各服务器的版本谁先返回先显示（逐台补上），全部返回后换成完整列表
+    final partial = optionsAsync.hasValue
+        ? null
+        : ref.watch(
+            partialSourcesProvider(
+              t.isTv
+                  ? tmdbEpisodeSourcesKey((title: key, season: season, episode: episode))
+                  : tmdbSourcesKey(key),
+            ),
+          );
+    final options = visibleSourceOptions(ref.read(configProvider), optionsAsync.value ?? partial ?? const []);
     final loading = search.isLoading || (libraryEpisodes?.isLoading ?? false) || optionsAsync.isLoading;
     final selected = options.where((o) => sourceKeyOf(o) == _sourceKey).firstOrNull ?? options.firstOrNull;
     final hasServers = ref.watch(configProvider.select((c) => c.servers.isNotEmpty));
@@ -270,7 +280,7 @@ class _TmdbDetailState extends ConsumerState<_TmdbDetail> {
                   tooltip: '媒体库详情',
                   onPressed: () {
                     final c = copies.where((c) => c.serverId == selected?.serverId).firstOrNull ?? copies.first;
-                    context.push('/item/${c.serverId}/${c.id}');
+                    openMediaItem(context, c);
                   },
                 ),
             ],

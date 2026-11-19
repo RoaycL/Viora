@@ -145,14 +145,18 @@ class _ItemDetailPageState extends ConsumerState<ItemDetailPage> {
         _catalogEpisode = null;
         _sourceKey = null;
         _warmedKey = null;
+        ItemSeeds.clear();
       },
     );
     final async = ref.watch(itemProvider(_key));
+    // 卡片上已有的信息：服务器还没返回或出错时先用它显示页面，资源照样从各服务器聚合
+    final seed = ItemSeeds.of(widget.serverId, widget.itemId);
     return Material(
       color: VColors.background,
-      child: switch (async) {
-        AsyncData(value: final item) => _content(item),
-        AsyncError(:final error) => Center(
+      child: switch ((async, async.value ?? seed)) {
+        (AsyncData(value: final item), _) => _content(item),
+        (_, final MediaItem item) => _content(item),
+        (AsyncError(:final error), _) => Center(
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
@@ -270,9 +274,18 @@ class _ItemDetailPageState extends ConsumerState<ItemDetailPage> {
               .watch(homeEpisodeSourcesProvider((series: libraryKey, season: catalogSeason, episode: catalogEpisode)))
               .value
         : null;
+    // 各服务器的版本谁先返回先显示（逐台补上），全部返回后换成完整列表
+    final partialKey = libraryKey != null
+        ? libraryEpisodeSourcesKey((series: libraryKey, season: catalogSeason, episode: catalogEpisode))
+        : serverTarget == null
+        ? null
+        : itemSourcesKey((serverId: serverTarget.serverId, itemId: serverTarget.id));
+    final partial = optionsAsync?.hasValue != true && partialKey != null && episodeSettled
+        ? ref.watch(partialSourcesProvider(partialKey))
+        : null;
     final options = visibleSourceOptions(
       ref.read(configProvider),
-      optionsAsync?.value ?? homeOptions ?? const <SourceOption>[],
+      optionsAsync?.value ?? mergeSourceOptions(partial, homeOptions),
     );
     final selected = options.where((o) => sourceKeyOf(o) == _sourceKey).firstOrNull ?? options.firstOrNull;
     final playTarget = useCatalog ? selected?.item : serverTarget;
