@@ -9,6 +9,7 @@ import 'package:viora/data/config/app_config.dart';
 import 'package:viora/data/config/config_store.dart';
 import 'package:viora/data/emby/emby_client.dart';
 import 'package:viora/data/index/index_sync.dart';
+import 'package:viora/data/index/media_index.dart';
 import 'package:viora/data/media/media_models.dart';
 import 'package:viora/data/media/server_registry.dart';
 import 'package:viora/player/preload.dart';
@@ -33,6 +34,8 @@ class _Client extends EmbyClient {
   Future<MediaItem> Function(String id) onItem = (_) => throw const MediaServerException('HTTP 502', statusCode: 502);
   List<MediaItem> found = const [];
   List<MediaItem> eps = const [];
+  int searches = 0;
+  int episodeRequests = 0;
   Future<PlaybackInfoResult> Function(String id) onInfo = (_) async =>
       (sources: const <MediaSourceInfo>[], playSessionId: null);
 
@@ -52,10 +55,16 @@ class _Client extends EmbyClient {
     String? filters,
     String? fields,
     bool userData = true,
-  }) async => PagedItems(found, found.length);
+  }) async {
+    searches++;
+    return PagedItems(found, found.length);
+  }
 
   @override
-  Future<List<MediaItem>> episodes(String seriesId, {String? seasonId}) async => eps;
+  Future<List<MediaItem>> episodes(String seriesId, {String? seasonId}) async {
+    episodeRequests++;
+    return eps;
+  }
 
   @override
   Future<PlaybackInfoResult> playbackInfo(String itemId, {bool isPlayback = false}) => onInfo(itemId);
@@ -72,6 +81,58 @@ void main() {
     ItemSeeds.clear();
     ConfigStore.vault = MemoryVault();
     SharedPreferences.setMockInitialValues({});
+  });
+
+  test('已确认离线的副本不实时搜索，也不从索引发起季集或播放信息请求；恢复后重新加入', () async {
+    final a = _server('a'), b = _server('b');
+    final config = AppConfig(servers: [a, b]);
+    final indexedMovie = _movie('b', 'm-b');
+    const indexedShow = MediaItem(serverId: 'b', id: 's-b', kind: MediaKind.series, name: '历史那些事', tmdbId: '42');
+    final index = (await MediaIndex.open(path: ':memory:'))!;
+    addTearDown(index.close);
+    index.upsert('b', [indexedMovie, indexedShow]);
+    var otherPlaybackRequests = 0;
+    final home = _Client(a, config)
+      ..onItem = ((id) async => _movie('a', id))
+      ..onInfo = (id) async => _sources('a', id);
+    final other = _Client(b, config)
+      ..found = [indexedMovie, indexedShow]
+      ..onInfo = (id) async {
+        otherPlaybackRequests++;
+        return _sources('b', id);
+      };
+    final container = ProviderContainer(
+      overrides: [
+        serverClientProvider.overrideWith((ref, id) => id == 'a' ? home : other),
+        mediaIndexProvider.overrideWith((ref) async => index),
+      ],
+    );
+    addTearDown(container.dispose);
+    await container.read(configProvider.notifier).update((_) => config);
+    await container.read(mediaIndexProvider.future);
+
+    final health = container.read(serverReachabilityProvider.notifier);
+    health.record('b', config.clientKey('b'), false);
+    const movieKey = (isTv: false, id: 42, title: '历史那些事', originalTitle: null, year: 2018);
+    const showKey = (isTv: true, id: 42, title: '历史那些事', originalTitle: null, year: 2018);
+    final sources = sourceOptionsProvider((serverId: 'a', itemId: 'm-a'));
+    final movie = tmdbSourceOptionsProvider(movieKey);
+    final episodes = tmdbSeriesEpisodesProvider(showKey);
+    container.listen(sources, (_, _) {});
+    container.listen(movie, (_, _) {});
+    container.listen(episodes, (_, _) {});
+    expect((await container.read(sources.future)).map((o) => o.serverId), ['a']);
+    expect(await container.read(movie.future), isEmpty);
+    expect(await container.read(episodes.future), isEmpty);
+    expect([other.searches, other.episodeRequests, otherPlaybackRequests], [0, 0, 0]);
+
+    health.record('b', config.clientKey('b'), true);
+    expect((await container.read(sources.future)).map((o) => o.serverId).toSet(), {'a', 'b'});
+    expect((await container.read(movie.future)).map((o) => o.serverId), ['b']);
+    await container.read(episodes.future);
+    expect(other.searches, greaterThan(0));
+    expect(other.episodeRequests, 1);
+    expect(otherPlaybackRequests, 1, reason: '同一条目的并发 PlaybackInfo 请求应复用');
   });
 
   test('当前服务器取详情报 502：用卡片信息继续聚合；各服务器的版本先返回的先显示', () async {

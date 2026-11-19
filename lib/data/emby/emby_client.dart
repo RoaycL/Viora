@@ -1,5 +1,5 @@
-import 'dart:io' show HttpException;
 import 'dart:async';
+import 'dart:io' show HandshakeException, HttpException, SocketException;
 import 'dart:math';
 
 import 'package:dio/dio.dart';
@@ -50,10 +50,11 @@ String describeServerError(int? status) => switch (status) {
 };
 
 class MediaServerException implements Exception {
-  const MediaServerException(this.message, {this.statusCode});
+  const MediaServerException(this.message, {this.statusCode, this.connectionFailure = false});
 
   final String message;
   final int? statusCode;
+  final bool connectionFailure;
 
   @override
   String toString() => message;
@@ -87,15 +88,21 @@ final Map<String, String> _autoLine = {};
 
 /// Emby / Jellyfin 客户端（两者 API 同源，差异见 docs/03-media-servers.md §2）。
 class EmbyClient {
-  EmbyClient({required this.config, required ServerConfig server, required this.appVersion, this.onServerChanged})
-    : _server = server,
-      _metricsId = accountScope(server).substring(0, 10); // ignore: prefer_initializing_formals
+  EmbyClient({
+    required this.config,
+    required ServerConfig server,
+    required this.appVersion,
+    this.onServerChanged,
+    this.onProbed,
+  }) : _server = server,
+       _metricsId = accountScope(server).substring(0, 10); // ignore: prefer_initializing_formals
 
   final AppConfig config;
   final String appVersion;
 
   /// 登录令牌刷新、线路切换后回调，用于持久化
   final void Function(ServerConfig server)? onServerChanged;
+  final void Function(bool reachable)? onProbed;
 
   ServerConfig _server;
   final String _metricsId;
@@ -142,26 +149,31 @@ class EmbyClient {
   // ───────────────────────── 测速 / 公开信息 ─────────────────────────
 
   /// 测一条线路的延迟（3 次取中位数）；不可用返回 null。
-  Future<int?> probe(ServerLine l) async {
+  Future<int?> probe(ServerLine l, {Duration? timeout}) async {
     final c = composerFor(l);
     final url = c.finalUrl(c.resolve('/System/Info/Public'), RequestKind.api);
     final dio = _dio()..options.connectTimeout = const Duration(seconds: 5);
+    final elapsed = Stopwatch()..start();
     final samples = <int>[];
-    for (var i = 0; i < 3; i++) {
-      final sw = Stopwatch()..start();
-      try {
-        final r = await LoadTrace.request(
-          'media_api',
-          _metricsId,
-          () => dio.getUri<dynamic>(url, options: Options(headers: c.headers(RequestKind.api))),
-          isSuccess: (r) => (r.statusCode ?? 500) < 400,
-        );
-        // 401 / 403 也算连得上：按 UA 白名单拦截的服务器到登录时再提示原因，不要报"连不上"
-        final code = r.statusCode ?? 0;
-        if (code >= 200 && code < 500 && code != 404) samples.add(sw.elapsedMilliseconds);
-      } catch (_) {
-        break;
+    try {
+      for (var i = 0; i < 3; i++) {
+        final remaining = timeout == null ? null : timeout - elapsed.elapsed;
+        if (remaining != null && remaining <= Duration.zero) break;
+        final sw = Stopwatch()..start();
+        try {
+          final r = await LoadTrace.request('media_api', _metricsId, () {
+            final request = dio.getUri<dynamic>(url, options: Options(headers: c.headers(RequestKind.api)));
+            return remaining == null ? request : request.timeout(remaining);
+          }, isSuccess: (r) => (r.statusCode ?? 500) < 400);
+          // 401 / 403 也算连得上：按 UA 白名单拦截的服务器到登录时再提示原因，不要报"连不上"
+          final code = r.statusCode ?? 0;
+          if (code >= 200 && code < 500 && code != 404) samples.add(sw.elapsedMilliseconds);
+        } catch (_) {
+          break;
+        }
       }
+    } finally {
+      dio.close(force: true);
     }
     if (samples.isEmpty) return null;
     samples.sort();
@@ -170,8 +182,8 @@ class EmbyClient {
 
   /// 并发测速全部线路，更新延迟，并把自动选线指向最快的一条。
   /// [notify] 为 false 时不回调 [onServerChanged]（调用方把多台服务器的结果合并成一次保存）
-  Future<ServerConfig> probeAll({bool notify = true}) async {
-    final results = await Future.wait(_server.lines.map(probe));
+  Future<ServerConfig> probeAll({bool notify = true, Duration? timeout}) async {
+    final results = await Future.wait(_server.lines.map((line) => probe(line, timeout: timeout)));
     final lines = [
       for (var i = 0; i < _server.lines.length; i++)
         _server.lines[i].copyWith(latencyMs: results[i], clearLatency: results[i] == null),
@@ -179,7 +191,10 @@ class EmbyClient {
     _server = _server.copyWith(lines: lines);
     final best = lines.where((l) => l.latencyMs != null).toList()..sort((a, b) => a.latencyMs!.compareTo(b.latencyMs!));
     if (best.isNotEmpty) _autoLine[_server.id] = best.first.id;
-    if (notify) onServerChanged?.call(_server);
+    if (notify) {
+      onProbed?.call(best.isNotEmpty);
+      onServerChanged?.call(_server);
+    }
     return _server;
   }
 
@@ -329,6 +344,18 @@ class EmbyClient {
     throw MediaServerException(
       _describe(lastError),
       statusCode: lastError is DioException ? lastError.response?.statusCode : null,
+      connectionFailure:
+          lastError is DioException &&
+          (const {
+                DioExceptionType.connectionError,
+                DioExceptionType.connectionTimeout,
+                DioExceptionType.receiveTimeout,
+                DioExceptionType.sendTimeout,
+                DioExceptionType.badCertificate,
+              }.contains(lastError.type) ||
+              lastError.error is SocketException ||
+              lastError.error is HttpException ||
+              lastError.error is HandshakeException),
     );
   }
 
