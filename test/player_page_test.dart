@@ -634,10 +634,14 @@ void main() {
     expect(h.engine.volume, closeTo(0.80, 0.001));
     await press(tester, LogicalKeyboardKey.arrowUp);
     expect(h.engine.volume, closeTo(0.85, 0.001));
-    // 不会超过 100%
-    for (var i = 0; i < 5; i++) {
+    // 超过 100% 是音量增强（最高 200%；按住 ↑ 时停在 100%）
+    for (var i = 0; i < 3; i++) {
       await press(tester, LogicalKeyboardKey.arrowUp);
     }
+    expect(h.engine.volume, 1);
+    await press(tester, LogicalKeyboardKey.arrowUp);
+    expect(h.engine.volume, closeTo(1.05, 0.001));
+    await press(tester, LogicalKeyboardKey.arrowDown);
     expect(h.engine.volume, 1);
     // M 静音 / 取消静音，音量记得原来的
     await press(tester, LogicalKeyboardKey.keyM);

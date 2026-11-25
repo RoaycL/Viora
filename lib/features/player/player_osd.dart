@@ -546,13 +546,15 @@ class VolumeSlider extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    // 音量增强（超过 100%）时滑块变成琥珀色
+    final fill = value > 1 ? const Color(0xFFFFB74D) : Colors.white;
     return ExcludeFocus(
       child: MouseRegion(
         cursor: SystemMouseCursors.click,
         child: Listener(
           onPointerSignal: (e) {
             if (e is PointerScrollEvent) {
-              onChanged?.call((value + (e.scrollDelta.dy < 0 ? 0.05 : -0.05)).clamp(0.0, 1.0));
+              onChanged?.call((value + (e.scrollDelta.dy < 0 ? 0.05 : -0.05)).clamp(0.0, maxVolume));
             }
           },
           child: GestureDetector(
@@ -575,14 +577,14 @@ class VolumeSlider extends StatelessWidget {
                     Container(
                       width: width * value.clamp(0.0, 1.0),
                       height: 5,
-                      decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(3)),
+                      decoration: BoxDecoration(color: fill, borderRadius: BorderRadius.circular(3)),
                     ),
                     Positioned(
                       left: width * value.clamp(0.0, 1.0) - 7,
                       child: Container(
                         width: 14,
                         height: 14,
-                        decoration: const BoxDecoration(color: Colors.white, shape: BoxShape.circle),
+                        decoration: BoxDecoration(color: fill, shape: BoxShape.circle),
                       ),
                     ),
                   ],

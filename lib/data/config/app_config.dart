@@ -227,6 +227,9 @@ enum EnginePreference {
   static EnginePreference parse(String? s) => values.firstWhere((e) => e.name == s, orElse: () => auto);
 }
 
+/// Windows 音量上限：超过 1（100%）是音量增强
+const maxVolume = 2.0;
+
 class PlaybackConfig {
   const PlaybackConfig({
     this.userAgent = '',
@@ -422,7 +425,7 @@ class PlaybackConfig {
     clearCacheOnExit: j['clearCacheOnExit'] as bool? ?? true,
     sourceOrder: SourceOrder.values.asNameMap()[j['sourceOrder']] ?? SourceOrder.quality,
     pinnedServerId: j['pinnedServerId'] as String?,
-    volume: ((j['volume'] as num?)?.toDouble() ?? 1.0).clamp(0.0, 1.0),
+    volume: ((j['volume'] as num?)?.toDouble() ?? 1.0).clamp(0.0, maxVolume),
     muted: j['muted'] as bool? ?? false,
     subtitleScale: ((j['subtitleScale'] as num?)?.toDouble() ?? 1.0).clamp(0.5, 2.0),
     subtitlePosition: ((j['subtitlePosition'] as num?)?.toInt() ?? 100).clamp(0, 150),

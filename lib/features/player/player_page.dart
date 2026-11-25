@@ -669,9 +669,12 @@ class _PlayerPageState extends ConsumerState<PlayerPage> with WidgetsBindingObse
   late bool _muted = ref.read(configProvider).playback.muted;
   Timer? _volumeSave;
 
-  void _setVolume(double volume, {bool? muted}) {
+  /// 超过 100% 是音量增强（最高 [maxVolume]）。从 100% 以下调上来时先停在 100%，要再按一次才进入增强；
+  /// 按住 ↑ 不放（[repeat]）也停在 100%，免得一下子变得很响
+  void _setVolume(double volume, {bool? muted, bool repeat = false}) {
     if (!PlatformProfile.isDesktop) return;
-    final v = (volume * 100).round().clamp(0, 100) / 100;
+    var v = (volume * 100).round().clamp(0, (maxVolume * 100).round()) / 100;
+    if (v > 1 && (_volume < 1 || (repeat && _volume <= 1))) v = 1;
     // 调大音量时自动取消静音
     final m = muted ?? (_muted && v <= _volume);
     setState(() {
@@ -679,7 +682,10 @@ class _PlayerPageState extends ConsumerState<PlayerPage> with WidgetsBindingObse
       _muted = m;
     });
     _engine?.setVolume(m ? 0 : v);
-    showToast(m ? '静音' : '音量 ${(v * 100).round()}%', duration: const Duration(milliseconds: 1200));
+    showToast(
+      m ? '静音' : '音量 ${(v * 100).round()}%${v > 1 ? '（增强）' : ''}',
+      duration: const Duration(milliseconds: 1200),
+    );
     _volumeSave?.cancel();
     _volumeSave = Timer(const Duration(milliseconds: 800), _saveVolume);
   }
@@ -2011,7 +2017,7 @@ class _PlayerPageState extends ConsumerState<PlayerPage> with WidgetsBindingObse
     } else if (!repeat && key == LogicalKeyboardKey.channelUp) {
       _playNext();
     } else if (repeat && PlatformProfile.isDesktop && key == LogicalKeyboardKey.arrowUp) {
-      _setVolume(_volume + 0.05);
+      _setVolume(_volume + 0.05, repeat: true);
     } else if (repeat && PlatformProfile.isDesktop && key == LogicalKeyboardKey.arrowDown) {
       _setVolume(_volume - 0.05);
     } else if (repeat) {

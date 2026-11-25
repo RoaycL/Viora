@@ -228,6 +228,8 @@ class MpvEngine extends PlayerEngine {
       await proxy;
       await set('http-proxy', SystemProxy.forMpv(media.url) ?? '');
       await set('network-timeout', '20');
+      // 音量增强：Windows 音量最高到 200%（mpv 默认上限 130%）
+      await set('volume-max', '200');
       // media_kit 默认 hr-seek-framedrop=no：精确跳转（续播、拖动进度、跳片头）时，从关键帧到目标位置之间的每一帧
       // 都要完整解码并输出。4K HEVC 关键帧间隔常有 5~10 秒，跳一次要多等一两秒。改回 mpv 的默认 yes：
       // 目标位置之前的帧解码后直接丢掉，落点一样准，续播起播和拖动明显更快（我们不用会改时间戳的视频滤镜）
@@ -323,7 +325,7 @@ class MpvEngine extends PlayerEngine {
   Future<void> setVideoFit(VideoFit fit) async => _fit.value = fit;
 
   @override
-  Future<void> setVolume(double volume) => _player.setVolume((volume * 100).clamp(0, 100).toDouble());
+  Future<void> setVolume(double volume) => _player.setVolume((volume * 100).clamp(0, 200).toDouble());
 
   @override
   Future<void> selectAudio(EngineTrack track) async {
