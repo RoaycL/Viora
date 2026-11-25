@@ -551,6 +551,12 @@ class _PlayerPageState extends ConsumerState<PlayerPage> with WidgetsBindingObse
             (credits != null && s.position >= credits.start - const Duration(minutes: 1)))) {
       _preloadNext();
     }
+    if (_nextPreloading &&
+        !_nextRefreshed &&
+        s.duration > Duration.zero &&
+        (s.duration - s.position < const Duration(seconds: 90) || (credits != null && s.position >= credits.start))) {
+      _refreshNext();
+    }
     if (s.playing != _wasPlaying) {
       _wasPlaying = s.playing;
       if (!_started && s.playing) {
@@ -716,7 +722,10 @@ class _PlayerPageState extends ConsumerState<PlayerPage> with WidgetsBindingObse
       // 并行：创建播放内核、取条目信息、取播放信息（详情页 / 首页已预加载时直接命中缓存）
       _cacheDir ??= await PlaybackCache.dir();
       final engineReady = _engine == null ? _attachEngine(_createEngine()) : Future<void>.value();
-      final itemFuture = _item == null ? client.item(widget.itemId) : Future.value(_item!);
+      // 条目（要用其中的续播位置）：10 分钟内从服务器取到过的直接用（首页继续观看、详情页、集列表都会取），
+      // 不用在起播前再等一次单条详情；这台设备上报过进度后会重新取
+      final recent = _item ?? client.recentItem(widget.itemId);
+      final itemFuture = recent != null ? Future.value(recent) : client.item(widget.itemId);
       itemFuture.ignore();
       // 剧集的剧信息和条目一起提前取（片头跳过起播、片头片尾查询都要用）
       itemFuture.then((it) {
@@ -1348,6 +1357,23 @@ class _PlayerPageState extends ConsumerState<PlayerPage> with WidgetsBindingObse
       final next = await _resolveNextEpisode();
       if (next == null || client == null) return;
       await PlaybackPreloader.preload(client, next, position: Duration.zero);
+    } catch (_) {}
+  }
+
+  bool _nextRefreshed = false;
+
+  /// 快播完时再确认一次下一集的播放信息和条目还在缓存里：85% 时预加载的播放信息只缓存 3 分钟，
+  /// 长一点的剧集播到结尾时已经过期，自动进下一集要重新请求（经反代 1~2 秒）。还在缓存里时不会发请求
+  Future<void> _refreshNext() async {
+    _nextRefreshed = true;
+    final client = _client;
+    try {
+      final next = await _resolveNextEpisode();
+      if (next == null || client == null || !PlaybackPreloader.enabled) return;
+      await Future.wait([
+        PlaybackPreloader.info(client, widget.serverId, next.id),
+        if (client.recentItem(next.id) == null) client.item(next.id),
+      ]);
     } catch (_) {}
   }
 
