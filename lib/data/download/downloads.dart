@@ -300,6 +300,9 @@ class Downloads extends ChangeNotifier {
 
   final _clients = <String, EmbyClient>{};
 
+  /// 下载时每收到这么多就等一次写盘
+  static const _flushEvery = 4 << 20;
+
   /// 文件路径不和别的下载重复（同一部的不同版本、不同账号下的同一部）：重名时加「 (2)」「 (3)」…
   String _uniquePath(String name) {
     final dot = name.lastIndexOf('.');
@@ -438,9 +441,16 @@ class Downloads extends ChangeNotifier {
         e.received = start;
         sink = part.openWrite(mode: start > 0 ? FileMode.append : FileMode.write);
         var lastNotify = DateTime.now();
+        var pending = 0;
         await for (final chunk in resp.data!.stream) {
           sink.add(chunk);
           e.received += chunk.length;
+          // 写盘比网速慢时不能一直往内存里攒：每攒够一段等它写完再继续收
+          pending += chunk.length;
+          if (pending >= _flushEvery) {
+            pending = 0;
+            await sink.flush();
+          }
           final now = DateTime.now();
           if (now.difference(lastNotify) > const Duration(milliseconds: 500)) {
             lastNotify = now;

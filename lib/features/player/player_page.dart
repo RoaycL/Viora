@@ -729,7 +729,7 @@ class _PlayerPageState extends ConsumerState<PlayerPage> with WidgetsBindingObse
       final recent = _item ?? client.recentItem(widget.itemId);
       // 已下载完：直接播本地文件，不请求播放信息（没有网络也能看）。下载列表启动时就在读，这里不等它
       final downloads = Downloads.instance;
-      final local = downloads.loaded
+      final downloaded = downloads.loaded
           ? downloads.playable(
               widget.serverId,
               widget.itemId,
@@ -737,6 +737,8 @@ class _PlayerPageState extends ConsumerState<PlayerPage> with WidgetsBindingObse
               sourceId: sourceId ?? widget.sourceId,
             )
           : null;
+      // 儿童模式下看不到的条目不走本地文件（和列表里的过滤一致）
+      final local = downloaded != null && itemVisible(ref.read(configProvider), downloaded.item) ? downloaded : null;
       final itemFuture = recent != null
           ? Future.value(recent)
           : local != null

@@ -4,6 +4,7 @@ import 'package:go_router/go_router.dart';
 
 import '../../app/theme.dart';
 import '../../data/cache/account_scope.dart';
+import '../../data/config/config_store.dart';
 import '../../data/download/downloads.dart';
 import '../../data/media/server_registry.dart';
 import '../../ui/focus/focus_auto_scroll.dart';
@@ -42,13 +43,17 @@ class _DownloadsPageState extends ConsumerState<DownloadsPage> {
 
   @override
   Widget build(BuildContext context) {
+    // 儿童模式等设置变了要重新筛选
+    final config = ref.watch(configProvider);
     return ListenableBuilder(
       listenable: Downloads.instance,
       builder: (context, _) {
-        // 只列当前登录账号的下载（同一服务器换了账号，不显示上一个账号的）；服务器删掉了的照常列出，可以删除文件
+        // 只列当前登录账号的下载（同一服务器换了账号，不显示上一个账号的），并按儿童模式过滤（和别处一样）；
+        // 服务器删掉了的在儿童模式关闭时照常列出，可以删除文件
         final list = Downloads.instance.entries.reversed.where((e) {
           final client = ref.read(serverClientProvider(e.serverId));
-          return client == null || accountScope(client.server) == e.account;
+          if (client == null) return !config.parental.enabled;
+          return accountScope(client.server) == e.account && itemVisible(config, e.item);
         }).toList();
         final done = list.where((e) => e.state == DownloadState.done).length;
         return FocusAutoScroll(
