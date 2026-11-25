@@ -356,7 +356,7 @@ class _PlayerPageState extends ConsumerState<PlayerPage> with WidgetsBindingObse
 
   /// 片尾自动模式：先倒计时，OK / 回车立即播放，返回取消（docs/07 §3.3）
   void _startNextCountdown() {
-    if (_nextEpisode == null || _nextCountdown != null || SleepTimer.endOfItem) return;
+    if (_nextEpisode == null || _nextCountdown != null || SleepTimer.endOfItem || _sleepStopped) return;
     setState(() => _nextCountdown = nextCountdownSeconds);
     _countdownTimer?.cancel();
     _skipFadeTimer?.cancel();
@@ -382,6 +382,7 @@ class _PlayerPageState extends ConsumerState<PlayerPage> with WidgetsBindingObse
 
   void _goNext({required bool auto}) {
     _countdownTimer?.cancel();
+    if (auto && _sleepStopped) return;
     final next = _nextEpisode;
     if (next == null || !mounted) return;
     if (auto) _arrivingByAutoPlay = true;
@@ -629,6 +630,8 @@ class _PlayerPageState extends ConsumerState<PlayerPage> with WidgetsBindingObse
     _startFixes = 0;
     _startFixAt = DateTime.fromMillisecondsSinceEpoch(0);
     await engine.open(EngineMedia(url: req.url, headers: headers, userAgent: req.userAgent, start: at));
+    // 打开的过程中睡眠定时到点了（内核打开后会自动开始播）：立即暂停
+    if (_sleepStopped) await engine.pause();
     if (PlatformProfile.isDesktop) await engine.setVolume(_muted ? 0 : _volume);
     await _applyDisplay(engine);
   }
@@ -1344,7 +1347,7 @@ class _PlayerPageState extends ConsumerState<PlayerPage> with WidgetsBindingObse
     final item = _item, client = _client;
     if (item == null || client == null || !mounted) return;
     // 睡眠定时「本集播完」：停在这里，不播下一集
-    if (SleepTimer.endOfItem) {
+    if (SleepTimer.endOfItem || _sleepStopped) {
       SleepTimer.clear();
       _countdownTimer?.cancel();
       await _engine?.pause();
@@ -1630,15 +1633,23 @@ class _PlayerPageState extends ConsumerState<PlayerPage> with WidgetsBindingObse
     _sleepTimer = Timer(left, _onSleep);
   }
 
+  /// 睡眠定时已经到点：之后不再自动播下一集；还在打开媒体时，打开后立即暂停
+  bool _sleepStopped = false;
+
   void _onSleep() {
     if (!mounted) return;
     SleepTimer.clear();
+    _sleepStopped = true;
+    // 片尾倒计时正在走：取消，不然倒计时结束会进下一集接着播
+    _countdownTimer?.cancel();
+    _nextCountdown = null;
     _engine?.pause();
     setState(() {});
     showToast('睡眠定时到了，已暂停播放', duration: const Duration(seconds: 5));
   }
 
   void _setSleep({int? minutes, bool endOfItem = false}) {
+    _sleepStopped = false;
     if (minutes != null) {
       SleepTimer.setMinutes(minutes);
       showToast('$minutes 分钟后暂停播放');
