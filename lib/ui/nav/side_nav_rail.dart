@@ -12,6 +12,7 @@ enum NavItem {
   library('/library', '资源库', Icons.dns_rounded),
   favorites('/favorites', '收藏', Icons.favorite_border_rounded),
   history('/history', '观看记录', Icons.history_rounded),
+  downloads('/downloads', '下载', Icons.download_rounded),
   settings('/settings', '设置', Icons.settings_outlined);
 
   const NavItem(this.path, this.label, this.icon);

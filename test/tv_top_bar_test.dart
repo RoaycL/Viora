@@ -72,7 +72,7 @@ void main() {
   testWidgets('电视设置页（不是按行导航的页面）最上面按 ↑ 也进入标签栏', (tester) async {
     await pumpApp(tester);
     await press(tester, LogicalKeyboardKey.arrowUp);
-    for (var i = 0; i < 4; i++) {
+    for (var i = 0; i < 5; i++) {
       await press(tester, LogicalKeyboardKey.arrowRight);
     }
     expect(focused, 'nav:/settings');
@@ -92,7 +92,7 @@ void main() {
     await pumpApp(tester);
     expect(find.text('搜索'), findsNothing);
     await press(tester, LogicalKeyboardKey.arrowUp);
-    for (var i = 0; i < 5; i++) {
+    for (var i = 0; i < 6; i++) {
       await press(tester, LogicalKeyboardKey.arrowRight);
     }
     expect(focused, 'nav:/search');
@@ -153,7 +153,7 @@ void main() {
     expect(focused, 'hero#0');
     // 搜索图标停留不切页面
     await press(tester, LogicalKeyboardKey.arrowUp);
-    for (var i = 0; i < 5; i++) {
+    for (var i = 0; i < 6; i++) {
       await tester.sendKeyEvent(LogicalKeyboardKey.arrowRight);
     }
     await tester.pump(const Duration(milliseconds: 400));

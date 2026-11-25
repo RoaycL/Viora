@@ -32,6 +32,7 @@ import '../../data/media/server_registry.dart';
 import '../../domain/models/segment.dart';
 import '../../domain/models/segment_settings.dart';
 import '../../player/chapters.dart';
+import '../../data/download/downloads.dart';
 import '../../player/engine.dart';
 import '../../player/sleep_timer.dart';
 import '../../player/exo_engine.dart';
@@ -726,19 +727,33 @@ class _PlayerPageState extends ConsumerState<PlayerPage> with WidgetsBindingObse
       // 条目（要用其中的续播位置）：10 分钟内从服务器取到过的直接用（首页继续观看、详情页、集列表都会取），
       // 不用在起播前再等一次单条详情；这台设备上报过进度后会重新取
       final recent = _item ?? client.recentItem(widget.itemId);
-      final itemFuture = recent != null ? Future.value(recent) : client.item(widget.itemId);
+      // 已下载完：直接播本地文件，不请求播放信息（没有网络也能看）。下载列表启动时就在读，这里不等它
+      final downloads = Downloads.instance;
+      final local = downloads.loaded
+          ? downloads.playable(widget.serverId, widget.itemId, sourceId: sourceId ?? widget.sourceId)
+          : null;
+      final itemFuture = recent != null
+          ? Future.value(recent)
+          : local != null
+          ? client.item(widget.itemId).timeout(const Duration(seconds: 3)).catchError((Object _) => local.item)
+          : client.item(widget.itemId);
       itemFuture.ignore();
       // 剧集的剧信息和条目一起提前取（片头跳过起播、片头片尾查询都要用）
       itemFuture.then((it) {
         if (it.kind == MediaKind.episode && it.seriesId != null) _seriesItem(client, it.seriesId!).ignore();
       }, onError: (_) {});
-      final info = await PlaybackPreloader.info(client, widget.serverId, widget.itemId);
+      final info = local != null
+          ? (sources: [local.source], playSessionId: null)
+          : await PlaybackPreloader.info(client, widget.serverId, widget.itemId);
       if (info.sources.isEmpty) throw const MediaServerException('没有可播放的资源');
       final wanted = sourceId ?? widget.sourceId;
       final source = info.sources.where((s) => s.id == wanted).firstOrNull ?? info.sources.first;
       _source = source;
       _knownSources = info.sources;
-      _request = client.stream(source, playSessionId: info.playSessionId);
+      _request = local != null
+          ? PlaybackRequest(url: Uri.file(local.path), headers: const {}, userAgent: '')
+          : client.stream(source, playSessionId: info.playSessionId);
+      if (local != null) AppLog.add('[play] 播放已下载的文件 ${local.path}');
       if (!mounted) return;
       setState(() {
         _source = source;
@@ -805,6 +820,14 @@ class _PlayerPageState extends ConsumerState<PlayerPage> with WidgetsBindingObse
         '[play] 停止上报 ${widget.itemId} 位置 ${formatClock(position)} / ${formatClock(duration)}${completed ? '（播完）' : ''}',
       );
       PlayHistory.record(widget.serverId, widget.itemId, scope: accountScope(client.server));
+      // 已下载的条目在本机也记一份进度（离线时下载页从这里继续播）
+      final total = duration.inMilliseconds;
+      Downloads.instance.recordProgress(
+        widget.serverId,
+        widget.itemId,
+        position,
+        played: completed || (total > 0 && position.inMilliseconds >= total * 0.9),
+      );
       // 继续观看先按本机的进度显示（不等服务器刷新回来）；看到 90% 以上服务器会标为已看，这里也移出。
       // 这里常在页面销毁过程中，不能马上改 provider：放到下一轮再写
       final item = _item;

@@ -27,7 +27,14 @@ class TopTabBar extends StatelessWidget {
   final bool visible;
 
   /// 标签顺序：首页在最前（打开应用时焦点在首页，按 ↑ 正好落在它上面）。搜索不占标签，在右上角
-  static const items = [NavItem.home, NavItem.library, NavItem.favorites, NavItem.history, NavItem.settings];
+  static const items = [
+    NavItem.home,
+    NavItem.library,
+    NavItem.favorites,
+    NavItem.history,
+    NavItem.downloads,
+    NavItem.settings,
+  ];
 
   @override
   Widget build(BuildContext context) {
