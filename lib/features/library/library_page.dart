@@ -448,24 +448,47 @@ LinearGradient _typeGradient(ServerType type) => LinearGradient(
   colors: switch (type) {
     ServerType.emby => const [Color(0xFF7EE07A), Color(0xFF2E8B2A)],
     ServerType.jellyfin => const [Color(0xFFAA5CC3), Color(0xFF00A4DC)],
+    ServerType.plex => const [Color(0xFFF5C04A), Color(0xFFCC7B19)],
   },
 );
 
-/// Emby / Jellyfin 官方图标
+/// Emby / Jellyfin 官方图标；Plex 画一个琥珀色的箭头（不打包 Plex 的商标图）
 class ServerTypeLogo extends StatelessWidget {
   const ServerTypeLogo(this.type, {super.key});
 
   final ServerType type;
 
   @override
-  Widget build(BuildContext context) => Image.asset(
-    switch (type) {
-      ServerType.emby => 'assets/images/emby_logo.png',
-      ServerType.jellyfin => 'assets/images/jellyfin_logo.png',
-    },
-    fit: BoxFit.contain,
-    filterQuality: FilterQuality.medium,
-  );
+  Widget build(BuildContext context) => switch (type) {
+    ServerType.plex => const AspectRatio(aspectRatio: 1, child: CustomPaint(painter: _ChevronPainter())),
+    ServerType.emby || ServerType.jellyfin => Image.asset(
+      type == ServerType.emby ? 'assets/images/emby_logo.png' : 'assets/images/jellyfin_logo.png',
+      fit: BoxFit.contain,
+      filterQuality: FilterQuality.medium,
+    ),
+  };
+}
+
+class _ChevronPainter extends CustomPainter {
+  const _ChevronPainter();
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final w = size.shortestSide;
+    final o = Offset((size.width - w) / 2, (size.height - w) / 2);
+    final path = Path()
+      ..moveTo(o.dx + w * 0.22, o.dy + w * 0.1)
+      ..lineTo(o.dx + w * 0.5, o.dy + w * 0.1)
+      ..lineTo(o.dx + w * 0.82, o.dy + w * 0.5)
+      ..lineTo(o.dx + w * 0.5, o.dy + w * 0.9)
+      ..lineTo(o.dx + w * 0.22, o.dy + w * 0.9)
+      ..lineTo(o.dx + w * 0.54, o.dy + w * 0.5)
+      ..close();
+    canvas.drawPath(path, Paint()..color = const Color(0xFFE5A00D));
+  }
+
+  @override
+  bool shouldRepaint(_ChevronPainter oldDelegate) => false;
 }
 
 String _ago(DateTime? t) {

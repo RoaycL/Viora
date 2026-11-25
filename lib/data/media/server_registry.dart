@@ -37,7 +37,7 @@ final serverClientProvider = Provider.family<EmbyClient?, String>((ref, serverId
     PlaybackPreloader.bindAccount(serverId, accountScope(server));
   }
   final store = ref.read(configProvider.notifier);
-  return EmbyClient(
+  return mediaServerClient(
     config: config,
     server: server,
     appVersion: appVersion,
@@ -283,7 +283,7 @@ Future<void> probeAllServers(
 
 /// 为新服务器（还未保存）创建客户端，用于添加服务器时的连接测试与登录。
 EmbyClient clientForDraft(AppConfig config, ServerConfig server) =>
-    EmbyClient(config: config, server: server, appVersion: appVersion);
+    mediaServerClient(config: config, server: server, appVersion: appVersion);
 
 typedef MediaFeedKey = ({MediaFeedKind kind, String scope});
 

@@ -578,7 +578,7 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
               VToggle(
                 label: s.displayName,
                 subtitle: [
-                  s.type == ServerType.emby ? 'Emby' : 'Jellyfin',
+                  s.type.label,
                   if (s.lines.isNotEmpty) s.lines.first.url,
                   if (!s.loggedIn) '未登录',
                 ].join(' · '),
