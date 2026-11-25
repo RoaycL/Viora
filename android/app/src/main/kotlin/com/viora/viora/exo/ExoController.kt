@@ -54,15 +54,20 @@ class ExoController(
     private var dolbyVisionBaseLayer = false
 
     val player: ExoPlayer
+    private val renderers: VioraRenderersFactory
+
+    /** 起播以来丢掉的视频帧数（播放统计） */
+    private var droppedFrames = 0L
 
     init {
         // 视频渲染器换成能把杜比视界 P7 当 HDR10 基础层播的版本（DolbyVisionRenderers.kt），其余和默认一致
-        val renderers = VioraRenderersFactory(context) {
+        renderers = VioraRenderersFactory(context) {
             handler.post {
                 dolbyVisionBaseLayer = true
                 sendVideo()
             }
         }
+        renderers
             .setEnableDecoderFallback(true)
             .setExtensionRendererMode(DefaultRenderersFactory.EXTENSION_RENDERER_MODE_PREFER)
         trackSelector.parameters = trackSelector.buildUponParameters()
@@ -160,6 +165,7 @@ class ExoController(
         subtitleConfigs.clear()
         reportedUnsupported = false
         dolbyVisionBaseLayer = false
+        droppedFrames = 0
         player.setMediaSource(sources.createMediaSource(item), startMs.coerceAtLeast(0))
         sourcesFactory = sources
         player.prepare()
@@ -175,6 +181,11 @@ class ExoController(
     fun pause() = player.pause()
 
     fun seek(ms: Long) = player.seekTo(ms.coerceAtLeast(0))
+
+    /** 音画同步：正数 = 声音推后 */
+    fun setAudioDelay(ms: Long) {
+        renderers.audioSink?.offsetUs = ms * 1000
+    }
 
     fun setRate(rate: Float) {
         player.playbackParameters = PlaybackParameters(rate)
@@ -241,6 +252,7 @@ class ExoController(
                 "duration" to player.duration.takeIf { it != C.TIME_UNSET },
                 "buffered" to player.bufferedPosition,
                 "speed" to speed,
+                "dropped" to droppedFrames,
             )
         )
     }
@@ -317,6 +329,10 @@ class ExoController(
     }
 
     private val analytics = object : AnalyticsListener {
+        override fun onDroppedVideoFrames(eventTime: AnalyticsListener.EventTime, droppedFrames: Int, elapsedMs: Long) {
+            this@ExoController.droppedFrames += droppedFrames
+        }
+
         override fun onVideoDecoderInitialized(
             eventTime: AnalyticsListener.EventTime,
             decoderName: String,

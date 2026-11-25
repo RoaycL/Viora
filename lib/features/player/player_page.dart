@@ -32,6 +32,7 @@ import '../../data/media/server_registry.dart';
 import '../../domain/models/segment.dart';
 import '../../domain/models/segment_settings.dart';
 import '../../player/engine.dart';
+import '../../player/sleep_timer.dart';
 import '../../player/exo_engine.dart';
 import '../../player/manual_segments.dart';
 import '../../player/mpv_engine.dart';
@@ -296,6 +297,7 @@ class _PlayerPageState extends ConsumerState<PlayerPage> with WidgetsBindingObse
       if (_started && _state.playing) _report();
     });
     _start();
+    _armSleepTimer();
     _focus.addListener(_keepFocus);
     // 电视：播放时暂停后台索引同步，不和播放抢带宽和 CPU
     if (PlatformProfile.isTv) {
@@ -353,7 +355,7 @@ class _PlayerPageState extends ConsumerState<PlayerPage> with WidgetsBindingObse
 
   /// 片尾自动模式：先倒计时，OK / 回车立即播放，返回取消（docs/07 §3.3）
   void _startNextCountdown() {
-    if (_nextEpisode == null || _nextCountdown != null) return;
+    if (_nextEpisode == null || _nextCountdown != null || SleepTimer.endOfItem) return;
     setState(() => _nextCountdown = nextCountdownSeconds);
     _countdownTimer?.cancel();
     _skipFadeTimer?.cancel();
@@ -1337,6 +1339,15 @@ class _PlayerPageState extends ConsumerState<PlayerPage> with WidgetsBindingObse
     _reportStopped(completed: true);
     final item = _item, client = _client;
     if (item == null || client == null || !mounted) return;
+    // 睡眠定时「本集播完」：停在这里，不播下一集
+    if (SleepTimer.endOfItem) {
+      SleepTimer.clear();
+      _countdownTimer?.cancel();
+      await _engine?.pause();
+      showToast('睡眠定时：本集已播完，已停止播放', duration: const Duration(seconds: 5));
+      if (mounted) setState(() {});
+      return;
+    }
     // 剧集自动播放下一集（季末接着播下一季第一集）
     final next = await _resolveNextEpisode();
     if (!mounted) return;
@@ -1363,6 +1374,13 @@ class _PlayerPageState extends ConsumerState<PlayerPage> with WidgetsBindingObse
     DesktopTray.instance.hiddenToTray.removeListener(_onHiddenToTray);
     WidgetsBinding.instance.removeObserver(this);
     _countdownTimer?.cancel();
+    _sleepTimer?.cancel();
+    // 退出播放就取消睡眠定时；连播下一集 / 换版本时按分钟的定时接着算，「本集播完」只管这一集
+    if (_handoff) {
+      SleepTimer.endOfItem = false;
+    } else {
+      SleepTimer.clear();
+    }
     if (_volumeSave?.isActive ?? false) {
       _volumeSave!.cancel();
       _saveVolume();
@@ -1536,6 +1554,74 @@ class _PlayerPageState extends ConsumerState<PlayerPage> with WidgetsBindingObse
     _setRate(_rates[next]);
   }
 
+  // ───────────────────────── 睡眠定时 ─────────────────────────
+
+  Timer? _sleepTimer;
+
+  /// 按 [SleepTimer.deadline] 安排到点暂停（连播下一集时新的播放页接着算）
+  void _armSleepTimer() {
+    _sleepTimer?.cancel();
+    final left = SleepTimer.remaining();
+    if (left == null) return;
+    _sleepTimer = Timer(left, _onSleep);
+  }
+
+  void _onSleep() {
+    if (!mounted) return;
+    SleepTimer.clear();
+    _engine?.pause();
+    setState(() {});
+    showToast('睡眠定时到了，已暂停播放', duration: const Duration(seconds: 5));
+  }
+
+  void _setSleep({int? minutes, bool endOfItem = false}) {
+    if (minutes != null) {
+      SleepTimer.setMinutes(minutes);
+      showToast('$minutes 分钟后暂停播放');
+    } else if (endOfItem) {
+      SleepTimer.setEndOfItem();
+      showToast(_item?.kind == MediaKind.episode ? '本集播完后停止，不自动播下一集' : '播完后停止');
+    } else {
+      SleepTimer.clear();
+      showToast('已关闭睡眠定时');
+    }
+    _armSleepTimer();
+    setState(() {});
+  }
+
+  List<MenuAction> _sleepItems() {
+    final minutes = SleepTimer.endOfItem ? null : SleepTimer.deadline;
+    return [
+      MenuAction('关闭${SleepTimer.active ? '' : '  ✓'}', Icons.timer_off_outlined, () => _setSleep()),
+      MenuAction(
+        '${_item?.kind == MediaKind.episode ? '本集播完' : '播完'}${SleepTimer.endOfItem ? '  ✓' : ''}',
+        Icons.stop_circle_outlined,
+        () => _setSleep(endOfItem: true),
+      ),
+      for (final m in SleepTimer.presets) MenuAction('$m 分钟', Icons.timer_outlined, () => _setSleep(minutes: m)),
+      if (minutes != null) MenuAction('现在：${SleepTimer.label()}', Icons.bedtime_outlined, () {}),
+    ];
+  }
+
+  // ───────────────────────── 音画同步 ─────────────────────────
+
+  int get _audioDelayMs => ref.read(configProvider).playback.audioDelayMs;
+
+  /// 音画同步：设为 [ms] 毫秒（正数 = 声音推后），立即生效并按设备保存
+  void _setAudioDelay(int ms, {bool toast = true}) {
+    final engine = _engine;
+    if (engine == null) return;
+    if (!engine.supportsAudioDelay) {
+      showToast('当前播放内核不支持调整音画同步');
+      return;
+    }
+    const limit = PlaybackConfig.audioDelayLimitMs;
+    final v = ms.clamp(-limit, limit);
+    engine.setAudioDelay(Duration(milliseconds: v));
+    ref.read(configProvider.notifier).update((c) => c.copyWith(playback: c.playback.copyWith(audioDelayMs: v)));
+    if (toast) showToast('音画同步：${SliderSpec.audioDelayLabel(v / 1000)}');
+  }
+
   // ───────────────────────── 字幕延迟 / 大小、画面比例 ─────────────────────────
 
   Duration _subDelay = Duration.zero;
@@ -1592,6 +1678,7 @@ class _PlayerPageState extends ConsumerState<PlayerPage> with WidgetsBindingObse
     ).toDouble(),
     _Adjusting.subtitleDelay => _subDelay.inMilliseconds / 1000,
     _Adjusting.danmakuShift => _danmakuChoice.shiftMs / 1000,
+    _Adjusting.audioDelay => _audioDelayMs / 1000,
     null => 0,
   };
 
@@ -1606,6 +1693,8 @@ class _PlayerPageState extends ConsumerState<PlayerPage> with WidgetsBindingObse
         _engine?.setSubtitleDelay(_subDelay);
       case _Adjusting.danmakuShift:
         setState(() => _danmakuChoice = _danmakuChoice.copyWith(shiftMs: (v * 1000).round()));
+      case _Adjusting.audioDelay:
+        _engine?.setAudioDelay(Duration(milliseconds: (v * 1000).round()));
       case null:
     }
   }
@@ -1626,6 +1715,8 @@ class _PlayerPageState extends ConsumerState<PlayerPage> with WidgetsBindingObse
       case _Adjusting.danmakuShift:
         final target = _danmakuTarget;
         if (target != null) unawaited(DanmakuChoiceStore.set(target.key, _danmakuChoice));
+      case _Adjusting.audioDelay:
+        _setAudioDelay((v * 1000).round(), toast: false);
       case _Adjusting.subtitleDelay || null:
     }
   }
@@ -1649,6 +1740,8 @@ class _PlayerPageState extends ConsumerState<PlayerPage> with WidgetsBindingObse
     final position = ref.read(configProvider).playback.subtitlePosition;
     if (position != 100 && engine.supportsSubtitlePosition) await engine.setSubtitlePosition(position);
     if (_subDelay != Duration.zero) await engine.setSubtitleDelay(_subDelay);
+    final audioDelay = ref.read(configProvider).playback.audioDelayMs;
+    if (audioDelay != 0 && engine.supportsAudioDelay) await engine.setAudioDelay(Duration(milliseconds: audioDelay));
   }
 
   // ───────────────────────── 上一集 ─────────────────────────
@@ -1936,12 +2029,32 @@ class _PlayerPageState extends ConsumerState<PlayerPage> with WidgetsBindingObse
 
   List<MenuAction> _audioItems() {
     final s = _state;
+    final delay = _audioDelayMs;
+    final label = SliderSpec.audioDelayLabel(delay / 1000);
     return [
       for (final t in s.audioTracks)
         MenuAction(
           '${t.displayName}${t == s.audio ? '  ✓' : ''}',
           Icons.graphic_eq_rounded,
           () => _engine?.selectAudio(t),
+        ),
+      // 音画同步：Windows 打开滑块；电视是菜单，按档调整
+      if ((_engine?.supportsAudioDelay ?? false) && PlatformProfile.isDesktop)
+        MenuAction('音画同步 · $label', Icons.sync_rounded, () => _startAdjust(_Adjusting.audioDelay))
+      else if (_engine?.supportsAudioDelay ?? false)
+        MenuAction.submenu(
+          '音画同步 · $label',
+          Icons.sync_rounded,
+          title: '音画同步（声音比画面慢就选「提前」）',
+          items: () => [
+            for (final ms in const [-500, -250, -100, -50, 50, 100, 250, 500])
+              MenuAction(
+                '声音${ms > 0 ? '推后' : '提前'} ${ms.abs()} 毫秒',
+                Icons.sync_rounded,
+                () => _setAudioDelay(_audioDelayMs + ms),
+              ),
+            MenuAction('恢复为 0', Icons.restart_alt_rounded, () => _setAudioDelay(0)),
+          ],
         ),
     ];
   }
@@ -2341,6 +2454,7 @@ class _PlayerPageState extends ConsumerState<PlayerPage> with WidgetsBindingObse
       if (_item?.kind == MediaKind.episode)
         MenuAction('选集', Icons.video_library_outlined, () => _openPanel(OsdPanel.episodes)),
       MenuAction.submenu('倍速 · ${s.rate}x', Icons.speed_rounded, title: '倍速', items: _rateItems),
+      MenuAction.submenu('睡眠定时 · ${SleepTimer.label()}', Icons.bedtime_outlined, title: '睡眠定时', items: _sleepItems),
       MenuAction.submenu(
         '画面比例 · ${_fit.label}',
         Icons.aspect_ratio_rounded,
@@ -2663,6 +2777,7 @@ class _PlayerPageState extends ConsumerState<PlayerPage> with WidgetsBindingObse
                           _Adjusting.subtitlePosition => SliderSpec.subtitleLift,
                           _Adjusting.subtitleDelay => SliderSpec.subtitleDelay,
                           _Adjusting.danmakuShift => SliderSpec.danmakuShift,
+                          _Adjusting.audioDelay => SliderSpec.audioDelay,
                         },
                         value: _adjustInitial,
                         subtitleScale: _adjusting == _Adjusting.subtitlePosition
@@ -2752,6 +2867,7 @@ class _InfoPanel extends StatelessWidget {
     final rows = <(String, String)>[
       ('播放内核', engine.label),
       if (v.decoder != null) ('解码器', v.decoder!),
+      if (state.droppedFrames != null) ('丢帧', '${state.droppedFrames} 帧'),
       if (v.width != null) ('分辨率', '${v.width} × ${v.height}'),
       if (v.frameRate != null) ('帧率', '${v.frameRate!.toStringAsFixed(3)} fps'),
       ('动态范围', v.hdr ?? source?.rangeLabel ?? 'SDR'),
@@ -2973,4 +3089,4 @@ class _SkipButton extends StatelessWidget {
 }
 
 /// 播放页里用滑块调整的项（Windows）
-enum _Adjusting { subtitlePosition, subtitleDelay, danmakuShift }
+enum _Adjusting { subtitlePosition, subtitleDelay, danmakuShift, audioDelay }

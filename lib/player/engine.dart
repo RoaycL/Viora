@@ -70,10 +70,14 @@ class EngineState {
     this.subtitle,
     this.video = const EngineVideoInfo(),
     this.speed,
+    this.droppedFrames,
   });
 
   /// 当前下载速度（字节 / 秒）；null = 内核不提供
   final int? speed;
+
+  /// 这次打开以来丢掉的视频帧数（播放统计）；null = 内核不提供
+  final int? droppedFrames;
 
   final Duration position;
   final Duration duration;
@@ -103,6 +107,7 @@ class EngineState {
     bool clearSubtitle = false,
     EngineVideoInfo? video,
     int? speed,
+    int? droppedFrames,
   }) => EngineState(
     position: position ?? this.position,
     duration: duration ?? this.duration,
@@ -116,6 +121,7 @@ class EngineState {
     subtitle: clearSubtitle ? null : (subtitle ?? this.subtitle),
     video: video ?? this.video,
     speed: speed ?? this.speed,
+    droppedFrames: droppedFrames ?? this.droppedFrames,
   );
 }
 
@@ -218,6 +224,12 @@ abstract class PlayerEngine {
 
   /// 这个内核能不能调字幕延迟
   bool get supportsSubtitleDelay => false;
+
+  /// 音画同步：声音相对画面的偏移（正数 = 声音推后）
+  Future<void> setAudioDelay(Duration delay) async {}
+
+  /// 这个内核能不能调音画同步
+  bool get supportsAudioDelay => false;
   Future<void> selectAudio(EngineTrack track);
 
   /// null = 关闭字幕

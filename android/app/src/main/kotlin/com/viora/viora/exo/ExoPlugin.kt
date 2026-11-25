@@ -94,6 +94,7 @@ class ExoPlugin(private val activity: Activity, engine: FlutterEngine) {
                     "play" -> { p?.play(); result.success(null) }
                     "pause" -> { p?.pause(); result.success(null) }
                     "seek" -> { p?.seek((call.argument<Number>("ms") ?: 0).toLong()); result.success(null) }
+                    "setAudioDelay" -> { p?.setAudioDelay((call.argument<Number>("ms") ?: 0).toLong()); result.success(null) }
                     "setRate" -> { p?.setRate((call.argument<Number>("rate") ?: 1.0).toFloat()); result.success(null) }
                     "selectTrack" -> {
                         val type = if (call.argument<String>("type") == "audio") C.TRACK_TYPE_AUDIO else C.TRACK_TYPE_TEXT

@@ -71,6 +71,7 @@ class ExoEngine extends PlayerEngine {
             duration: e['duration'] == null ? s.duration : _ms(e['duration']),
             buffered: _ms(e['buffered']),
             speed: (e['speed'] as num?)?.toInt(),
+            droppedFrames: (e['dropped'] as num?)?.toInt(),
           ),
         );
       case 'state':
@@ -146,6 +147,12 @@ class ExoEngine extends PlayerEngine {
 
   @override
   Future<void> setRate(double rate) => _call('setRate', {'rate': rate});
+
+  @override
+  bool get supportsAudioDelay => true;
+
+  @override
+  Future<void> setAudioDelay(Duration delay) => _call('setAudioDelay', {'ms': delay.inMilliseconds});
 
   @override
   Future<void> setSubtitleScale(double scale) => _call('setSubtitleScale', {'scale': scale});

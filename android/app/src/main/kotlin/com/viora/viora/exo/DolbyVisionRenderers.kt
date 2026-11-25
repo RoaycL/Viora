@@ -15,6 +15,8 @@ import androidx.media3.common.util.CodecSpecificDataUtil
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.exoplayer.DefaultRenderersFactory
 import androidx.media3.exoplayer.Renderer
+import androidx.media3.exoplayer.audio.AudioSink
+import androidx.media3.exoplayer.audio.ForwardingAudioSink
 import androidx.media3.exoplayer.mediacodec.MediaCodecAdapter
 import androidx.media3.exoplayer.mediacodec.MediaCodecSelector
 import androidx.media3.exoplayer.video.MediaCodecVideoRenderer
@@ -101,11 +103,43 @@ class DolbyVisionCompatVideoRenderer(
     }
 }
 
-/** 默认的渲染器，只把视频渲染器换成 [DolbyVisionCompatVideoRenderer]（参数和 Media3 默认的一致） */
+/**
+ * 音画同步：给音频时钟加一个偏移。ExoPlayer 按音频时钟决定显示哪一帧，时钟往后挪 d，画面就比声音早 d，
+ * 等于声音推后 d（正数 = 声音推后，和 mpv 的 audio-delay 同义）。
+ *
+ * 音频直通（AC3 / EAC3 / TrueHD 等）也有效：同样走这个时钟。隧道播放时音画同步由硬件完成，不受这里影响。
+ */
+class OffsetAudioSink(sink: AudioSink) : ForwardingAudioSink(sink) {
+    /** 偏移（微秒），主线程设置、播放线程读取 */
+    @Volatile
+    var offsetUs: Long = 0
+
+    override fun getCurrentPositionUs(sourceEnded: Boolean): Long {
+        val position = super.getCurrentPositionUs(sourceEnded)
+        val offset = offsetUs
+        if (position == AudioSink.CURRENT_POSITION_NOT_SET || offset == 0L) return position
+        return (position + offset).coerceAtLeast(0)
+    }
+}
+
+/** 默认的渲染器，只把视频渲染器换成 [DolbyVisionCompatVideoRenderer]、音频输出包一层 [OffsetAudioSink]（其余和 Media3 默认的一致） */
 class VioraRenderersFactory(
     private val appContext: Context,
     private val onBaseLayerFallback: () -> Unit,
 ) : DefaultRenderersFactory(appContext) {
+    /** 这个播放器的音频输出（音画同步用）；建好播放器后才有 */
+    var audioSink: OffsetAudioSink? = null
+        private set
+
+    override fun buildAudioSink(
+        context: Context,
+        enableFloatOutput: Boolean,
+        enableAudioOutputPlaybackParams: Boolean,
+    ): AudioSink? {
+        val base = super.buildAudioSink(context, enableFloatOutput, enableAudioOutputPlaybackParams) ?: return null
+        return OffsetAudioSink(base).also { audioSink = it }
+    }
+
     override fun buildVideoRenderers(
         context: Context,
         extensionRendererMode: Int,

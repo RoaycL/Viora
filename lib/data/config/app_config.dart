@@ -249,7 +249,14 @@ class PlaybackConfig {
     this.subtitlePosition = 100,
     this.subtitlePreference = SubtitlePreference.auto,
     this.askStillWatching = true,
+    this.audioDelayMs = 0,
   });
+
+  /// 音画同步（毫秒，正数 = 声音推后）。和音响、回音壁的延迟有关，按设备保存、不跨设备同步
+  final int audioDelayMs;
+
+  /// 音画同步可调范围（毫秒）
+  static const audioDelayLimitMs = 3000;
 
   /// 字幕大小倍数（播放页「字幕 → 字幕大小」）
   final double subtitleScale;
@@ -335,6 +342,7 @@ class PlaybackConfig {
     int? subtitlePosition,
     SubtitlePreference? subtitlePreference,
     bool? askStillWatching,
+    int? audioDelayMs,
   }) => PlaybackConfig(
     userAgent: userAgent ?? this.userAgent,
     uaForApi: uaForApi ?? this.uaForApi,
@@ -356,6 +364,7 @@ class PlaybackConfig {
     subtitlePosition: subtitlePosition ?? this.subtitlePosition,
     subtitlePreference: subtitlePreference ?? this.subtitlePreference,
     askStillWatching: askStillWatching ?? this.askStillWatching,
+    audioDelayMs: audioDelayMs ?? this.audioDelayMs,
   );
 
   Map<String, dynamic> toJson() => {
@@ -379,6 +388,7 @@ class PlaybackConfig {
     'subtitlePosition': subtitlePosition,
     'subtitlePreference': subtitlePreference.name,
     'askStillWatching': askStillWatching,
+    'audioDelayMs': audioDelayMs,
   };
 
   factory PlaybackConfig.fromJson(Map<String, dynamic> j) => PlaybackConfig(
@@ -402,6 +412,7 @@ class PlaybackConfig {
     subtitlePosition: ((j['subtitlePosition'] as num?)?.toInt() ?? 100).clamp(0, 150),
     subtitlePreference: SubtitlePreference.values.asNameMap()[j['subtitlePreference']] ?? SubtitlePreference.auto,
     askStillWatching: j['askStillWatching'] as bool? ?? true,
+    audioDelayMs: ((j['audioDelayMs'] as num?)?.toInt() ?? 0).clamp(-audioDelayLimitMs, audioDelayLimitMs),
   );
 }
 

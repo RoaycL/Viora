@@ -61,6 +61,7 @@ class MpvEngine extends PlayerEngine {
                 _ => null,
               },
               codec: x.video.codec,
+              decoder: x.video.decoder,
             ),
           ),
         );
@@ -123,14 +124,46 @@ class MpvEngine extends PlayerEngine {
   Future<void> _pollSpeed() async {
     final native = _player.platform;
     if (kIsWeb || native is! NativePlayer || _state.value.duration == Duration.zero) return;
-    try {
-      final raw = await (native as dynamic).getProperty('cache-speed') as String;
-      final v = int.tryParse(raw.split('.').first);
-      if (v != null && !_disposed) _set((x) => x.copyWith(speed: v));
-    } catch (_) {}
+    Future<String?> get(String name) async {
+      try {
+        return await (native as dynamic).getProperty(name) as String;
+      } catch (_) {
+        return null;
+      }
+    }
+
+    final v = int.tryParse((await get('cache-speed'))?.split('.').first ?? '');
+    // 播放统计：实际用的硬解方式（no = 软解）和丢帧数（解码器丢的 + 显示时丢的）
+    final hwdec = await get('hwdec-current');
+    final dropped = [
+      int.tryParse(await get('frame-drop-count') ?? ''),
+      int.tryParse(await get('decoder-frame-drop-count') ?? ''),
+    ].nonNulls.fold<int?>(null, (a, b) => (a ?? 0) + b);
+    if (_disposed) return;
+    final decoder = hwdec == null || hwdec.isEmpty ? null : mpvDecoderLabel(hwdec);
+    _set(
+      (x) => x.copyWith(
+        speed: v,
+        droppedFrames: dropped,
+        video: decoder == null || decoder == x.video.decoder
+            ? null
+            : EngineVideoInfo(
+                width: x.video.width,
+                height: x.video.height,
+                frameRate: x.video.frameRate,
+                codec: x.video.codec,
+                hdr: x.video.hdr,
+                decoder: decoder,
+              ),
+      ),
+    );
   }
 
   final EngineOptions options;
+
+  /// mpv 的 hwdec-current 换成媒体信息里显示的解码方式
+  @visibleForTesting
+  static String mpvDecoderLabel(String hwdec) => hwdec == 'no' ? '软解（CPU）' : '硬解 · $hwdec';
 
   final Player _player = Player(
     configuration: const PlayerConfiguration(title: 'Viora', bufferSize: 64 * 1024 * 1024),
@@ -236,6 +269,13 @@ class MpvEngine extends PlayerEngine {
 
   @override
   bool get supportsSubtitleDelay => true;
+
+  @override
+  bool get supportsAudioDelay => true;
+
+  // mpv 的 audio-delay：正数 = 声音推后
+  @override
+  Future<void> setAudioDelay(Duration delay) => _prop('audio-delay', (delay.inMilliseconds / 1000).toStringAsFixed(3));
 
   @override
   Future<void> setSubtitleDelay(Duration delay) => _prop('sub-delay', (delay.inMilliseconds / 1000).toStringAsFixed(3));
