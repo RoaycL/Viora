@@ -381,12 +381,15 @@ int decodePacket(AVCodecContext* context, AVPacket* packet,
           "reallocating buffer.",
           outputSize, outSize + bufferOutSize);
       outputSize = outSize + bufferOutSize;
-      outputBuffer = growBuffer(outputSize);
-      if (!outputBuffer) {
+      uint8_t* newBuffer = growBuffer(outputSize);
+      if (!newBuffer) {
         LOGE("Failed to reallocate output buffer.");
         av_frame_free(&frame);
         return AUDIO_DECODER_ERROR_OTHER;
       }
+      // growBuffer 返回新缓冲区的起点（之前写的数据已拷贝过去）：接着已写的数据往后写。
+      // Media3 1.10.1 原版这里直接用起点，一个包解出多帧且中途扩容时会覆盖前面的帧
+      outputBuffer = newBuffer + outSize;
     }
     result = swr_convert(resampleContext, &outputBuffer, bufferOutSize,
                          (const uint8_t**)frame->data, frame->nb_samples);
