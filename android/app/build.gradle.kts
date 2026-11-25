@@ -45,6 +45,8 @@ android {
     buildTypes {
         release {
             signingConfig = signingConfigs.getByName("release")
+            // Flutter 默认会用 R8 压缩发布包；FFmpeg 音频扩展的 JNI 回调要保留（proguard-rules.pro）
+            proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
         }
         debug {
             signingConfig = signingConfigs.getByName("release")
@@ -67,4 +69,6 @@ dependencies {
     // Android TV 默认播放内核（docs/08-player.md）
     implementation("androidx.media3:media3-exoplayer:1.10.1")
     implementation("androidx.media3:media3-ui:1.10.1")
+    // FFmpeg 音频解码不在这里：Java 部分在 src/main/java/androidx/media3/decoder/ffmpeg/（取自 Media3 1.10.1），
+    // 原生库在 src/main/jniLibs/（android/ffmpeg/build.sh 编译的 LGPL 版 FFmpeg）。升级 Media3 时两边要一起换
 }

@@ -87,7 +87,11 @@ class EngineState {
     this.video = const EngineVideoInfo(),
     this.speed,
     this.droppedFrames,
+    this.audioOutput,
   });
+
+  /// 音频怎么输出的（ExoPlayer：「直通 · Dolby TrueHD」「FFmpeg 软解 → PCM · 7.1 声道」……）；null = 内核不提供
+  final String? audioOutput;
 
   /// 当前下载速度（字节 / 秒）；null = 内核不提供
   final int? speed;
@@ -124,6 +128,7 @@ class EngineState {
     EngineVideoInfo? video,
     int? speed,
     int? droppedFrames,
+    String? audioOutput,
   }) => EngineState(
     position: position ?? this.position,
     duration: duration ?? this.duration,
@@ -138,6 +143,7 @@ class EngineState {
     video: video ?? this.video,
     speed: speed ?? this.speed,
     droppedFrames: droppedFrames ?? this.droppedFrames,
+    audioOutput: audioOutput ?? this.audioOutput,
   );
 }
 

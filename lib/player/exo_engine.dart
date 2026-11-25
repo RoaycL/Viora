@@ -109,6 +109,8 @@ class ExoEngine extends PlayerEngine {
             ),
           ),
         );
+      case 'audioOutput':
+        _set((s) => s.copyWith(audioOutput: e['label'] as String?));
       case 'error':
         _errors.add(EngineError(e['message'] as String? ?? '播放失败', canFallback: e['fallback'] == true));
     }

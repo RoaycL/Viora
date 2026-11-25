@@ -28,6 +28,7 @@ import androidx.media3.exoplayer.DefaultLoadControl
 import androidx.media3.exoplayer.DefaultRenderersFactory
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.analytics.AnalyticsListener
+import androidx.media3.exoplayer.audio.AudioSink
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.exoplayer.trackselection.DefaultTrackSelector
 import java.util.concurrent.atomic.AtomicLong
@@ -48,6 +49,7 @@ class ExoController(
     private var mediaItem: MediaItem? = null
     private val subtitleConfigs = mutableListOf<MediaItem.SubtitleConfiguration>()
     private var decoderName: String? = null
+    private var audioDecoderName: String? = null
     private var reportedUnsupported = false
 
     /** 杜比视界 P7 片源正在用 HEVC 解码器只播基础层（HDR10） */
@@ -69,7 +71,9 @@ class ExoController(
         }
         renderers
             .setEnableDecoderFallback(true)
-            .setExtensionRendererMode(DefaultRenderersFactory.EXTENSION_RENDERER_MODE_PREFER)
+            // 扩展（FFmpeg 音频）排在系统解码器之后：系统能解 / 能直通的照旧（AC3、E-AC3、TrueHD 直通不受影响），
+            // 都不行的才用 FFmpeg 软解。不能用 PREFER：那样 FFmpeg 排在前面，会把能直通的音轨也解成 PCM
+            .setExtensionRendererMode(DefaultRenderersFactory.EXTENSION_RENDERER_MODE_ON)
         trackSelector.parameters = trackSelector.buildUponParameters()
             .setPreferredAudioLanguages("zh", "chi", "zho", "cmn", "yue")
             .setPreferredTextLanguages("zh", "chi", "zho", "chs", "cht")
@@ -166,6 +170,7 @@ class ExoController(
         reportedUnsupported = false
         dolbyVisionBaseLayer = false
         droppedFrames = 0
+        audioDecoderName = null
         player.setMediaSource(sources.createMediaSource(item), startMs.coerceAtLeast(0))
         sourcesFactory = sources
         player.prepare()
@@ -343,6 +348,20 @@ class ExoController(
             sendVideo()
         }
 
+        override fun onAudioDecoderInitialized(
+            eventTime: AnalyticsListener.EventTime,
+            decoderName: String,
+            initializedTimestampMs: Long,
+            initializationDurationMs: Long,
+        ) {
+            audioDecoderName = decoderName
+        }
+
+        /** 音频怎么输出的（媒体信息里显示）：直通给功放 / 电视，或者解码成 PCM（系统解码器 / FFmpeg） */
+        override fun onAudioTrackInitialized(eventTime: AnalyticsListener.EventTime, config: AudioSink.AudioTrackConfig) {
+            emit(mapOf("event" to "audioOutput", "label" to audioOutputLabel(config.encoding, audioDecoderName, config.channelConfig)))
+        }
+
         override fun onVideoInputFormatChanged(
             eventTime: AnalyticsListener.EventTime,
             format: Format,
@@ -379,6 +398,27 @@ class ExoController(
                 "decoder" to decoderName,
             )
         )
+    }
+
+    private fun audioOutputLabel(encoding: Int, decoder: String?, channelConfig: Int): String {
+        val passthrough = when (encoding) {
+            C.ENCODING_AC3 -> "Dolby Digital"
+            C.ENCODING_E_AC3 -> "Dolby Digital Plus"
+            C.ENCODING_E_AC3_JOC -> "Dolby Digital Plus（Atmos）"
+            C.ENCODING_AC4 -> "Dolby AC-4"
+            C.ENCODING_DOLBY_TRUEHD -> "Dolby TrueHD"
+            C.ENCODING_DTS -> "DTS"
+            C.ENCODING_DTS_HD -> "DTS-HD"
+            C.ENCODING_DTS_UHD_P2 -> "DTS:X"
+            else -> null
+        }
+        if (passthrough != null) return "直通 · $passthrough"
+        val channels = Integer.bitCount(channelConfig).takeIf { it > 0 }?.let { if (it >= 6) " · ${it - 1}.1 声道" else " · $it 声道" } ?: ""
+        return when {
+            decoder == null -> "PCM$channels"
+            decoder.startsWith("ffmpeg", ignoreCase = true) -> "FFmpeg 软解 → PCM$channels"
+            else -> "系统解码（$decoder）→ PCM$channels"
+        }
     }
 
     private fun trackMap(id: String, f: Format, selected: Boolean, supported: Boolean) = mapOf(

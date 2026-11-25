@@ -551,6 +551,13 @@ class _PlayerPageState extends ConsumerState<PlayerPage> with WidgetsBindingObse
             (credits != null && s.position >= credits.start - const Duration(minutes: 1)))) {
       _preloadNext();
     }
+    if (_nextPreloading &&
+        !_nextChecking &&
+        s.duration > Duration.zero &&
+        (s.duration - s.position < const Duration(seconds: 90) || (credits != null && s.position >= credits.start)) &&
+        (_nextCheckedAt == null || DateTime.now().difference(_nextCheckedAt!) > const Duration(seconds: 15))) {
+      _refreshNext(s.duration - s.position);
+    }
     if (s.playing != _wasPlaying) {
       _wasPlaying = s.playing;
       if (!_started && s.playing) {
@@ -716,7 +723,10 @@ class _PlayerPageState extends ConsumerState<PlayerPage> with WidgetsBindingObse
       // 并行：创建播放内核、取条目信息、取播放信息（详情页 / 首页已预加载时直接命中缓存）
       _cacheDir ??= await PlaybackCache.dir();
       final engineReady = _engine == null ? _attachEngine(_createEngine()) : Future<void>.value();
-      final itemFuture = _item == null ? client.item(widget.itemId) : Future.value(_item!);
+      // 条目（要用其中的续播位置）：10 分钟内从服务器取到过的直接用（首页继续观看、详情页、集列表都会取），
+      // 不用在起播前再等一次单条详情；这台设备上报过进度后会重新取
+      final recent = _item ?? client.recentItem(widget.itemId);
+      final itemFuture = recent != null ? Future.value(recent) : client.item(widget.itemId);
       itemFuture.ignore();
       // 剧集的剧信息和条目一起提前取（片头跳过起播、片头片尾查询都要用）
       itemFuture.then((it) {
@@ -1349,6 +1359,32 @@ class _PlayerPageState extends ConsumerState<PlayerPage> with WidgetsBindingObse
       if (next == null || client == null) return;
       await PlaybackPreloader.preload(client, next, position: Duration.zero);
     } catch (_) {}
+  }
+
+  bool _nextChecking = false;
+  DateTime? _nextCheckedAt;
+
+  /// 快播完时确认下一集的播放信息和条目到切过去时仍在缓存里：85% 时预加载的播放信息只缓存 3 分钟，
+  /// 播到结尾时常已过期，自动进下一集要重新请求（经反代 1~2 秒）。按剩余时间（最多算 90 秒，片尾自动跳过时更早切）
+  /// 再留 30 秒余量：缓存撑不到那时就重新取，撑得到就不发请求。剩 90 秒内每 15 秒检查一次
+  Future<void> _refreshNext(Duration remaining) async {
+    _nextChecking = true;
+    _nextCheckedAt = DateTime.now();
+    final client = _client;
+    try {
+      final next = await _resolveNextEpisode();
+      if (next == null || client == null || !PlaybackPreloader.enabled) return;
+      final need =
+          (remaining > const Duration(seconds: 90) ? const Duration(seconds: 90) : remaining) +
+          const Duration(seconds: 30);
+      await Future.wait([
+        PlaybackPreloader.info(client, widget.serverId, next.id, maxAge: PlaybackPreloader.infoTtl - need),
+        if (client.recentItem(next.id, maxAge: const Duration(minutes: 10) - need) == null) client.item(next.id),
+      ]);
+    } catch (_) {
+    } finally {
+      _nextChecking = false;
+    }
   }
 
   Future<void> _onCompleted() async {
@@ -3045,6 +3081,7 @@ class _InfoPanel extends StatelessWidget {
       ('动态范围', v.hdr ?? source?.rangeLabel ?? 'SDR'),
       if (v.codec != null) ('视频编码', v.codec!),
       if (state.audio != null) ('音轨', state.audio!.displayName),
+      if (state.audioOutput != null) ('音频输出', state.audioOutput!),
       if (source?.bitrate != null) ('码率', '${(source!.bitrate! / 1000000).toStringAsFixed(2)} Mbps'),
       ('缓冲', '${(state.buffered - state.position).inSeconds} 秒'),
       if (request != null) ('播放 UA', request!.userAgent),

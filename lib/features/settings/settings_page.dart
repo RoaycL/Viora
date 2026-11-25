@@ -782,6 +782,8 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
           _InfoLine(label: '当前版本', value: _version),
           // MiSans 官方要求在软件中注明使用了该字体（只有 Windows 用它做界面字体）
           if (PlatformProfile.isDesktop) const _InfoLine(label: '界面字体', value: 'MiSans（小米）'),
+          // LGPL 要求注明使用了 FFmpeg 及其许可证（安卓的 ExoPlayer 用它解 DTS / TrueHD 等音频）
+          if (!PlatformProfile.isDesktop) const _InfoLine(label: '音频解码', value: 'FFmpeg 6.0（LGPL 2.1+，ffmpeg.org）'),
           _InfoLine(
             label: '更新来源',
             value: _source,
@@ -845,57 +847,59 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
 
     return InfoTipScope(
       child: Row(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        // 左：分类
-        Padding(
-          padding: EdgeInsets.fromLTRB(VSpace.contentLeft, VSpace.pageTop, 0, VSpace.safeV),
-          child: SizedBox(
-            width: 340,
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  '设置',
-                  // Windows：标题和右边的设置项一样轻一点
-                  style: PlatformProfile.isDesktop ? VText.h1.copyWith(fontSize: 40, fontWeight: FontWeight.w700) : VText.h1,
-                ),
-                SizedBox(height: PlatformProfile.isDesktop ? 24 : 40),
-                if (PlatformProfile.isDesktop) ...[_SearchBox(controller: _search), const SizedBox(height: 20)],
-                Expanded(
-                  child: SingleChildScrollView(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.stretch,
-                      children: _search.text.trim().isEmpty ? _categoryItems() : _searchResults(_search.text),
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          // 左：分类
+          Padding(
+            padding: EdgeInsets.fromLTRB(VSpace.contentLeft, VSpace.pageTop, 0, VSpace.safeV),
+            child: SizedBox(
+              width: 340,
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    '设置',
+                    // Windows：标题和右边的设置项一样轻一点
+                    style: PlatformProfile.isDesktop
+                        ? VText.h1.copyWith(fontSize: 40, fontWeight: FontWeight.w700)
+                        : VText.h1,
+                  ),
+                  SizedBox(height: PlatformProfile.isDesktop ? 24 : 40),
+                  if (PlatformProfile.isDesktop) ...[_SearchBox(controller: _search), const SizedBox(height: 20)],
+                  Expanded(
+                    child: SingleChildScrollView(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: _search.text.trim().isEmpty ? _categoryItems() : _searchResults(_search.text),
+                      ),
                     ),
                   ),
-                ),
-              ],
+                ],
+              ),
             ),
           ),
-        ),
-        const SizedBox(width: 48),
-        // 右：外框与导航栏共用上下安全区，只有框内设置项滚动。
-        Expanded(
-          child: Padding(
-            padding: EdgeInsets.fromLTRB(0, VSpace.pageTop, VSpace.safeH, VSpace.safeV),
-            child: Glass(
-              // Windows：面板更通透（填充 5%，原 8%）、描边更淡、内边距更小
-              fill: PlatformProfile.isDesktop ? const Color(0x0DFFFFFF) : VColors.glassFill,
-              border: PlatformProfile.isDesktop ? const Color(0x14FFFFFF) : VColors.glassBorder,
-              child: ClipRRect(
-                borderRadius: BorderRadius.circular(VRadius.panel),
-                child: FocusAutoScroll(
-                  child: SingleChildScrollView(
-                    padding: EdgeInsets.all(PlatformProfile.isDesktop ? 36 : 44),
-                    child: sections[current],
+          const SizedBox(width: 48),
+          // 右：外框与导航栏共用上下安全区，只有框内设置项滚动。
+          Expanded(
+            child: Padding(
+              padding: EdgeInsets.fromLTRB(0, VSpace.pageTop, VSpace.safeH, VSpace.safeV),
+              child: Glass(
+                // Windows：面板更通透（填充 5%，原 8%）、描边更淡、内边距更小
+                fill: PlatformProfile.isDesktop ? const Color(0x0DFFFFFF) : VColors.glassFill,
+                border: PlatformProfile.isDesktop ? const Color(0x14FFFFFF) : VColors.glassBorder,
+                child: ClipRRect(
+                  borderRadius: BorderRadius.circular(VRadius.panel),
+                  child: FocusAutoScroll(
+                    child: SingleChildScrollView(
+                      padding: EdgeInsets.all(PlatformProfile.isDesktop ? 36 : 44),
+                      child: sections[current],
+                    ),
                   ),
                 ),
               ),
             ),
           ),
-        ),
-      ],
+        ],
       ),
     );
   }

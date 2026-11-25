@@ -486,7 +486,9 @@ class EmbyClient {
       '/Users/${await _userId()}/Items/Latest',
       query: {'ParentId': ?parentId, 'Limit': '$limit', 'Fields': _userFields, ..._parentalQuery, ..._imageQuery},
     );
-    return _allowed((data as List? ?? const []).cast<Map<String, dynamic>>().map(parseItem)).toList();
+    final list = _allowed((data as List? ?? const []).cast<Map<String, dynamic>>().map(parseItem)).toList();
+    _remember(list);
+    return list;
   }
 
   Future<List<MediaItem>> resume({int limit = 20}) async {
@@ -499,10 +501,53 @@ class EmbyClient {
     if (list.isEmpty && (data['TotalRecordCount'] as num? ?? 0) > 0) {
       throw const MediaServerException('服务器继续观看响应不完整');
     }
-    return _allowed(list.map(parseItem)).toList();
+    final items = _allowed(list.map(parseItem)).toList();
+    _remember(items);
+    return items;
   }
 
+  // ───────────────────────── 最近取到的条目 ─────────────────────────
+
+  /// 最近从服务器取到的条目（单条详情、继续观看、最新、集列表），按账号区分。
+  /// 播放页起播要知道续播位置，以前每次都要再请求一次单条详情（经反代一次约 1~2 秒，续播时等它才能打开）；
+  /// 刚取过的直接用。这台设备上报播放进度、标记已看时清掉对应条目，所以不会用到自己改之前的旧进度
+  static final _recentItems = <String, (DateTime, MediaItem)>{};
+  static const _recentItemLimit = 400;
+
+  String _recentKey(String id) => '${accountScope(_server)}/$id';
+
+  void _remember(Iterable<MediaItem> items) {
+    final now = DateTime.now();
+    for (final it in items) {
+      final key = _recentKey(it.id);
+      _recentItems.remove(key);
+      _recentItems[key] = (now, it);
+    }
+    while (_recentItems.length > _recentItemLimit) {
+      _recentItems.remove(_recentItems.keys.first);
+    }
+  }
+
+  /// [maxAge] 内取到过的条目；没有返回 null
+  MediaItem? recentItem(String id, {Duration maxAge = const Duration(minutes: 10)}) {
+    final hit = _recentItems[_recentKey(id)];
+    if (hit == null || DateTime.now().difference(hit.$1) > maxAge) return null;
+    return hit.$2;
+  }
+
+  /// 进度 / 已看状态要变了：之后要用最新的就得重新取
+  void forgetItem(String id) => _recentItems.remove(_recentKey(id));
+
+  @visibleForTesting
+  static void clearRecentItems() => _recentItems.clear();
+
   Future<MediaItem> item(String id) async {
+    final it = await _item(id);
+    _remember([it]);
+    return it;
+  }
+
+  Future<MediaItem> _item(String id) async {
     try {
       return parseItem(
         await _request('GET', '/Users/${await _userId()}/Items/$id', query: {'Fields': _userFields})
@@ -623,7 +668,9 @@ class EmbyClient {
       '/Shows/$seriesId/Episodes',
       query: {'UserId': await _userId(), 'SeasonId': ?seasonId, 'Fields': _userFields, ..._imageQuery},
     ) as Map<String, dynamic>;
-    return (data['Items'] as List? ?? const []).cast<Map<String, dynamic>>().map(parseItem).toList();
+    final list = (data['Items'] as List? ?? const []).cast<Map<String, dynamic>>().map(parseItem).toList();
+    _remember(list);
+    return list;
   }
 
   /// 剧集"下一集"（继续看哪一集）
@@ -763,6 +810,7 @@ class EmbyClient {
     bool paused = false,
     String? event,
   }) {
+    forgetItem(s.itemId);
     final f = _sendReport(path, s, position, playSessionId, paused: paused, event: event);
     _pendingReports.add(f);
     return f.whenComplete(() => _pendingReports.remove(f));
@@ -801,8 +849,11 @@ class EmbyClient {
     }
   }
 
-  Future<void> setPlayed(String itemId, bool played) async =>
-      _request(played ? 'POST' : 'DELETE', '/Users/${await _userId()}/PlayedItems/$itemId');
+  Future<void> setPlayed(String itemId, bool played) async {
+    forgetItem(itemId);
+    await _request(played ? 'POST' : 'DELETE', '/Users/${await _userId()}/PlayedItems/$itemId');
+    forgetItem(itemId);
+  }
 
   Future<void> setFavorite(String itemId, bool favorite) async =>
       _request(favorite ? 'POST' : 'DELETE', '/Users/${await _userId()}/FavoriteItems/$itemId');

@@ -58,6 +58,22 @@ v0.17.8 起（播放功能，对标 Infuse 等）：
 | 音量增强 | Windows 音量 | 音量最高 200%（mpv `volume-max=200`），超过 100% 时提示「增强」、音量滑块变琥珀色；按住 ↑ 时停在 100%，要再按一次才进入增强。片源本身响度高时可能削波 |
 | 第二字幕 | 字幕菜单 → 第二字幕（mpv） | 双语字幕：第二条显示在主字幕下方、字号 80%（mpv `secondary-sid`）。只列文字字幕（PGS / VobSub 等图片字幕不行），换片后自动关闭。ExoPlayer 只有一个字幕渲染器，不支持 |
 
+v0.17.8-beta2 起（ExoPlayer FFmpeg 音频）：
+
+| 改动 | 说明 |
+| --- | --- |
+| FFmpeg 音频解码 | 电视既不能直通、又没有系统解码器的 DTS / DTS-HD / TrueHD 等音轨在 ExoPlayer 里用 FFmpeg 软解成 PCM，不再「设备不支持该音频格式」退回 mpv（mpv 在安卓上只能输出 SDR，HDR 就没了）。支持 AAC、MP3、AC3、E-AC3、TrueHD、DTS、Vorbis、Opus、AMR、FLAC、ALAC、G.711 |
+| 扩展渲染器排在后面 | `EXTENSION_RENDERER_MODE_ON`（原来是 `PREFER`，当时没有扩展、不影响）：系统解码器 / 直通优先，FFmpeg 只兜底。用 `PREFER` 的话 FFmpeg 排在前面，会把能直通的 AC3 / E-AC3 / TrueHD 也解成 PCM |
+| 媒体信息「音频输出」 | ExoPlayer 显示音频怎么输出：「直通 · Dolby TrueHD」「系统解码（c2.android.aac.decoder）→ PCM · 2 声道」「FFmpeg 软解 → PCM · 7.1 声道」 |
+| 续播不再多等一次条目请求 | 进入播放页要知道续播位置，原来总要再取一次单条详情（经反代约 1~2 秒，续播时最多等 3 秒才开始加载）。现在 10 分钟内从「继续观看」「最新」、集列表或详情页取到过的条目直接用；这台设备上报进度、标记已看 / 未看时清掉对应条目，不会用到自己改之前的旧进度。实现：`EmbyClient.recentItem` |
+| 下一集播放信息补取 | 85% 时预加载的下一集播放信息只缓存 3 分钟，一集播完时常已过期，跳下一集还要重新请求。现在剩 90 秒或进入片尾后每 15 秒检查一次：缓存撑不到切下一集（剩余时间最多按 90 秒算，再留 30 秒余量）就重新取播放信息和条目，撑得到就不发请求 |
+
+扩展怎么来的：
+- Java 部分：`android/app/src/main/java/androidx/media3/decoder/ffmpeg/`，取自 Media3 1.10.1 的 `libraries/decoder_ffmpeg`（Apache 2.0；只去掉了 checker-qual 注解，没要视频渲染器），和应用一起编译，版本和应用用的 Media3 一致
+- 原生库：`android/app/src/main/jniLibs/<架构>/libffmpegJNI.so`（arm64-v8a、armeabi-v7a、x86_64），由 `android/ffmpeg/build.sh` 编译：FFmpeg 6.0.1 只开上面这些音频解码器，不加 `--enable-gpl` / `--enable-nonfree`，按 LGPL 2.1+ 授权，静态链接进单独的 `libffmpegJNI.so`；JNI 封装 `android/ffmpeg/ffmpeg_jni.cc` 同样取自 Media3 1.10.1
+- 编好的 .so 提交在仓库里，平时发布不重新编译。**升级 Media3 时**：换掉 Java 文件和 `ffmpeg_jni.cc`，运行 Actions →「FFmpeg 音频扩展」（`.github/workflows/ffmpeg.yml`）重新编译，把产物覆盖到 `jniLibs/` 提交
+- LGPL 要求注明：设置 →「关于与更新」显示「音频解码：FFmpeg 6.0（LGPL 2.1+）」（只在安卓上显示）
+
 v0.7.0 起可调（设置 → 播放）：
 
 | 设置 | 选项 | 说明 |

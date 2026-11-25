@@ -50,20 +50,23 @@ class PlaybackPreloader {
     if (key != null) _info[key] = (DateTime.now(), info);
   }
 
-  static PlaybackInfoResult? cached(String serverId, String itemId, {String? scope}) {
+  /// [maxAge]：只要这么久之内取到的（默认 [infoTtl]）；更早的当作没有，但不删
+  static PlaybackInfoResult? cached(String serverId, String itemId, {String? scope, Duration? maxAge}) {
     final key = _key(serverId, itemId, scope: scope);
     final hit = _info[key];
     if (hit == null) return null;
-    if (DateTime.now().difference(hit.$1) > infoTtl) {
+    final age = DateTime.now().difference(hit.$1);
+    if (age > infoTtl) {
       _info.remove(key);
       return null;
     }
-    return hit.$2;
+    return maxAge != null && age > maxAge ? null : hit.$2;
   }
 
-  static Future<PlaybackInfoResult> info(EmbyClient client, String serverId, String itemId) {
+  /// [maxAge]：缓存比这更旧时重新取（要保证缓存在一段时间后仍有效时用）
+  static Future<PlaybackInfoResult> info(EmbyClient client, String serverId, String itemId, {Duration? maxAge}) {
     final scope = accountScope(client.server);
-    final hit = cached(serverId, itemId, scope: scope);
+    final hit = cached(serverId, itemId, scope: scope, maxAge: maxAge);
     if (hit != null) return Future.value(hit);
     final key = _key(serverId, itemId, scope: scope)!;
     final existing = _pending[key];
