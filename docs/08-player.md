@@ -74,6 +74,16 @@ v0.17.8-beta2 起（ExoPlayer FFmpeg 音频）：
 - 编好的 .so 提交在仓库里，平时发布不重新编译。**升级 Media3 时**：换掉 Java 文件和 `ffmpeg_jni.cc`，运行 Actions →「FFmpeg 音频扩展」（`.github/workflows/ffmpeg.yml`）重新编译，把产物覆盖到 `jniLibs/` 提交
 - LGPL 要求注明：设置 →「关于与更新」显示「音频解码：FFmpeg 6.0（LGPL 2.1+）」（只在安卓上显示）
 
+v0.17.8-beta3 起（字幕样式，对标 VidHub）：
+
+| 设置 | 选项 | 说明 |
+| --- | --- | --- |
+| 颜色 | 白 / 黄 / 浅灰 | 文字颜色；HDR 字幕亮度在这个颜色上再调暗 |
+| 边框 | 默认 / 描边 / 阴影 / 背景框 | 「默认」保持原来的样子：mpv 白字黑描边 + 柔和阴影，ExoPlayer 跟随系统字幕样式（没开系统字幕时是黑色底框）。背景框是半透明黑底 |
+| 描边 / 阴影粗细 | 细 / 标准 / 粗 / 特粗（0.6 / 1 / 1.6 / 2.2 倍） | 选背景框时不显示。mpv 直接改描边宽度；ExoPlayer（Media3）的描边固定 2dp、不能设置，所以粗细不是标准时另建一个字幕视图，给它的 Context 乘上像素密度（字号按画面高度的比例算，不受影响），叠在原字幕视图上、字幕内容从播放器 `onCues` 拿（`SubtitleStyle.kt` 的 `SubtitleOverlay`） |
+
+位置：播放页「字幕 → 字幕样式」，随播放设置保存。ASS 等自带样式的字幕在 ExoPlayer 上仍按字幕自己的样式（`setApplyEmbeddedStyles(true)`）。实现：`lib/player/subtitle_look.dart`。
+
 v0.7.0 起可调（设置 → 播放）：
 
 | 设置 | 选项 | 说明 |

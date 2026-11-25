@@ -154,6 +154,9 @@ class ExoEngine extends PlayerEngine {
   Future<void> setSubtitleBrightness(double brightness) => _call('setSubtitleBrightness', {'brightness': brightness});
 
   @override
+  Future<void> setSubtitleLook(SubtitleLook look) => _call('setSubtitleLook', look.toJson());
+
+  @override
   bool get supportsAudioDelay => true;
 
   @override

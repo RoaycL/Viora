@@ -1635,6 +1635,11 @@ class _PlayerPageState extends ConsumerState<PlayerPage> with WidgetsBindingObse
     showToast(_state.video.hdr != null ? 'HDR 字幕亮度：$pct' : 'HDR 字幕亮度：$pct（播放 HDR 片源时生效）');
   }
 
+  void _setSubtitleLook(SubtitleLook look) {
+    ref.read(configProvider.notifier).update((c) => c.copyWith(playback: c.playback.copyWith(subtitleLook: look)));
+    unawaited(_engine?.setSubtitleLook(look));
+  }
+
   /// mpv 硬解 / 软解切换：立即生效，按设备保存
   void _toggleHardwareDecoding() {
     final engine = _engine;
@@ -1890,6 +1895,8 @@ class _PlayerPageState extends ConsumerState<PlayerPage> with WidgetsBindingObse
     if (_subDelay != Duration.zero) await engine.setSubtitleDelay(_subDelay);
     _appliedHdr = null;
     _applySubtitleBrightness(engine);
+    final look = ref.read(configProvider).playback.subtitleLook;
+    if (!look.isDefault) await engine.setSubtitleLook(look);
     final audioDelay = ref.read(configProvider).playback.audioDelayMs;
     if (audioDelay != 0 && engine.supportsAudioDelay) await engine.setAudioDelay(Duration(milliseconds: audioDelay));
   }
@@ -2209,6 +2216,16 @@ class _PlayerPageState extends ConsumerState<PlayerPage> with WidgetsBindingObse
     ];
   }
 
+  static String _subtitleLookLabel(SubtitleLook look) {
+    if (look.isDefault) return '默认';
+    String of<T>(List<(T, String)> options, T v) => options.where((o) => o.$1 == v).firstOrNull?.$2 ?? '';
+    return [
+      if (look.color != SubtitleLook.white) of(SubtitleLook.colors, look.color),
+      if (look.edge != SubtitleEdge.auto) of(SubtitleLook.edges, look.edge),
+      if (look.outline != 1.0 && look.edge != SubtitleEdge.box) of(SubtitleLook.outlines, look.outline),
+    ].join(' · ');
+  }
+
   Future<void> _openSubtitleMenu() =>
       _menu(() => showContextMenu(context, anchored: true, title: '字幕', actionsBuilder: _subtitleItems));
 
@@ -2274,6 +2291,36 @@ class _PlayerPageState extends ConsumerState<PlayerPage> with WidgetsBindingObse
           for (final (v, label) in PlaybackConfig.subtitleScales)
             MenuAction('$label${v == scale ? '  ✓' : ''}', Icons.format_size_rounded, () => _setSubtitleScale(v)),
         ],
+      ),
+      MenuAction.submenu(
+        '字幕样式 · ${_subtitleLookLabel(ref.read(configProvider).playback.subtitleLook)}',
+        Icons.text_format_rounded,
+        title: '字幕样式（ASS 等自带样式的字幕在电视上按字幕自己的样式）',
+        items: () {
+          final look = ref.read(configProvider).playback.subtitleLook;
+          String mark(bool on) => on ? '  ✓' : '';
+          return [
+            for (final (v, label) in SubtitleLook.colors)
+              MenuAction(
+                '颜色 · $label${mark(v == look.color)}',
+                Icons.format_color_text_rounded,
+                () => _setSubtitleLook(SubtitleLook(color: v, edge: look.edge, outline: look.outline)),
+              ),
+            for (final (v, label) in SubtitleLook.edges)
+              MenuAction(
+                '边框 · $label${mark(v == look.edge)}',
+                Icons.border_style_rounded,
+                () => _setSubtitleLook(SubtitleLook(color: look.color, edge: v, outline: look.outline)),
+              ),
+            if (look.edge != SubtitleEdge.box)
+              for (final (v, label) in SubtitleLook.outlines)
+                MenuAction(
+                  '${look.edge == SubtitleEdge.shadow ? '阴影' : '描边'}粗细 · $label${mark(v == look.outline)}',
+                  Icons.line_weight_rounded,
+                  () => _setSubtitleLook(SubtitleLook(color: look.color, edge: look.edge, outline: v)),
+                ),
+          ];
+        },
       ),
       MenuAction.submenu(
         'HDR 字幕亮度 · ${DanmakuConfig.labelOf(PlaybackConfig.hdrSubtitleBrightnesses, ref.read(configProvider).playback.hdrSubtitleBrightness)}',

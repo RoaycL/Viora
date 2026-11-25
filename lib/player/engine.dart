@@ -1,6 +1,10 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter/widgets.dart';
 
+import 'subtitle_look.dart';
+
+export 'subtitle_look.dart';
+
 /// 播放内核（docs/08-player.md §2）：mpv（Windows / Android 备用）与 ExoPlayer（Android TV 默认）。
 enum EngineKind {
   mpv('mpv'),
@@ -259,6 +263,9 @@ abstract class PlayerEngine {
 
   /// 字幕亮度（1 = 原样；HDR 片源上白色字幕刺眼时调暗）
   Future<void> setSubtitleBrightness(double brightness) async {}
+
+  /// 字幕颜色、边框、描边粗细
+  Future<void> setSubtitleLook(SubtitleLook look) async {}
 
   /// 能不能同时显示第二条字幕（双语字幕；mpv 的 secondary-sid，只支持文字字幕）
   bool get supportsSecondarySubtitle => false;
