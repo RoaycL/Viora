@@ -33,6 +33,22 @@ class EngineTrack {
     return parts.isEmpty ? '轨道 $id' : parts.join(' · ');
   }
 
+  /// 文字字幕（SRT / ASS / WebVTT 等）；PGS、VobSub、DVB 是图片字幕
+  bool get isTextSubtitle {
+    final c = codec?.toLowerCase() ?? '';
+    return !const {
+      'hdmv_pgs_subtitle',
+      'pgs',
+      'pgssub',
+      'dvd_subtitle',
+      'dvdsub',
+      'vobsub',
+      'dvb_subtitle',
+      'dvbsub',
+      'xsub',
+    }.contains(c);
+  }
+
   @override
   bool operator ==(Object other) => other is EngineTrack && other.id == id;
 
@@ -70,10 +86,14 @@ class EngineState {
     this.subtitle,
     this.video = const EngineVideoInfo(),
     this.speed,
+    this.droppedFrames,
   });
 
   /// 当前下载速度（字节 / 秒）；null = 内核不提供
   final int? speed;
+
+  /// 这次打开以来丢掉的视频帧数（播放统计）；null = 内核不提供
+  final int? droppedFrames;
 
   final Duration position;
   final Duration duration;
@@ -103,6 +123,7 @@ class EngineState {
     bool clearSubtitle = false,
     EngineVideoInfo? video,
     int? speed,
+    int? droppedFrames,
   }) => EngineState(
     position: position ?? this.position,
     duration: duration ?? this.duration,
@@ -116,6 +137,7 @@ class EngineState {
     subtitle: clearSubtitle ? null : (subtitle ?? this.subtitle),
     video: video ?? this.video,
     speed: speed ?? this.speed,
+    droppedFrames: droppedFrames ?? this.droppedFrames,
   );
 }
 
@@ -149,7 +171,11 @@ class EngineOptions {
     this.tunneling = false,
     this.bufferBytes = 256 * 1024 * 1024,
     this.cacheDir,
+    this.hardwareDecoding = true,
   });
+
+  /// mpv 硬解（关掉 = 软解；硬解花屏、绿屏的片源可以手动切）
+  final bool hardwareDecoding;
 
   /// 预读缓冲上限（字节）
   final int bufferBytes;
@@ -218,6 +244,30 @@ abstract class PlayerEngine {
 
   /// 这个内核能不能调字幕延迟
   bool get supportsSubtitleDelay => false;
+
+  /// 音画同步：声音相对画面的偏移（正数 = 声音推后）
+  Future<void> setAudioDelay(Duration delay) async {}
+
+  /// 这个内核能不能调音画同步
+  bool get supportsAudioDelay => false;
+
+  /// 字幕亮度（1 = 原样；HDR 片源上白色字幕刺眼时调暗）
+  Future<void> setSubtitleBrightness(double brightness) async {}
+
+  /// 能不能同时显示第二条字幕（双语字幕；mpv 的 secondary-sid，只支持文字字幕）
+  bool get supportsSecondarySubtitle => false;
+
+  /// 当前的第二字幕；null = 没开
+  EngineTrack? get secondarySubtitle => null;
+
+  /// 第二字幕显示在主字幕下方、字号小一点；null = 关闭。换片后自动关闭
+  Future<void> selectSecondarySubtitle(EngineTrack? track) async {}
+
+  /// 能不能在硬解和软解之间切换（mpv）
+  bool get supportsDecoderSwitch => false;
+
+  /// 切换硬解 / 软解
+  Future<void> setHardwareDecoding(bool enabled) async {}
   Future<void> selectAudio(EngineTrack track);
 
   /// null = 关闭字幕

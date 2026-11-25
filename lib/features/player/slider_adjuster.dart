@@ -88,6 +88,25 @@ class SliderSpec {
     hint: '拖动滑块，或用 ← → 微调 0.1 秒、↑ ↓ 调 1 秒，回车完成',
   );
 
+  /// 音画同步：±3 秒，0.05 秒一档（正数 = 声音推后）
+  static final audioDelay = SliderSpec(
+    title: '音画同步',
+    min: -3,
+    max: 3,
+    fine: 0.05,
+    coarse: 0.25,
+    defaultValue: 0,
+    format: audioDelayLabel,
+    hint: '声音比画面慢就往「提前」调。拖动滑块，或用 ← → 微调 50 毫秒、↑ ↓ 调 250 毫秒，回车完成',
+  );
+
+  /// 音画同步的显示：「声音推后 120 毫秒」
+  static String audioDelayLabel(double seconds) {
+    final ms = (seconds * 1000).round();
+    if (ms == 0) return '不偏移';
+    return '声音${ms > 0 ? '推后' : '提前'} ${ms.abs()} 毫秒';
+  }
+
   static String _seconds(double v, String later, String earlier) =>
       v.abs() < 0.05 ? '不偏移' : '${v > 0 ? later : earlier} ${v.abs().toStringAsFixed(1)} 秒';
 

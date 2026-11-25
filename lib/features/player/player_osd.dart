@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:math' show max;
 
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
@@ -14,6 +15,7 @@ import '../../data/config/config_store.dart';
 import '../../data/media/media_models.dart';
 import '../../domain/models/segment.dart';
 import '../../player/engine.dart';
+import '../../player/trickplay.dart';
 import '../../ui/widgets/brand_badges.dart';
 import '../../ui/focus/focus_auto_scroll.dart';
 import '../../ui/focus/focusable.dart';
@@ -61,7 +63,11 @@ class PlayerOsd extends StatelessWidget {
     this.muted = false,
     this.onVolume,
     this.onMute,
+    this.trickplay,
   });
+
+  /// 进度条缩略图（服务器生成了才有）：Windows 鼠标悬停 / 拖动进度条时显示
+  final Trickplay? trickplay;
 
   /// Windows 音量（0–1）与静音；电视不显示音量控件（用遥控器调系统音量）
   final double volume;
@@ -231,6 +237,7 @@ class PlayerOsd extends StatelessWidget {
                         duration: dur,
                         buffered: state.buffered,
                         segments: segments,
+                        trickplay: trickplay,
                         onSeek: desktop ? onSeek : null,
                       ),
                     ),
@@ -539,13 +546,15 @@ class VolumeSlider extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    // 音量增强（超过 100%）时滑块变成琥珀色
+    final fill = value > 1 ? const Color(0xFFFFB74D) : Colors.white;
     return ExcludeFocus(
       child: MouseRegion(
         cursor: SystemMouseCursors.click,
         child: Listener(
           onPointerSignal: (e) {
             if (e is PointerScrollEvent) {
-              onChanged?.call((value + (e.scrollDelta.dy < 0 ? 0.05 : -0.05)).clamp(0.0, 1.0));
+              onChanged?.call((value + (e.scrollDelta.dy < 0 ? 0.05 : -0.05)).clamp(0.0, maxVolume));
             }
           },
           child: GestureDetector(
@@ -568,14 +577,14 @@ class VolumeSlider extends StatelessWidget {
                     Container(
                       width: width * value.clamp(0.0, 1.0),
                       height: 5,
-                      decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(3)),
+                      decoration: BoxDecoration(color: fill, borderRadius: BorderRadius.circular(3)),
                     ),
                     Positioned(
                       left: width * value.clamp(0.0, 1.0) - 7,
                       child: Container(
                         width: 14,
                         height: 14,
-                        decoration: const BoxDecoration(color: Colors.white, shape: BoxShape.circle),
+                        decoration: BoxDecoration(color: fill, shape: BoxShape.circle),
                       ),
                     ),
                   ],
@@ -597,9 +606,11 @@ class SeekBar extends StatefulWidget {
     required this.duration,
     required this.buffered,
     this.segments = const [],
+    this.trickplay,
     this.onSeek,
   });
 
+  final Trickplay? trickplay;
   final Duration position;
   final Duration duration;
   final Duration buffered;
@@ -642,6 +653,7 @@ class _SeekBarState extends State<SeekBar> {
         );
         if (!interactive) return bar;
         final hoverAt = _drag ?? _hover;
+        final tipWidth = widget.trickplay == null ? 120.0 : _thumbWidth;
         return MouseRegion(
           cursor: SystemMouseCursors.click,
           onHover: (e) => setState(() => _hover = _fraction(e.localPosition.dx, width)),
@@ -662,18 +674,25 @@ class _SeekBarState extends State<SeekBar> {
                 bar,
                 if (hoverAt != null)
                   Positioned(
-                    left: (hoverAt * width - 60).clamp(0.0, width - 120),
+                    left: (hoverAt * width - tipWidth / 2).clamp(0.0, max(0.0, width - tipWidth)),
                     bottom: 46,
-                    width: 120,
-                    child: Center(
-                      child: Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-                        decoration: BoxDecoration(
-                          color: const Color(0xE614161E),
-                          borderRadius: BorderRadius.circular(VRadius.xs),
+                    width: tipWidth,
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        if (widget.trickplay case final t?) ...[
+                          TrickplayThumb(trickplay: t, position: _at(hoverAt), width: _thumbWidth),
+                          const SizedBox(height: 6),
+                        ],
+                        Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                          decoration: BoxDecoration(
+                            color: const Color(0xE614161E),
+                            borderRadius: BorderRadius.circular(VRadius.xs),
+                          ),
+                          child: Text(formatClock(_at(hoverAt)), style: const TextStyle(fontSize: 20)),
                         ),
-                        child: Text(formatClock(_at(hoverAt)), style: const TextStyle(fontSize: 20)),
-                      ),
+                      ],
                     ),
                   ),
               ],
@@ -683,6 +702,75 @@ class _SeekBarState extends State<SeekBar> {
       },
     );
   }
+}
+
+const _thumbWidth = 320.0;
+
+/// 进度条缩略图：显示 [position] 处的画面。新的一张还没解码好时先留着上一张，拖动时不闪
+class TrickplayThumb extends StatefulWidget {
+  const TrickplayThumb({super.key, required this.trickplay, required this.position, required this.width});
+
+  final Trickplay trickplay;
+  final Duration position;
+  final double width;
+
+  @override
+  State<TrickplayThumb> createState() => _TrickplayThumbState();
+}
+
+class _TrickplayThumbState extends State<TrickplayThumb> {
+  TrickplayFrame? _frame;
+  int _request = 0;
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  @override
+  void didUpdateWidget(TrickplayThumb old) {
+    super.didUpdateWidget(old);
+    if (old.position != widget.position || old.trickplay != widget.trickplay) _load();
+  }
+
+  Future<void> _load() async {
+    final id = ++_request;
+    final frame = await widget.trickplay.frameAt(widget.position);
+    // 只用最新一次请求的结果（快速拖动时早发的请求可能晚回来）
+    if (!mounted || id != _request || frame == null) return;
+    setState(() => _frame = frame);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final height = widget.width / widget.trickplay.aspect;
+    return Container(
+      width: widget.width,
+      height: height,
+      clipBehavior: Clip.antiAlias,
+      decoration: BoxDecoration(
+        color: const Color(0xFF0B0C10),
+        borderRadius: BorderRadius.circular(VRadius.xs),
+        border: Border.all(color: const Color(0x66FFFFFF), width: 2),
+      ),
+      child: _frame == null ? null : CustomPaint(painter: _ThumbPainter(_frame!)),
+    );
+  }
+}
+
+class _ThumbPainter extends CustomPainter {
+  _ThumbPainter(this.frame);
+
+  final TrickplayFrame frame;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    canvas.drawImageRect(frame.image, frame.src, Offset.zero & size, Paint()..filterQuality = FilterQuality.medium);
+  }
+
+  @override
+  bool shouldRepaint(_ThumbPainter old) => old.frame != frame;
 }
 
 class _SeekPainter extends CustomPainter {

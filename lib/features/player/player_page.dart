@@ -31,7 +31,9 @@ import '../../data/media/media_models.dart';
 import '../../data/media/server_registry.dart';
 import '../../domain/models/segment.dart';
 import '../../domain/models/segment_settings.dart';
+import '../../player/chapters.dart';
 import '../../player/engine.dart';
+import '../../player/sleep_timer.dart';
 import '../../player/exo_engine.dart';
 import '../../player/manual_segments.dart';
 import '../../player/mpv_engine.dart';
@@ -40,6 +42,7 @@ import '../../player/preload.dart';
 import '../../player/segment_playback_session.dart';
 import '../../player/segment_skip_controller.dart';
 import '../../player/subtitle_pick.dart';
+import '../../player/trickplay.dart';
 import '../../ui/focus/input_mode.dart';
 import '../../ui/glass/glass.dart';
 import '../../ui/panels/context_menu.dart';
@@ -296,6 +299,7 @@ class _PlayerPageState extends ConsumerState<PlayerPage> with WidgetsBindingObse
       if (_started && _state.playing) _report();
     });
     _start();
+    _armSleepTimer();
     _focus.addListener(_keepFocus);
     // 电视：播放时暂停后台索引同步，不和播放抢带宽和 CPU
     if (PlatformProfile.isTv) {
@@ -353,7 +357,7 @@ class _PlayerPageState extends ConsumerState<PlayerPage> with WidgetsBindingObse
 
   /// 片尾自动模式：先倒计时，OK / 回车立即播放，返回取消（docs/07 §3.3）
   void _startNextCountdown() {
-    if (_nextEpisode == null || _nextCountdown != null) return;
+    if (_nextEpisode == null || _nextCountdown != null || SleepTimer.endOfItem || _sleepStopped) return;
     setState(() => _nextCountdown = nextCountdownSeconds);
     _countdownTimer?.cancel();
     _skipFadeTimer?.cancel();
@@ -379,6 +383,8 @@ class _PlayerPageState extends ConsumerState<PlayerPage> with WidgetsBindingObse
 
   void _goNext({required bool auto}) {
     _countdownTimer?.cancel();
+    // 睡眠定时已到点 / 设了「本集播完」（可能是倒计时开始后才设的）：不自动进下一集
+    if (auto && (_sleepStopped || SleepTimer.endOfItem)) return;
     final next = _nextEpisode;
     if (next == null || !mounted) return;
     if (auto) _arrivingByAutoPlay = true;
@@ -439,6 +445,7 @@ class _PlayerPageState extends ConsumerState<PlayerPage> with WidgetsBindingObse
       tunneling: p.tunneling,
       bufferBytes: p.bufferMb * 1024 * 1024,
       cacheDir: _cacheDir,
+      hardwareDecoding: p.mpvHardwareDecoding,
     );
   }
 
@@ -526,6 +533,7 @@ class _PlayerPageState extends ConsumerState<PlayerPage> with WidgetsBindingObse
 
   void _onEngineState() {
     final s = _state;
+    if ((s.video.hdr != null) != _appliedHdr) _applySubtitleBrightness(_engine);
     _pickDefaultSubtitle(s);
     final startPending = _checkStart(s);
     if (s.position > Duration.zero && (s.duration <= Duration.zero || s.position <= s.duration)) {
@@ -624,6 +632,8 @@ class _PlayerPageState extends ConsumerState<PlayerPage> with WidgetsBindingObse
     _startFixes = 0;
     _startFixAt = DateTime.fromMillisecondsSinceEpoch(0);
     await engine.open(EngineMedia(url: req.url, headers: headers, userAgent: req.userAgent, start: at));
+    // 打开的过程中睡眠定时到点了（内核打开后会自动开始播）：立即暂停
+    if (_sleepStopped) await engine.pause();
     if (PlatformProfile.isDesktop) await engine.setVolume(_muted ? 0 : _volume);
     await _applyDisplay(engine);
   }
@@ -660,9 +670,12 @@ class _PlayerPageState extends ConsumerState<PlayerPage> with WidgetsBindingObse
   late bool _muted = ref.read(configProvider).playback.muted;
   Timer? _volumeSave;
 
-  void _setVolume(double volume, {bool? muted}) {
+  /// 超过 100% 是音量增强（最高 [maxVolume]）。从 100% 以下调上来时先停在 100%，要再按一次才进入增强；
+  /// 按住 ↑ 不放（[repeat]）也停在 100%，免得一下子变得很响
+  void _setVolume(double volume, {bool? muted, bool repeat = false}) {
     if (!PlatformProfile.isDesktop) return;
-    final v = (volume * 100).round().clamp(0, 100) / 100;
+    var v = (volume * 100).round().clamp(0, (maxVolume * 100).round()) / 100;
+    if (v > 1 && (_volume < 1 || (repeat && _volume <= 1))) v = 1;
     // 调大音量时自动取消静音
     final m = muted ?? (_muted && v <= _volume);
     setState(() {
@@ -670,7 +683,10 @@ class _PlayerPageState extends ConsumerState<PlayerPage> with WidgetsBindingObse
       _muted = m;
     });
     _engine?.setVolume(m ? 0 : v);
-    showToast(m ? '静音' : '音量 ${(v * 100).round()}%', duration: const Duration(milliseconds: 1200));
+    showToast(
+      m ? '静音' : '音量 ${(v * 100).round()}%${v > 1 ? '（增强）' : ''}',
+      duration: const Duration(milliseconds: 1200),
+    );
     _volumeSave?.cancel();
     _volumeSave = Timer(const Duration(milliseconds: 800), _saveVolume);
   }
@@ -739,6 +755,8 @@ class _PlayerPageState extends ConsumerState<PlayerPage> with WidgetsBindingObse
       if (mounted) setState(() {});
       unawaited(_beginSegments());
       unawaited(_beginDanmaku());
+      unawaited(_loadChapters(client));
+      unawaited(_loadTrickplay(client, source));
       ref.read(configProvider.notifier).updateServer(widget.serverId, (s) => s.copyWith(lastAccessAt: DateTime.now()));
     } catch (e) {
       // 拿不到播放信息 / 打不开：先自动换其他版本，没有可换的才显示错误
@@ -1337,9 +1355,24 @@ class _PlayerPageState extends ConsumerState<PlayerPage> with WidgetsBindingObse
     _reportStopped(completed: true);
     final item = _item, client = _client;
     if (item == null || client == null || !mounted) return;
+    // 睡眠定时「本集播完」/ 已到点：停在这里，不播下一集
+    Future<bool> sleepStop() async {
+      if (!SleepTimer.endOfItem && !_sleepStopped) return false;
+      final toast = SleepTimer.endOfItem;
+      SleepTimer.clear();
+      _countdownTimer?.cancel();
+      await _engine?.pause();
+      if (toast) showToast('睡眠定时：本集已播完，已停止播放', duration: const Duration(seconds: 5));
+      if (mounted) setState(() {});
+      return true;
+    }
+
+    if (await sleepStop()) return;
     // 剧集自动播放下一集（季末接着播下一季第一集）
     final next = await _resolveNextEpisode();
     if (!mounted) return;
+    // 查下一集的时候睡眠定时到点了 / 设了「本集播完」：同样停下
+    if (await sleepStop() || !mounted) return;
     if (next != null) {
       _arrivingByAutoPlay = true;
       _countdownTimer?.cancel();
@@ -1363,6 +1396,13 @@ class _PlayerPageState extends ConsumerState<PlayerPage> with WidgetsBindingObse
     DesktopTray.instance.hiddenToTray.removeListener(_onHiddenToTray);
     WidgetsBinding.instance.removeObserver(this);
     _countdownTimer?.cancel();
+    _sleepTimer?.cancel();
+    // 退出播放就取消睡眠定时；连播下一集 / 换版本时按分钟的定时接着算，「本集播完」只管这一集
+    if (_handoff) {
+      SleepTimer.endOfItem = false;
+    } else {
+      SleepTimer.clear();
+    }
     if (_volumeSave?.isActive ?? false) {
       _volumeSave!.cancel();
       _saveVolume();
@@ -1536,6 +1576,164 @@ class _PlayerPageState extends ConsumerState<PlayerPage> with WidgetsBindingObse
     _setRate(_rates[next]);
   }
 
+  // ───────────────────────── HDR 字幕亮度、解码方式 ─────────────────────────
+
+  /// 上次按哪种片源设置的字幕亮度（true = HDR）；null = 还没设置
+  bool? _appliedHdr;
+
+  /// HDR 片源用设置里的字幕亮度，SDR 片源保持原样（内核报出 HDR 信息后再设一次）
+  void _applySubtitleBrightness(PlayerEngine? engine) {
+    if (engine == null) return;
+    final hdr = _state.video.hdr != null;
+    _appliedHdr = hdr;
+    final b = ref.read(configProvider).playback.hdrSubtitleBrightness;
+    unawaited(engine.setSubtitleBrightness(hdr ? b : 1));
+  }
+
+  void _setHdrSubtitleBrightness(double b) {
+    ref
+        .read(configProvider.notifier)
+        .update((c) => c.copyWith(playback: c.playback.copyWith(hdrSubtitleBrightness: b)));
+    _applySubtitleBrightness(_engine);
+    final pct = '${(b * 100).round()}%';
+    showToast(_state.video.hdr != null ? 'HDR 字幕亮度：$pct' : 'HDR 字幕亮度：$pct（播放 HDR 片源时生效）');
+  }
+
+  /// mpv 硬解 / 软解切换：立即生效，按设备保存
+  void _toggleHardwareDecoding() {
+    final engine = _engine;
+    if (engine == null || !engine.supportsDecoderSwitch) return;
+    final on = !ref.read(configProvider).playback.mpvHardwareDecoding;
+    ref.read(configProvider.notifier).update((c) => c.copyWith(playback: c.playback.copyWith(mpvHardwareDecoding: on)));
+    unawaited(engine.setHardwareDecoding(on));
+    showToast(on ? '已改为硬解' : '已改为软解（CPU 占用会变高，4K 片源可能卡顿）');
+  }
+
+  // ───────────────────────── 进度条缩略图 ─────────────────────────
+
+  Trickplay? _trickplay;
+  String? _trickplaySource;
+
+  /// 换了版本才重新取（缩略图按媒体源生成）；服务器没生成就没有，照常只显示时间
+  Future<void> _loadTrickplay(EmbyClient client, MediaSourceInfo source) async {
+    if (_trickplaySource == source.id) return;
+    _trickplaySource = source.id;
+    if (mounted) setState(() => _trickplay = null);
+    try {
+      final t = await client.trickplay(widget.itemId, source.id);
+      if (mounted && _trickplaySource == source.id) setState(() => _trickplay = t);
+    } catch (e) {
+      debugPrint('trickplay: $e');
+      if (_trickplaySource == source.id) _trickplaySource = null; // 下次打开再试
+    }
+  }
+
+  // ───────────────────────── 章节 ─────────────────────────
+
+  /// 服务器上的章节（去掉片头片尾标记）；少于 2 个时不显示菜单
+  List<ServerChapter> _chapters = const [];
+
+  Future<void> _loadChapters(EmbyClient client) async {
+    try {
+      final list = chapterList(await client.chapters(widget.itemId));
+      if (mounted) setState(() => _chapters = list);
+    } catch (e) {
+      debugPrint('chapters: $e');
+    }
+  }
+
+  List<MenuAction> _chapterItems() {
+    final current = currentChapterIndex(_chapters, _state.position);
+    return [
+      for (var i = 0; i < _chapters.length; i++)
+        MenuAction(
+          '${formatClock(_chapters[i].start)}  ${_chapters[i].name.isEmpty ? '第 ${i + 1} 章' : _chapters[i].name}'
+          '${i == current ? '  ✓' : ''}',
+          Icons.bookmark_border_rounded,
+          () => _seekTo(_chapters[i].start),
+        ),
+    ];
+  }
+
+  // ───────────────────────── 睡眠定时 ─────────────────────────
+
+  Timer? _sleepTimer;
+
+  /// 按 [SleepTimer.deadline] 安排到点暂停（连播下一集时新的播放页接着算）
+  void _armSleepTimer() {
+    _sleepTimer?.cancel();
+    final left = SleepTimer.remaining();
+    if (left == null) return;
+    _sleepTimer = Timer(left, _onSleep);
+  }
+
+  /// 睡眠定时已经到点：之后不再自动播下一集；还在打开媒体时，打开后立即暂停
+  bool _sleepStopped = false;
+
+  void _onSleep() {
+    if (!mounted) return;
+    SleepTimer.clear();
+    _sleepStopped = true;
+    // 片尾倒计时正在走：取消，不然倒计时结束会进下一集接着播
+    _countdownTimer?.cancel();
+    _nextCountdown = null;
+    _engine?.pause();
+    setState(() {});
+    showToast('睡眠定时到了，已暂停播放', duration: const Duration(seconds: 5));
+  }
+
+  void _setSleep({int? minutes, bool endOfItem = false}) {
+    _sleepStopped = false;
+    if (minutes != null) {
+      SleepTimer.setMinutes(minutes);
+      showToast('$minutes 分钟后暂停播放');
+    } else if (endOfItem) {
+      SleepTimer.setEndOfItem();
+      // 片尾倒计时已经在走：取消
+      _countdownTimer?.cancel();
+      _nextCountdown = null;
+      showToast(_item?.kind == MediaKind.episode ? '本集播完后停止，不自动播下一集' : '播完后停止');
+    } else {
+      SleepTimer.clear();
+      showToast('已关闭睡眠定时');
+    }
+    _armSleepTimer();
+    setState(() {});
+  }
+
+  List<MenuAction> _sleepItems() {
+    final minutes = SleepTimer.endOfItem ? null : SleepTimer.deadline;
+    return [
+      MenuAction('关闭${SleepTimer.active ? '' : '  ✓'}', Icons.timer_off_outlined, () => _setSleep()),
+      MenuAction(
+        '${_item?.kind == MediaKind.episode ? '本集播完' : '播完'}${SleepTimer.endOfItem ? '  ✓' : ''}',
+        Icons.stop_circle_outlined,
+        () => _setSleep(endOfItem: true),
+      ),
+      for (final m in SleepTimer.presets) MenuAction('$m 分钟', Icons.timer_outlined, () => _setSleep(minutes: m)),
+      if (minutes != null) MenuAction('现在：${SleepTimer.label()}', Icons.bedtime_outlined, () {}),
+    ];
+  }
+
+  // ───────────────────────── 音画同步 ─────────────────────────
+
+  int get _audioDelayMs => ref.read(configProvider).playback.audioDelayMs;
+
+  /// 音画同步：设为 [ms] 毫秒（正数 = 声音推后），立即生效并按设备保存
+  void _setAudioDelay(int ms, {bool toast = true}) {
+    final engine = _engine;
+    if (engine == null) return;
+    if (!engine.supportsAudioDelay) {
+      showToast('当前播放内核不支持调整音画同步');
+      return;
+    }
+    const limit = PlaybackConfig.audioDelayLimitMs;
+    final v = ms.clamp(-limit, limit);
+    engine.setAudioDelay(Duration(milliseconds: v));
+    ref.read(configProvider.notifier).update((c) => c.copyWith(playback: c.playback.copyWith(audioDelayMs: v)));
+    if (toast) showToast('音画同步：${SliderSpec.audioDelayLabel(v / 1000)}');
+  }
+
   // ───────────────────────── 字幕延迟 / 大小、画面比例 ─────────────────────────
 
   Duration _subDelay = Duration.zero;
@@ -1592,6 +1790,7 @@ class _PlayerPageState extends ConsumerState<PlayerPage> with WidgetsBindingObse
     ).toDouble(),
     _Adjusting.subtitleDelay => _subDelay.inMilliseconds / 1000,
     _Adjusting.danmakuShift => _danmakuChoice.shiftMs / 1000,
+    _Adjusting.audioDelay => _audioDelayMs / 1000,
     null => 0,
   };
 
@@ -1606,6 +1805,8 @@ class _PlayerPageState extends ConsumerState<PlayerPage> with WidgetsBindingObse
         _engine?.setSubtitleDelay(_subDelay);
       case _Adjusting.danmakuShift:
         setState(() => _danmakuChoice = _danmakuChoice.copyWith(shiftMs: (v * 1000).round()));
+      case _Adjusting.audioDelay:
+        _engine?.setAudioDelay(Duration(milliseconds: (v * 1000).round()));
       case null:
     }
   }
@@ -1626,6 +1827,8 @@ class _PlayerPageState extends ConsumerState<PlayerPage> with WidgetsBindingObse
       case _Adjusting.danmakuShift:
         final target = _danmakuTarget;
         if (target != null) unawaited(DanmakuChoiceStore.set(target.key, _danmakuChoice));
+      case _Adjusting.audioDelay:
+        _setAudioDelay((v * 1000).round(), toast: false);
       case _Adjusting.subtitleDelay || null:
     }
   }
@@ -1649,6 +1852,10 @@ class _PlayerPageState extends ConsumerState<PlayerPage> with WidgetsBindingObse
     final position = ref.read(configProvider).playback.subtitlePosition;
     if (position != 100 && engine.supportsSubtitlePosition) await engine.setSubtitlePosition(position);
     if (_subDelay != Duration.zero) await engine.setSubtitleDelay(_subDelay);
+    _appliedHdr = null;
+    _applySubtitleBrightness(engine);
+    final audioDelay = ref.read(configProvider).playback.audioDelayMs;
+    if (audioDelay != 0 && engine.supportsAudioDelay) await engine.setAudioDelay(Duration(milliseconds: audioDelay));
   }
 
   // ───────────────────────── 上一集 ─────────────────────────
@@ -1820,7 +2027,7 @@ class _PlayerPageState extends ConsumerState<PlayerPage> with WidgetsBindingObse
     } else if (!repeat && key == LogicalKeyboardKey.channelUp) {
       _playNext();
     } else if (repeat && PlatformProfile.isDesktop && key == LogicalKeyboardKey.arrowUp) {
-      _setVolume(_volume + 0.05);
+      _setVolume(_volume + 0.05, repeat: true);
     } else if (repeat && PlatformProfile.isDesktop && key == LogicalKeyboardKey.arrowDown) {
       _setVolume(_volume - 0.05);
     } else if (repeat) {
@@ -1936,12 +2143,32 @@ class _PlayerPageState extends ConsumerState<PlayerPage> with WidgetsBindingObse
 
   List<MenuAction> _audioItems() {
     final s = _state;
+    final delay = _audioDelayMs;
+    final label = SliderSpec.audioDelayLabel(delay / 1000);
     return [
       for (final t in s.audioTracks)
         MenuAction(
           '${t.displayName}${t == s.audio ? '  ✓' : ''}',
           Icons.graphic_eq_rounded,
           () => _engine?.selectAudio(t),
+        ),
+      // 音画同步：Windows 打开滑块；电视是菜单，按档调整
+      if ((_engine?.supportsAudioDelay ?? false) && PlatformProfile.isDesktop)
+        MenuAction('音画同步 · $label', Icons.sync_rounded, () => _startAdjust(_Adjusting.audioDelay))
+      else if (_engine?.supportsAudioDelay ?? false)
+        MenuAction.submenu(
+          '音画同步 · $label',
+          Icons.sync_rounded,
+          title: '音画同步（声音比画面慢就选「提前」）',
+          items: () => [
+            for (final ms in const [-500, -250, -100, -50, 50, 100, 250, 500])
+              MenuAction(
+                '声音${ms > 0 ? '推后' : '提前'} ${ms.abs()} 毫秒',
+                Icons.sync_rounded,
+                () => _setAudioDelay(_audioDelayMs + ms),
+              ),
+            MenuAction('恢复为 0', Icons.restart_alt_rounded, () => _setAudioDelay(0)),
+          ],
         ),
     ];
   }
@@ -1966,6 +2193,29 @@ class _PlayerPageState extends ConsumerState<PlayerPage> with WidgetsBindingObse
           Icons.closed_caption_rounded,
           () => _engine?.selectSubtitle(t),
         ),
+      if ((_engine?.supportsSecondarySubtitle ?? false) && s.subtitleTracks.length > 1)
+        MenuAction.submenu(
+          '第二字幕 · ${_engine?.secondarySubtitle?.displayName ?? '关'}',
+          Icons.subtitles_rounded,
+          title: '第二字幕（双语：显示在主字幕下方；只支持文字字幕）',
+          items: () {
+            final current = _engine?.secondarySubtitle;
+            return [
+              MenuAction(
+                '关闭${current == null ? '  ✓' : ''}',
+                Icons.subtitles_off_rounded,
+                () => _engine?.selectSecondarySubtitle(null),
+              ),
+              for (final t in _state.subtitleTracks)
+                if (t.isTextSubtitle && t != _state.subtitle)
+                  MenuAction(
+                    '${t.displayName}${t == current ? '  ✓' : ''}',
+                    Icons.subtitles_rounded,
+                    () => _engine?.selectSecondarySubtitle(t),
+                  ),
+            ];
+          },
+        ),
       for (final x in external)
         MenuAction('外挂 · ${x.displayName}', Icons.closed_caption_outlined, () {
           final req = _client?.subtitle(_source!, x);
@@ -1988,6 +2238,22 @@ class _PlayerPageState extends ConsumerState<PlayerPage> with WidgetsBindingObse
           for (final (v, label) in PlaybackConfig.subtitleScales)
             MenuAction('$label${v == scale ? '  ✓' : ''}', Icons.format_size_rounded, () => _setSubtitleScale(v)),
         ],
+      ),
+      MenuAction.submenu(
+        'HDR 字幕亮度 · ${DanmakuConfig.labelOf(PlaybackConfig.hdrSubtitleBrightnesses, ref.read(configProvider).playback.hdrSubtitleBrightness)}',
+        Icons.brightness_6_rounded,
+        title: 'HDR 字幕亮度（只对 HDR / 杜比视界片源生效）',
+        items: () {
+          final current = ref.read(configProvider).playback.hdrSubtitleBrightness;
+          return [
+            for (final (v, label) in PlaybackConfig.hdrSubtitleBrightnesses)
+              MenuAction(
+                '$label${v == current ? '  ✓' : ''}',
+                Icons.brightness_6_rounded,
+                () => _setHdrSubtitleBrightness(v),
+              ),
+          ];
+        },
       ),
       // Windows：打开滑块精确调整；电视：仍是菜单，每次 5%
       if ((_engine?.supportsSubtitlePosition ?? false) && PlatformProfile.isDesktop)
@@ -2341,6 +2607,9 @@ class _PlayerPageState extends ConsumerState<PlayerPage> with WidgetsBindingObse
       if (_item?.kind == MediaKind.episode)
         MenuAction('选集', Icons.video_library_outlined, () => _openPanel(OsdPanel.episodes)),
       MenuAction.submenu('倍速 · ${s.rate}x', Icons.speed_rounded, title: '倍速', items: _rateItems),
+      if (_chapters.length >= 2)
+        MenuAction.submenu('章节 · ${_chapters.length} 个', Icons.bookmarks_outlined, title: '章节', items: _chapterItems),
+      MenuAction.submenu('睡眠定时 · ${SleepTimer.label()}', Icons.bedtime_outlined, title: '睡眠定时', items: _sleepItems),
       MenuAction.submenu(
         '画面比例 · ${_fit.label}',
         Icons.aspect_ratio_rounded,
@@ -2363,6 +2632,13 @@ class _PlayerPageState extends ConsumerState<PlayerPage> with WidgetsBindingObse
           '播放内核 · ${engine.kind.label}（切换到 ${engine.kind == EngineKind.exo ? 'mpv' : 'ExoPlayer'}）',
           Icons.memory_rounded,
           () => _switchEngine(forceMpv: engine.kind == EngineKind.exo, forceExo: engine.kind == EngineKind.mpv),
+        ),
+      if (engine != null && engine.supportsDecoderSwitch)
+        MenuAction(
+          '解码方式 · ${ref.read(configProvider).playback.mpvHardwareDecoding ? '硬解' : '软解'}'
+          '（切换到${ref.read(configProvider).playback.mpvHardwareDecoding ? '软解' : '硬解'}）',
+          Icons.developer_board_rounded,
+          _toggleHardwareDecoding,
         ),
       MenuAction('媒体信息', Icons.info_outline_rounded, () => setState(() => _info = true)),
     ];
@@ -2560,9 +2836,18 @@ class _PlayerPageState extends ConsumerState<PlayerPage> with WidgetsBindingObse
                                       child: Glass(
                                         radius: VRadius.panel,
                                         padding: const EdgeInsets.symmetric(horizontal: 36, vertical: 20),
-                                        child: Text(
-                                          formatClock(_pendingSeek!),
-                                          style: numericStyle(VText.h2.copyWith(fontSize: 44)),
+                                        child: Column(
+                                          mainAxisSize: MainAxisSize.min,
+                                          children: [
+                                            if (_trickplay case final t?) ...[
+                                              TrickplayThumb(trickplay: t, position: _pendingSeek!, width: 400),
+                                              const SizedBox(height: 16),
+                                            ],
+                                            Text(
+                                              formatClock(_pendingSeek!),
+                                              style: numericStyle(VText.h2.copyWith(fontSize: 44)),
+                                            ),
+                                          ],
                                         ),
                                       ),
                                     ),
@@ -2606,6 +2891,7 @@ class _PlayerPageState extends ConsumerState<PlayerPage> with WidgetsBindingObse
                                           muted: _muted,
                                           onVolume: (v) => _setVolume(v, muted: false),
                                           onMute: _toggleMute,
+                                          trickplay: _trickplay,
                                         ),
                                       ),
                                     ),
@@ -2663,6 +2949,7 @@ class _PlayerPageState extends ConsumerState<PlayerPage> with WidgetsBindingObse
                           _Adjusting.subtitlePosition => SliderSpec.subtitleLift,
                           _Adjusting.subtitleDelay => SliderSpec.subtitleDelay,
                           _Adjusting.danmakuShift => SliderSpec.danmakuShift,
+                          _Adjusting.audioDelay => SliderSpec.audioDelay,
                         },
                         value: _adjustInitial,
                         subtitleScale: _adjusting == _Adjusting.subtitlePosition
@@ -2752,6 +3039,7 @@ class _InfoPanel extends StatelessWidget {
     final rows = <(String, String)>[
       ('播放内核', engine.label),
       if (v.decoder != null) ('解码器', v.decoder!),
+      if (state.droppedFrames != null) ('丢帧', '${state.droppedFrames} 帧'),
       if (v.width != null) ('分辨率', '${v.width} × ${v.height}'),
       if (v.frameRate != null) ('帧率', '${v.frameRate!.toStringAsFixed(3)} fps'),
       ('动态范围', v.hdr ?? source?.rangeLabel ?? 'SDR'),
@@ -2973,4 +3261,4 @@ class _SkipButton extends StatelessWidget {
 }
 
 /// 播放页里用滑块调整的项（Windows）
-enum _Adjusting { subtitlePosition, subtitleDelay, danmakuShift }
+enum _Adjusting { subtitlePosition, subtitleDelay, danmakuShift, audioDelay }
