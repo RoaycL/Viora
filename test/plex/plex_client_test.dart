@@ -326,4 +326,27 @@ void main() {
     expect(s.name, 'A cd1.avi · 共 2 段，只能播放第 1 段');
     expect(s.duration, const Duration(hours: 1));
   });
+
+  test('儿童模式：Plex 没有服务器端过滤，集也按分级过滤', () async {
+    final fake = await _Fake.start();
+    addTearDown(() => fake.http.close(force: true));
+    fake.body = (_) => _mc({
+      'Metadata': [
+        {'ratingKey': '1', 'type': 'episode', 'contentRating': 'TV-MA', 'viewOffset': 1000},
+        {'ratingKey': '2', 'type': 'episode', 'contentRating': 'TV-Y', 'viewOffset': 1000},
+      ],
+    });
+    final server = ServerConfig(
+      id: 'p',
+      type: ServerType.plex,
+      name: 'plex',
+      username: '',
+      userId: 'u',
+      token: 't',
+      lines: [ServerLine(id: 'l', name: 'main', url: fake.url)],
+    );
+    final config = AppConfig(servers: [server], parental: const ParentalConfig(enabled: true, maxAge: 7));
+    final client = mediaServerClient(config: config, server: server, appVersion: 'test');
+    expect((await client.resume()).map((i) => i.id), ['2']);
+  });
 }

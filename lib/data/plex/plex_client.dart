@@ -219,6 +219,11 @@ class PlexClient extends EmbyClient {
     return list;
   }
 
+  /// 儿童模式：Plex 没有服务器端按分级过滤（Emby 的 MaxOfficialRating），集也要在本地按分级过滤
+  @override
+  Iterable<MediaItem> _allowed(Iterable<MediaItem> items) =>
+      config.parental.enabled ? items.where((it) => config.parental.allows(it.officialRating)) : items;
+
   // ───────────────────────── 浏览 ─────────────────────────
 
   @override
@@ -688,7 +693,7 @@ class PlexClient extends EmbyClient {
       year: (j['year'] as num?)?.toInt() ?? premiere?.year,
       premiereDate: premiere,
       rating: ((j['audienceRating'] ?? j['rating']) as num?)?.toDouble(),
-      officialRating: j['contentRating'] as String?,
+      officialRating: (j['contentRating'] ?? j['grandparentContentRating'] ?? j['parentContentRating']) as String?,
       genres: [
         for (final g in (j['Genre'] as List? ?? const []).whereType<Map<dynamic, dynamic>>())
           if (g['tag'] is String) translateGenre(g['tag'] as String),

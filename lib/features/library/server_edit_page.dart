@@ -51,6 +51,9 @@ class _ServerEditPageState extends ConsumerState<ServerEditPage> {
   String? _pinCode;
   Timer? _pinTimer;
 
+  /// 每次重新获取授权码加 1：之前那次还没返回的结果直接丢掉
+  int _pinAttempt = 0;
+
   @override
   void initState() {
     super.initState();
@@ -81,6 +84,7 @@ class _ServerEditPageState extends ConsumerState<ServerEditPage> {
 
   @override
   void dispose() {
+    _pinAttempt++;
     _pinTimer?.cancel();
     for (final c in [_name, _lines, _user, _pass, _ua]) {
       c.dispose();
@@ -120,6 +124,8 @@ class _ServerEditPageState extends ConsumerState<ServerEditPage> {
   /// Plex：申请授权码，用户在手机 / 电脑上打开 plex.tv/link 输入后拿到账号令牌，填进密码框（用户名留空）并保存
   Future<void> _startPlexPin() async {
     _pinTimer?.cancel();
+    final attempt = ++_pinAttempt;
+    bool stale() => !mounted || attempt != _pinAttempt;
     setState(() {
       _error = null;
       _pinCode = null;
@@ -127,11 +133,15 @@ class _ServerEditPageState extends ConsumerState<ServerEditPage> {
     final config = ref.read(configProvider);
     try {
       final pin = await PlexClient.createPin(config, appVersion);
-      if (!mounted) return;
+      if (stale()) return;
       setState(() => _pinCode = pin.code);
       final started = DateTime.now();
       var checking = false;
       _pinTimer = Timer.periodic(const Duration(seconds: 2), (t) async {
+        if (stale()) {
+          t.cancel();
+          return;
+        }
         if (checking) return;
         if (DateTime.now().difference(started) > const Duration(minutes: 10)) {
           t.cancel();
@@ -141,7 +151,7 @@ class _ServerEditPageState extends ConsumerState<ServerEditPage> {
         checking = true;
         try {
           final token = await PlexClient.checkPin(config, appVersion, pin.id);
-          if (token == null || !mounted) return;
+          if (token == null || stale()) return;
           t.cancel();
           setState(() {
             _pinCode = null;
@@ -152,7 +162,7 @@ class _ServerEditPageState extends ConsumerState<ServerEditPage> {
           if (_lines.text.trim().isNotEmpty) unawaited(_save());
         } catch (e) {
           t.cancel();
-          if (mounted) {
+          if (!stale()) {
             setState(() {
               _pinCode = null;
               _error = e.toString();
@@ -163,7 +173,7 @@ class _ServerEditPageState extends ConsumerState<ServerEditPage> {
         }
       });
     } catch (e) {
-      if (mounted) setState(() => _error = e.toString());
+      if (!stale()) setState(() => _error = e.toString());
     }
   }
 
