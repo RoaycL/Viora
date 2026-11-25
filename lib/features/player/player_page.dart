@@ -2183,6 +2183,29 @@ class _PlayerPageState extends ConsumerState<PlayerPage> with WidgetsBindingObse
           Icons.closed_caption_rounded,
           () => _engine?.selectSubtitle(t),
         ),
+      if ((_engine?.supportsSecondarySubtitle ?? false) && s.subtitleTracks.length > 1)
+        MenuAction.submenu(
+          '第二字幕 · ${_engine?.secondarySubtitle?.displayName ?? '关'}',
+          Icons.subtitles_rounded,
+          title: '第二字幕（双语：显示在主字幕下方；只支持文字字幕）',
+          items: () {
+            final current = _engine?.secondarySubtitle;
+            return [
+              MenuAction(
+                '关闭${current == null ? '  ✓' : ''}',
+                Icons.subtitles_off_rounded,
+                () => _engine?.selectSecondarySubtitle(null),
+              ),
+              for (final t in _state.subtitleTracks)
+                if (t.isTextSubtitle && t != _state.subtitle)
+                  MenuAction(
+                    '${t.displayName}${t == current ? '  ✓' : ''}',
+                    Icons.subtitles_rounded,
+                    () => _engine?.selectSecondarySubtitle(t),
+                  ),
+            ];
+          },
+        ),
       for (final x in external)
         MenuAction('外挂 · ${x.displayName}', Icons.closed_caption_outlined, () {
           final req = _client?.subtitle(_source!, x);

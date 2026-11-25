@@ -228,6 +228,9 @@ class MpvEngine extends PlayerEngine {
       await proxy;
       await set('http-proxy', SystemProxy.forMpv(media.url) ?? '');
       await set('network-timeout', '20');
+      // 第二字幕不跟到下一个文件（轨道编号在别的文件里是另一条字幕）
+      await set('secondary-sid', 'no');
+      _secondary = null;
       // 音量增强：Windows 音量最高到 200%（mpv 默认上限 130%）
       await set('volume-max', '200');
       // media_kit 默认 hr-seek-framedrop=no：精确跳转（续播、拖动进度、跳片头）时，从关键帧到目标位置之间的每一帧
@@ -331,6 +334,20 @@ class MpvEngine extends PlayerEngine {
   Future<void> selectAudio(EngineTrack track) async {
     final t = _player.state.tracks.audio.where((a) => a.id == track.id).firstOrNull;
     if (t != null) await _player.setAudioTrack(t);
+  }
+
+  EngineTrack? _secondary;
+
+  @override
+  bool get supportsSecondarySubtitle => true;
+
+  @override
+  EngineTrack? get secondarySubtitle => _secondary;
+
+  @override
+  Future<void> selectSecondarySubtitle(EngineTrack? track) async {
+    _secondary = track;
+    await _prop('secondary-sid', track?.id ?? 'no');
   }
 
   @override
@@ -445,11 +462,10 @@ class _MpvSubtitleViewState extends State<MpvSubtitleView> {
 
   @override
   Widget build(BuildContext context) {
-    final text = [
-      for (final l in _lines)
-        if (l.trim().isNotEmpty) l.trim(),
-    ].join('\n');
-    if (text.isEmpty) return const SizedBox.shrink();
+    // [主字幕, 第二字幕]：第二字幕在下方，字号小一点
+    final text = _lines.isEmpty ? '' : _lines[0].trim();
+    final secondary = _lines.length > 1 ? _lines[1].trim() : '';
+    if (text.isEmpty && secondary.isEmpty) return const SizedBox.shrink();
     return IgnorePointer(
       child: LayoutBuilder(
         builder: (context, c) => ListenableBuilder(
@@ -463,10 +479,22 @@ class _MpvSubtitleViewState extends State<MpvSubtitleView> {
               child: Align(
                 alignment: Alignment.bottomCenter,
                 // 不要黑底色块：白字 + 细黑描边 + 柔和阴影，直接叠在画面上（和主流播放器一样）
-                child: _OutlinedSubtitle(
-                  text: text,
-                  fontSize: MpvSubtitleView.fontSize(size, widget.scale.value),
-                  brightness: widget.brightness?.value ?? 1,
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    if (text.isNotEmpty)
+                      _OutlinedSubtitle(
+                        text: text,
+                        fontSize: MpvSubtitleView.fontSize(size, widget.scale.value),
+                        brightness: widget.brightness?.value ?? 1,
+                      ),
+                    if (secondary.isNotEmpty)
+                      _OutlinedSubtitle(
+                        text: secondary,
+                        fontSize: MpvSubtitleView.fontSize(size, widget.scale.value) * 0.8,
+                        brightness: widget.brightness?.value ?? 1,
+                      ),
+                  ],
                 ),
               ),
             );
