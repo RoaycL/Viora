@@ -1355,18 +1355,24 @@ class _PlayerPageState extends ConsumerState<PlayerPage> with WidgetsBindingObse
     _reportStopped(completed: true);
     final item = _item, client = _client;
     if (item == null || client == null || !mounted) return;
-    // 睡眠定时「本集播完」：停在这里，不播下一集
-    if (SleepTimer.endOfItem || _sleepStopped) {
+    // 睡眠定时「本集播完」/ 已到点：停在这里，不播下一集
+    Future<bool> sleepStop() async {
+      if (!SleepTimer.endOfItem && !_sleepStopped) return false;
+      final toast = SleepTimer.endOfItem;
       SleepTimer.clear();
       _countdownTimer?.cancel();
       await _engine?.pause();
-      showToast('睡眠定时：本集已播完，已停止播放', duration: const Duration(seconds: 5));
+      if (toast) showToast('睡眠定时：本集已播完，已停止播放', duration: const Duration(seconds: 5));
       if (mounted) setState(() {});
-      return;
+      return true;
     }
+
+    if (await sleepStop()) return;
     // 剧集自动播放下一集（季末接着播下一季第一集）
     final next = await _resolveNextEpisode();
     if (!mounted) return;
+    // 查下一集的时候睡眠定时到点了 / 设了「本集播完」：同样停下
+    if (await sleepStop() || !mounted) return;
     if (next != null) {
       _arrivingByAutoPlay = true;
       _countdownTimer?.cancel();
