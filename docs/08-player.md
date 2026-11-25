@@ -52,7 +52,7 @@ v0.17.8 起（播放功能，对标 Infuse 等）：
 | 音画同步 | 音轨菜单 → 音画同步 | ±3 秒（正数 = 声音推后）。Windows 用滑块（50 毫秒一档），电视按档调。按设备保存（和音响 / 回音壁有关），不跨设备同步。mpv：`audio-delay`；ExoPlayer：给音频时钟加偏移（`OffsetAudioSink`），音频直通也有效，隧道播放时不生效 |
 | 播放统计 | 媒体信息 | 增加丢帧数；mpv 显示实际的解码方式（`hwdec-current`：硬解 · d3d11va / 软解），ExoPlayer 原来就显示解码器名 |
 | 章节 | 播放设置 → 章节 | 服务器的章节列表（去掉片头片尾标记，至少 2 个才显示），选中跳转，当前章节打勾。实现：`lib/player/chapters.dart` |
-| HDR 字幕亮度 | 字幕菜单 → HDR 字幕亮度 | 100% / 85% / 70% / 55%，只对 HDR / 杜比视界片源生效（白色字幕在 HDR 画面上常刺眼），按设备保存。mpv：调 Flutter 字幕的文字颜色；ExoPlayer：在系统字幕样式基础上调暗文字颜色（`SubtitleStyle.kt`） |
+| HDR 字幕亮度 | 字幕菜单 → HDR 字幕亮度 | 100% / 85% / 70% / 55%，只对 HDR / 杜比视界片源生效（白色字幕在 HDR 画面上常刺眼），按设备保存。mpv：调 Flutter 字幕的文字颜色；ExoPlayer：给字幕视图加颜色滤镜，RGB 按比例调暗，字幕自带的颜色（ASS 等）也有效（`SubtitleStyle.kt`） |
 | 解码方式 | 播放设置 → 解码方式（mpv） | 硬解 / 软解切换，立即生效，按设备保存。硬解花屏、绿屏的片源可以改软解 |
 | 进度条缩略图 | Windows 悬停 / 拖动进度条；电视快进快退 | 服务器生成了缩略图才有（Jellyfin 10.9+：媒体库开启 trickplay；Emby：开启「缩略图提取」/ 预览图）。Jellyfin 按需下载用到的拼图（`/Videos/{id}/Trickplay/{宽}/{n}.jpg`，一张约 100 个缩略图，留最近 6 张）；Emby 开播后在后台下载一次 BIF（`/Videos/{id}/index.bif?Width=320`，2 小时的片子约几 MB）。没有时只显示时间。实现：`lib/player/trickplay.dart` |
 | 音量增强 | Windows 音量 | 音量最高 200%（mpv `volume-max=200`），超过 100% 时提示「增强」、音量滑块变琥珀色；按住 ↑ 时停在 100%，要再按一次才进入增强。片源本身响度高时可能削波 |

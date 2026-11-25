@@ -45,7 +45,7 @@ class ExoPlugin(private val activity: Activity, engine: FlutterEngine) {
         view.subtitleView?.setFractionalTextSize(
             androidx.media3.ui.SubtitleView.DEFAULT_TEXT_SIZE_FRACTION * (subtitleScales[id] ?: 1f)
         )
-        view.subtitleView?.applyBrightness(activity, subtitleBrightness[id] ?: 1f)
+        view.subtitleView?.applyBrightness(subtitleBrightness[id] ?: 1f)
     }
     private var nextId = 1
     private var sink: EventChannel.EventSink? = null

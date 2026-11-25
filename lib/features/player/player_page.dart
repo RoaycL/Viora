@@ -383,7 +383,8 @@ class _PlayerPageState extends ConsumerState<PlayerPage> with WidgetsBindingObse
 
   void _goNext({required bool auto}) {
     _countdownTimer?.cancel();
-    if (auto && _sleepStopped) return;
+    // 睡眠定时已到点 / 设了「本集播完」（可能是倒计时开始后才设的）：不自动进下一集
+    if (auto && (_sleepStopped || SleepTimer.endOfItem)) return;
     final next = _nextEpisode;
     if (next == null || !mounted) return;
     if (auto) _arrivingByAutoPlay = true;
@@ -1682,6 +1683,9 @@ class _PlayerPageState extends ConsumerState<PlayerPage> with WidgetsBindingObse
       showToast('$minutes 分钟后暂停播放');
     } else if (endOfItem) {
       SleepTimer.setEndOfItem();
+      // 片尾倒计时已经在走：取消
+      _countdownTimer?.cancel();
+      _nextCountdown = null;
       showToast(_item?.kind == MediaKind.episode ? '本集播完后停止，不自动播下一集' : '播完后停止');
     } else {
       SleepTimer.clear();
