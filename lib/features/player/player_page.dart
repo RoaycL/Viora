@@ -552,10 +552,11 @@ class _PlayerPageState extends ConsumerState<PlayerPage> with WidgetsBindingObse
       _preloadNext();
     }
     if (_nextPreloading &&
-        !_nextRefreshed &&
+        !_nextChecking &&
         s.duration > Duration.zero &&
-        (s.duration - s.position < const Duration(seconds: 90) || (credits != null && s.position >= credits.start))) {
-      _refreshNext();
+        (s.duration - s.position < const Duration(seconds: 90) || (credits != null && s.position >= credits.start)) &&
+        (_nextCheckedAt == null || DateTime.now().difference(_nextCheckedAt!) > const Duration(seconds: 15))) {
+      _refreshNext(s.duration - s.position);
     }
     if (s.playing != _wasPlaying) {
       _wasPlaying = s.playing;
@@ -1360,21 +1361,30 @@ class _PlayerPageState extends ConsumerState<PlayerPage> with WidgetsBindingObse
     } catch (_) {}
   }
 
-  bool _nextRefreshed = false;
+  bool _nextChecking = false;
+  DateTime? _nextCheckedAt;
 
-  /// 快播完时再确认一次下一集的播放信息和条目还在缓存里：85% 时预加载的播放信息只缓存 3 分钟，
-  /// 长一点的剧集播到结尾时已经过期，自动进下一集要重新请求（经反代 1~2 秒）。还在缓存里时不会发请求
-  Future<void> _refreshNext() async {
-    _nextRefreshed = true;
+  /// 快播完时确认下一集的播放信息和条目到切过去时仍在缓存里：85% 时预加载的播放信息只缓存 3 分钟，
+  /// 播到结尾时常已过期，自动进下一集要重新请求（经反代 1~2 秒）。按剩余时间（最多算 90 秒，片尾自动跳过时更早切）
+  /// 再留 30 秒余量：缓存撑不到那时就重新取，撑得到就不发请求。剩 90 秒内每 15 秒检查一次
+  Future<void> _refreshNext(Duration remaining) async {
+    _nextChecking = true;
+    _nextCheckedAt = DateTime.now();
     final client = _client;
     try {
       final next = await _resolveNextEpisode();
       if (next == null || client == null || !PlaybackPreloader.enabled) return;
+      final need =
+          (remaining > const Duration(seconds: 90) ? const Duration(seconds: 90) : remaining) +
+          const Duration(seconds: 30);
       await Future.wait([
-        PlaybackPreloader.info(client, widget.serverId, next.id),
-        if (client.recentItem(next.id) == null) client.item(next.id),
+        PlaybackPreloader.info(client, widget.serverId, next.id, maxAge: PlaybackPreloader.infoTtl - need),
+        if (client.recentItem(next.id, maxAge: const Duration(minutes: 10) - need) == null) client.item(next.id),
       ]);
-    } catch (_) {}
+    } catch (_) {
+    } finally {
+      _nextChecking = false;
+    }
   }
 
   Future<void> _onCompleted() async {
