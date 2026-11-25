@@ -155,7 +155,11 @@ class EngineOptions {
     this.tunneling = false,
     this.bufferBytes = 256 * 1024 * 1024,
     this.cacheDir,
+    this.hardwareDecoding = true,
   });
+
+  /// mpv 硬解（关掉 = 软解；硬解花屏、绿屏的片源可以手动切）
+  final bool hardwareDecoding;
 
   /// 预读缓冲上限（字节）
   final int bufferBytes;
@@ -230,6 +234,15 @@ abstract class PlayerEngine {
 
   /// 这个内核能不能调音画同步
   bool get supportsAudioDelay => false;
+
+  /// 字幕亮度（1 = 原样；HDR 片源上白色字幕刺眼时调暗）
+  Future<void> setSubtitleBrightness(double brightness) async {}
+
+  /// 能不能在硬解和软解之间切换（mpv）
+  bool get supportsDecoderSwitch => false;
+
+  /// 切换硬解 / 软解
+  Future<void> setHardwareDecoding(bool enabled) async {}
   Future<void> selectAudio(EngineTrack track);
 
   /// null = 关闭字幕

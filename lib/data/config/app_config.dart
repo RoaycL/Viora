@@ -250,7 +250,17 @@ class PlaybackConfig {
     this.subtitlePreference = SubtitlePreference.auto,
     this.askStillWatching = true,
     this.audioDelayMs = 0,
+    this.mpvHardwareDecoding = true,
+    this.hdrSubtitleBrightness = 1.0,
   });
+
+  /// mpv 硬解（播放设置 → 解码方式）。按设备保存、不跨设备同步
+  final bool mpvHardwareDecoding;
+
+  /// HDR 片源上的字幕亮度（1 = 原样）。按设备保存（和电视有关）
+  final double hdrSubtitleBrightness;
+
+  static const hdrSubtitleBrightnesses = [(1.0, '100%（原样）'), (0.85, '85%'), (0.7, '70%'), (0.55, '55%')];
 
   /// 音画同步（毫秒，正数 = 声音推后）。和音响、回音壁的延迟有关，按设备保存、不跨设备同步
   final int audioDelayMs;
@@ -343,6 +353,8 @@ class PlaybackConfig {
     SubtitlePreference? subtitlePreference,
     bool? askStillWatching,
     int? audioDelayMs,
+    bool? mpvHardwareDecoding,
+    double? hdrSubtitleBrightness,
   }) => PlaybackConfig(
     userAgent: userAgent ?? this.userAgent,
     uaForApi: uaForApi ?? this.uaForApi,
@@ -365,6 +377,8 @@ class PlaybackConfig {
     subtitlePreference: subtitlePreference ?? this.subtitlePreference,
     askStillWatching: askStillWatching ?? this.askStillWatching,
     audioDelayMs: audioDelayMs ?? this.audioDelayMs,
+    mpvHardwareDecoding: mpvHardwareDecoding ?? this.mpvHardwareDecoding,
+    hdrSubtitleBrightness: hdrSubtitleBrightness ?? this.hdrSubtitleBrightness,
   );
 
   Map<String, dynamic> toJson() => {
@@ -389,6 +403,8 @@ class PlaybackConfig {
     'subtitlePreference': subtitlePreference.name,
     'askStillWatching': askStillWatching,
     'audioDelayMs': audioDelayMs,
+    'mpvHardwareDecoding': mpvHardwareDecoding,
+    'hdrSubtitleBrightness': hdrSubtitleBrightness,
   };
 
   factory PlaybackConfig.fromJson(Map<String, dynamic> j) => PlaybackConfig(
@@ -413,6 +429,8 @@ class PlaybackConfig {
     subtitlePreference: SubtitlePreference.values.asNameMap()[j['subtitlePreference']] ?? SubtitlePreference.auto,
     askStillWatching: j['askStillWatching'] as bool? ?? true,
     audioDelayMs: ((j['audioDelayMs'] as num?)?.toInt() ?? 0).clamp(-audioDelayLimitMs, audioDelayLimitMs),
+    mpvHardwareDecoding: j['mpvHardwareDecoding'] as bool? ?? true,
+    hdrSubtitleBrightness: ((j['hdrSubtitleBrightness'] as num?)?.toDouble() ?? 1.0).clamp(0.2, 1.0),
   );
 }
 

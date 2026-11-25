@@ -168,7 +168,11 @@ class MpvEngine extends PlayerEngine {
   final Player _player = Player(
     configuration: const PlayerConfiguration(title: 'Viora', bufferSize: 64 * 1024 * 1024),
   );
-  late final VideoController _video = VideoController(_player);
+  // 软解时直接用 hwdec=no 建画面输出（media_kit 在建输出时设 hwdec，之后再改也可以，但起播就是软解更干净）
+  late final VideoController _video = VideoController(
+    _player,
+    configuration: VideoControllerConfiguration(hwdec: options.hardwareDecoding ? null : 'no'),
+  );
   final _state = ValueNotifier(const EngineState());
   final _completed = StreamController<void>.broadcast();
   final _errors = StreamController<EngineError>.broadcast();
@@ -271,6 +275,17 @@ class MpvEngine extends PlayerEngine {
   bool get supportsSubtitleDelay => true;
 
   @override
+  bool get supportsDecoderSwitch => true;
+
+  // 硬解用回 media_kit 的默认值（Windows auto，Android auto-safe）
+  @override
+  Future<void> setHardwareDecoding(bool enabled) =>
+      _prop('hwdec', enabled ? (defaultTargetPlatform == TargetPlatform.android ? 'auto-safe' : 'auto') : 'no');
+
+  @override
+  Future<void> setSubtitleBrightness(double brightness) async => _subBrightness.value = brightness.clamp(0.2, 1.0);
+
+  @override
   bool get supportsAudioDelay => true;
 
   // mpv 的 audio-delay：正数 = 声音推后
@@ -284,6 +299,7 @@ class MpvEngine extends PlayerEngine {
   // 所以 mpv 的 sub-scale / sub-pos 不起作用；大小和位置在这里自己处理（内封和外挂字幕都一样）
   final _subScale = ValueNotifier(1.0);
   final _subPos = ValueNotifier(100);
+  final _subBrightness = ValueNotifier(1.0);
 
   @override
   Future<void> setSubtitleScale(double scale) async => _subScale.value = scale;
@@ -344,7 +360,7 @@ class MpvEngine extends PlayerEngine {
           },
         ),
       ),
-      MpvSubtitleView(player: _player, scale: _subScale, position: _subPos),
+      MpvSubtitleView(player: _player, scale: _subScale, position: _subPos, brightness: _subBrightness),
     ],
   );
 
@@ -362,14 +378,24 @@ class MpvEngine extends PlayerEngine {
     _fit.dispose();
     _subScale.dispose();
     _subPos.dispose();
+    _subBrightness.dispose();
   }
 }
 
 /// mpv 内核的字幕：文字来自 mpv（sub-text，已按字幕延迟对齐），大小和上下位置跟随播放设置
 class MpvSubtitleView extends StatefulWidget {
-  const MpvSubtitleView({super.key, required this.player, required this.scale, required this.position});
+  const MpvSubtitleView({
+    super.key,
+    required this.player,
+    required this.scale,
+    required this.position,
+    this.brightness,
+  });
 
   final Player player;
+
+  /// 字幕亮度（1 = 白色；HDR 片源上调暗）
+  final ValueListenable<double>? brightness;
 
   /// 字幕大小倍数（1 = 标准）
   final ValueListenable<double> scale;
@@ -425,7 +451,7 @@ class _MpvSubtitleViewState extends State<MpvSubtitleView> {
     return IgnorePointer(
       child: LayoutBuilder(
         builder: (context, c) => ListenableBuilder(
-          listenable: Listenable.merge([widget.scale, widget.position]),
+          listenable: Listenable.merge([widget.scale, widget.position, ?widget.brightness]),
           builder: (context, _) {
             // 跟 media_kit 原来的字幕一样按画面面积缩放（以 1080p 为准），再乘上字幕大小设置
             final size = c.biggest;
@@ -435,7 +461,11 @@ class _MpvSubtitleViewState extends State<MpvSubtitleView> {
               child: Align(
                 alignment: Alignment.bottomCenter,
                 // 不要黑底色块：白字 + 细黑描边 + 柔和阴影，直接叠在画面上（和主流播放器一样）
-                child: _OutlinedSubtitle(text: text, fontSize: MpvSubtitleView.fontSize(size, widget.scale.value)),
+                child: _OutlinedSubtitle(
+                  text: text,
+                  fontSize: MpvSubtitleView.fontSize(size, widget.scale.value),
+                  brightness: widget.brightness?.value ?? 1,
+                ),
               ),
             );
           },
@@ -447,10 +477,11 @@ class _MpvSubtitleViewState extends State<MpvSubtitleView> {
 
 /// 字幕文字：白字、黑色描边、柔和阴影（深色、浅色画面上都看得清，又不遮住画面）
 class _OutlinedSubtitle extends StatelessWidget {
-  const _OutlinedSubtitle({required this.text, required this.fontSize});
+  const _OutlinedSubtitle({required this.text, required this.fontSize, this.brightness = 1});
 
   final String text;
   final double fontSize;
+  final double brightness;
 
   @override
   Widget build(BuildContext context) {
@@ -476,7 +507,7 @@ class _OutlinedSubtitle extends StatelessWidget {
           text,
           textAlign: TextAlign.center,
           textScaler: TextScaler.noScaling,
-          style: style.copyWith(color: Colors.white),
+          style: style.copyWith(color: Color.lerp(Colors.black, Colors.white, brightness)),
         ),
       ],
     );

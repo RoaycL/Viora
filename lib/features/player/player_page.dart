@@ -31,6 +31,7 @@ import '../../data/media/media_models.dart';
 import '../../data/media/server_registry.dart';
 import '../../domain/models/segment.dart';
 import '../../domain/models/segment_settings.dart';
+import '../../player/chapters.dart';
 import '../../player/engine.dart';
 import '../../player/sleep_timer.dart';
 import '../../player/exo_engine.dart';
@@ -441,6 +442,7 @@ class _PlayerPageState extends ConsumerState<PlayerPage> with WidgetsBindingObse
       tunneling: p.tunneling,
       bufferBytes: p.bufferMb * 1024 * 1024,
       cacheDir: _cacheDir,
+      hardwareDecoding: p.mpvHardwareDecoding,
     );
   }
 
@@ -528,6 +530,7 @@ class _PlayerPageState extends ConsumerState<PlayerPage> with WidgetsBindingObse
 
   void _onEngineState() {
     final s = _state;
+    if ((s.video.hdr != null) != _appliedHdr) _applySubtitleBrightness(_engine);
     _pickDefaultSubtitle(s);
     final startPending = _checkStart(s);
     if (s.position > Duration.zero && (s.duration <= Duration.zero || s.position <= s.duration)) {
@@ -741,6 +744,7 @@ class _PlayerPageState extends ConsumerState<PlayerPage> with WidgetsBindingObse
       if (mounted) setState(() {});
       unawaited(_beginSegments());
       unawaited(_beginDanmaku());
+      unawaited(_loadChapters(client));
       ref.read(configProvider.notifier).updateServer(widget.serverId, (s) => s.copyWith(lastAccessAt: DateTime.now()));
     } catch (e) {
       // 拿不到播放信息 / 打不开：先自动换其他版本，没有可换的才显示错误
@@ -1554,6 +1558,66 @@ class _PlayerPageState extends ConsumerState<PlayerPage> with WidgetsBindingObse
     _setRate(_rates[next]);
   }
 
+  // ───────────────────────── HDR 字幕亮度、解码方式 ─────────────────────────
+
+  /// 上次按哪种片源设置的字幕亮度（true = HDR）；null = 还没设置
+  bool? _appliedHdr;
+
+  /// HDR 片源用设置里的字幕亮度，SDR 片源保持原样（内核报出 HDR 信息后再设一次）
+  void _applySubtitleBrightness(PlayerEngine? engine) {
+    if (engine == null) return;
+    final hdr = _state.video.hdr != null;
+    _appliedHdr = hdr;
+    final b = ref.read(configProvider).playback.hdrSubtitleBrightness;
+    unawaited(engine.setSubtitleBrightness(hdr ? b : 1));
+  }
+
+  void _setHdrSubtitleBrightness(double b) {
+    ref
+        .read(configProvider.notifier)
+        .update((c) => c.copyWith(playback: c.playback.copyWith(hdrSubtitleBrightness: b)));
+    _applySubtitleBrightness(_engine);
+    final pct = '${(b * 100).round()}%';
+    showToast(_state.video.hdr != null ? 'HDR 字幕亮度：$pct' : 'HDR 字幕亮度：$pct（播放 HDR 片源时生效）');
+  }
+
+  /// mpv 硬解 / 软解切换：立即生效，按设备保存
+  void _toggleHardwareDecoding() {
+    final engine = _engine;
+    if (engine == null || !engine.supportsDecoderSwitch) return;
+    final on = !ref.read(configProvider).playback.mpvHardwareDecoding;
+    ref.read(configProvider.notifier).update((c) => c.copyWith(playback: c.playback.copyWith(mpvHardwareDecoding: on)));
+    unawaited(engine.setHardwareDecoding(on));
+    showToast(on ? '已改为硬解' : '已改为软解（CPU 占用会变高，4K 片源可能卡顿）');
+  }
+
+  // ───────────────────────── 章节 ─────────────────────────
+
+  /// 服务器上的章节（去掉片头片尾标记）；少于 2 个时不显示菜单
+  List<ServerChapter> _chapters = const [];
+
+  Future<void> _loadChapters(EmbyClient client) async {
+    try {
+      final list = chapterList(await client.chapters(widget.itemId));
+      if (mounted) setState(() => _chapters = list);
+    } catch (e) {
+      debugPrint('chapters: $e');
+    }
+  }
+
+  List<MenuAction> _chapterItems() {
+    final current = currentChapterIndex(_chapters, _state.position);
+    return [
+      for (var i = 0; i < _chapters.length; i++)
+        MenuAction(
+          '${formatClock(_chapters[i].start)}  ${_chapters[i].name.isEmpty ? '第 ${i + 1} 章' : _chapters[i].name}'
+          '${i == current ? '  ✓' : ''}',
+          Icons.bookmark_border_rounded,
+          () => _seekTo(_chapters[i].start),
+        ),
+    ];
+  }
+
   // ───────────────────────── 睡眠定时 ─────────────────────────
 
   Timer? _sleepTimer;
@@ -1740,6 +1804,8 @@ class _PlayerPageState extends ConsumerState<PlayerPage> with WidgetsBindingObse
     final position = ref.read(configProvider).playback.subtitlePosition;
     if (position != 100 && engine.supportsSubtitlePosition) await engine.setSubtitlePosition(position);
     if (_subDelay != Duration.zero) await engine.setSubtitleDelay(_subDelay);
+    _appliedHdr = null;
+    _applySubtitleBrightness(engine);
     final audioDelay = ref.read(configProvider).playback.audioDelayMs;
     if (audioDelay != 0 && engine.supportsAudioDelay) await engine.setAudioDelay(Duration(milliseconds: audioDelay));
   }
@@ -2102,6 +2168,22 @@ class _PlayerPageState extends ConsumerState<PlayerPage> with WidgetsBindingObse
             MenuAction('$label${v == scale ? '  ✓' : ''}', Icons.format_size_rounded, () => _setSubtitleScale(v)),
         ],
       ),
+      MenuAction.submenu(
+        'HDR 字幕亮度 · ${DanmakuConfig.labelOf(PlaybackConfig.hdrSubtitleBrightnesses, ref.read(configProvider).playback.hdrSubtitleBrightness)}',
+        Icons.brightness_6_rounded,
+        title: 'HDR 字幕亮度（只对 HDR / 杜比视界片源生效）',
+        items: () {
+          final current = ref.read(configProvider).playback.hdrSubtitleBrightness;
+          return [
+            for (final (v, label) in PlaybackConfig.hdrSubtitleBrightnesses)
+              MenuAction(
+                '$label${v == current ? '  ✓' : ''}',
+                Icons.brightness_6_rounded,
+                () => _setHdrSubtitleBrightness(v),
+              ),
+          ];
+        },
+      ),
       // Windows：打开滑块精确调整；电视：仍是菜单，每次 5%
       if ((_engine?.supportsSubtitlePosition ?? false) && PlatformProfile.isDesktop)
         MenuAction(
@@ -2454,6 +2536,8 @@ class _PlayerPageState extends ConsumerState<PlayerPage> with WidgetsBindingObse
       if (_item?.kind == MediaKind.episode)
         MenuAction('选集', Icons.video_library_outlined, () => _openPanel(OsdPanel.episodes)),
       MenuAction.submenu('倍速 · ${s.rate}x', Icons.speed_rounded, title: '倍速', items: _rateItems),
+      if (_chapters.length >= 2)
+        MenuAction.submenu('章节 · ${_chapters.length} 个', Icons.bookmarks_outlined, title: '章节', items: _chapterItems),
       MenuAction.submenu('睡眠定时 · ${SleepTimer.label()}', Icons.bedtime_outlined, title: '睡眠定时', items: _sleepItems),
       MenuAction.submenu(
         '画面比例 · ${_fit.label}',
@@ -2477,6 +2561,13 @@ class _PlayerPageState extends ConsumerState<PlayerPage> with WidgetsBindingObse
           '播放内核 · ${engine.kind.label}（切换到 ${engine.kind == EngineKind.exo ? 'mpv' : 'ExoPlayer'}）',
           Icons.memory_rounded,
           () => _switchEngine(forceMpv: engine.kind == EngineKind.exo, forceExo: engine.kind == EngineKind.mpv),
+        ),
+      if (engine != null && engine.supportsDecoderSwitch)
+        MenuAction(
+          '解码方式 · ${ref.read(configProvider).playback.mpvHardwareDecoding ? '硬解' : '软解'}'
+          '（切换到${ref.read(configProvider).playback.mpvHardwareDecoding ? '软解' : '硬解'}）',
+          Icons.developer_board_rounded,
+          _toggleHardwareDecoding,
         ),
       MenuAction('媒体信息', Icons.info_outline_rounded, () => setState(() => _info = true)),
     ];

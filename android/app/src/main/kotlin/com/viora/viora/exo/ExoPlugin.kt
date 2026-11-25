@@ -37,6 +37,7 @@ class ExoPlugin(private val activity: Activity, engine: FlutterEngine) {
     private val views = mutableMapOf<Int, PlayerView>()
     private val resizeModes = mutableMapOf<Int, Int>()
     private val subtitleScales = mutableMapOf<Int, Float>()
+    private val subtitleBrightness = mutableMapOf<Int, Float>()
 
     private fun applyView(id: Int) {
         val view = views[id] ?: return
@@ -44,6 +45,7 @@ class ExoPlugin(private val activity: Activity, engine: FlutterEngine) {
         view.subtitleView?.setFractionalTextSize(
             androidx.media3.ui.SubtitleView.DEFAULT_TEXT_SIZE_FRACTION * (subtitleScales[id] ?: 1f)
         )
+        view.subtitleView?.applyBrightness(activity, subtitleBrightness[id] ?: 1f)
     }
     private var nextId = 1
     private var sink: EventChannel.EventSink? = null
@@ -119,6 +121,13 @@ class ExoPlugin(private val activity: Activity, engine: FlutterEngine) {
                         }
                         result.success(null)
                     }
+                    "setSubtitleBrightness" -> {
+                        if (id != null) {
+                            subtitleBrightness[id] = (call.argument<Number>("brightness") ?: 1.0).toFloat()
+                            applyView(id)
+                        }
+                        result.success(null)
+                    }
                     "addSubtitle" -> {
                         p?.addSubtitle(call.argument<String>("url")!!, call.argument("title"), call.argument("language"))
                         result.success(null)
@@ -128,6 +137,7 @@ class ExoPlugin(private val activity: Activity, engine: FlutterEngine) {
                         players.remove(id)
                         resizeModes.remove(id)
                         subtitleScales.remove(id)
+                        subtitleBrightness.remove(id)
                         updateKeepScreenOn()
                         if (players.isEmpty()) restoreDisplayMode()
                         result.success(null)
