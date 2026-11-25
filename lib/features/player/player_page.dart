@@ -42,6 +42,7 @@ import '../../player/preload.dart';
 import '../../player/segment_playback_session.dart';
 import '../../player/segment_skip_controller.dart';
 import '../../player/subtitle_pick.dart';
+import '../../player/trickplay.dart';
 import '../../ui/focus/input_mode.dart';
 import '../../ui/glass/glass.dart';
 import '../../ui/panels/context_menu.dart';
@@ -748,6 +749,7 @@ class _PlayerPageState extends ConsumerState<PlayerPage> with WidgetsBindingObse
       unawaited(_beginSegments());
       unawaited(_beginDanmaku());
       unawaited(_loadChapters(client));
+      unawaited(_loadTrickplay(client, source));
       ref.read(configProvider.notifier).updateServer(widget.serverId, (s) => s.copyWith(lastAccessAt: DateTime.now()));
     } catch (e) {
       // 拿不到播放信息 / 打不开：先自动换其他版本，没有可换的才显示错误
@@ -1592,6 +1594,25 @@ class _PlayerPageState extends ConsumerState<PlayerPage> with WidgetsBindingObse
     ref.read(configProvider.notifier).update((c) => c.copyWith(playback: c.playback.copyWith(mpvHardwareDecoding: on)));
     unawaited(engine.setHardwareDecoding(on));
     showToast(on ? '已改为硬解' : '已改为软解（CPU 占用会变高，4K 片源可能卡顿）');
+  }
+
+  // ───────────────────────── 进度条缩略图 ─────────────────────────
+
+  Trickplay? _trickplay;
+  String? _trickplaySource;
+
+  /// 换了版本才重新取（缩略图按媒体源生成）；服务器没生成就没有，照常只显示时间
+  Future<void> _loadTrickplay(EmbyClient client, MediaSourceInfo source) async {
+    if (_trickplaySource == source.id) return;
+    _trickplaySource = source.id;
+    if (mounted) setState(() => _trickplay = null);
+    try {
+      final t = await client.trickplay(widget.itemId, source.id);
+      if (mounted && _trickplaySource == source.id) setState(() => _trickplay = t);
+    } catch (e) {
+      debugPrint('trickplay: $e');
+      if (_trickplaySource == source.id) _trickplaySource = null; // 下次打开再试
+    }
   }
 
   // ───────────────────────── 章节 ─────────────────────────
@@ -2776,9 +2797,18 @@ class _PlayerPageState extends ConsumerState<PlayerPage> with WidgetsBindingObse
                                       child: Glass(
                                         radius: VRadius.panel,
                                         padding: const EdgeInsets.symmetric(horizontal: 36, vertical: 20),
-                                        child: Text(
-                                          formatClock(_pendingSeek!),
-                                          style: numericStyle(VText.h2.copyWith(fontSize: 44)),
+                                        child: Column(
+                                          mainAxisSize: MainAxisSize.min,
+                                          children: [
+                                            if (_trickplay case final t?) ...[
+                                              TrickplayThumb(trickplay: t, position: _pendingSeek!, width: 400),
+                                              const SizedBox(height: 16),
+                                            ],
+                                            Text(
+                                              formatClock(_pendingSeek!),
+                                              style: numericStyle(VText.h2.copyWith(fontSize: 44)),
+                                            ),
+                                          ],
                                         ),
                                       ),
                                     ),
@@ -2822,6 +2852,7 @@ class _PlayerPageState extends ConsumerState<PlayerPage> with WidgetsBindingObse
                                           muted: _muted,
                                           onVolume: (v) => _setVolume(v, muted: false),
                                           onMute: _toggleMute,
+                                          trickplay: _trickplay,
                                         ),
                                       ),
                                     ),

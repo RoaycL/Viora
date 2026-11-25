@@ -6,6 +6,7 @@ import 'package:dio/dio.dart';
 import 'package:flutter/foundation.dart';
 
 import '../../core/log/load_metrics.dart';
+import '../../player/trickplay.dart';
 import '../cache/account_scope.dart';
 
 import '../config/app_config.dart';
@@ -269,6 +270,7 @@ class EmbyClient {
     bool retried = false,
     bool staleRetried = false,
     bool idempotent = false,
+    bool bytes = false,
   }) async {
     if (auth && !_server.loggedIn) await login();
     final candidates = [line, ..._server.lines.where((l) => l.id != line.id)];
@@ -288,6 +290,7 @@ class EmbyClient {
                 method: method,
                 headers: c.headers(RequestKind.api),
                 contentType: Headers.jsonContentType,
+                responseType: bytes ? ResponseType.bytes : null,
               ),
             ),
           ),
@@ -309,6 +312,7 @@ class EmbyClient {
             retried: true,
             staleRetried: staleRetried,
             idempotent: idempotent,
+            bytes: bytes,
           );
         }
         if (r.statusCode == 401) throw const MediaServerException('登录已失效，请重新登录', statusCode: 401);
@@ -336,6 +340,7 @@ class EmbyClient {
             retried: retried,
             staleRetried: true,
             idempotent: idempotent,
+            bytes: bytes,
           );
         }
         continue; // 连接失败 / 超时：换下一条线路
@@ -544,6 +549,43 @@ class EmbyClient {
           marker: c['MarkerType'] as String?,
         ),
     ];
+  }
+
+  /// 进度条缩略图：Jellyfin 10.9+ 的 trickplay 拼图，或 Emby 的 BIF。服务器没生成时返回 null
+  Future<Trickplay?> trickplay(String itemId, String mediaSourceId) async {
+    if (_server.type == ServerType.jellyfin) {
+      final j = await _request(
+        'GET',
+        '/Users/${await _userId()}/Items/$itemId',
+        query: {'Fields': 'Trickplay'},
+      ) as Map<String, dynamic>;
+      final tiles = TrickplayTiles.parse(j['Trickplay'], mediaSourceId);
+      if (tiles == null) return null;
+      return JellyfinTrickplay(
+        tiles,
+        (tile) async => Uint8List.fromList(
+          await _request(
+            'GET',
+            '/Videos/$itemId/Trickplay/${tiles.width}/$tile.jpg',
+            query: {'MediaSourceId': mediaSourceId},
+            bytes: true,
+          ) as List<int>,
+        ),
+      );
+    }
+    try {
+      final data = await _request(
+        'GET',
+        '/Videos/$itemId/index.bif',
+        query: {'Width': '320', 'MediaSourceId': mediaSourceId},
+        bytes: true,
+      );
+      if (data is! List<int>) return null;
+      return await BifTrickplay.load(data is Uint8List ? data : Uint8List.fromList(data));
+    } on MediaServerException catch (e) {
+      if (e.statusCode == 404) return null; // 没生成缩略图
+      rethrow;
+    }
   }
 
   /// Jellyfin 10.10+ 的媒体片段（Intro / Outro / Recap / Preview / Commercial）。Emby 或旧版本返回空列表。
