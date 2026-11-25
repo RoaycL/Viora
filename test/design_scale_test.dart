@@ -41,4 +41,27 @@ void main() {
     await tester.pump(const Duration(milliseconds: 300));
     expect(seen!.height, closeTo(1000 * 1920 / 1300, 0.01));
   });
+
+  testWidgets('窄窗口不再继续缩小：保持最小缩放，画布变窄', (tester) async {
+    Size? seen;
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+    Widget app() => DesignScale(
+      designWidth: 2240,
+      minScale: 0.6,
+      child: Builder(
+        builder: (context) {
+          seen = MediaQuery.sizeOf(context);
+          return const SizedBox.expand();
+        },
+      ),
+    );
+    tester.view.physicalSize = const Size(1920, 1080);
+    await tester.pumpWidget(app());
+    expect(seen!.width, 2240);
+    tester.view.physicalSize = const Size(960, 540);
+    await tester.pump(const Duration(seconds: 1));
+    expect(seen!.width, closeTo(1600, 0.01));
+    expect(seen!.height, closeTo(900, 0.01));
+  });
 }

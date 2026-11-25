@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:math' as math;
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/widgets.dart';
@@ -13,9 +14,13 @@ import 'package:flutter/widgets.dart';
 /// 停止拖动 [settleDelay] 后再按新尺寸重新布局一次。这样拖动时不用每帧重建、重排、重绘整个界面（以及毛玻璃模糊）。
 /// 一次性的尺寸变化（最大化、还原、全屏）直接重新布局，不冻结。
 class DesignScale extends StatefulWidget {
-  const DesignScale({super.key, required this.child, this.designWidth = 1920});
+  const DesignScale({super.key, required this.child, this.designWidth = 1920, this.minScale = 0});
 
   final double designWidth;
+
+  /// 最小缩放：窗口很窄时不再按 [designWidth] 整体缩小（Windows 960 宽的窗口按 2240 缩放，正文只有 10 像素左右），
+  /// 而是保持这个缩放、让画布变窄（页面按更窄的宽度排版，列数变少）。0 = 始终按 [designWidth] 缩放
+  final double minScale;
   final Widget child;
 
   /// 两次尺寸变化间隔小于这个值视为"正在拖动"
@@ -87,8 +92,8 @@ class _DesignScaleState extends State<DesignScale> {
           return widget.child;
         }
         _onWindowSize(constraints.biggest);
-        final scale = constraints.maxWidth / widget.designWidth;
-        final live = Size(widget.designWidth, constraints.maxHeight / scale);
+        final scale = math.max(constraints.maxWidth / widget.designWidth, widget.minScale);
+        final live = Size(constraints.maxWidth / scale, constraints.maxHeight / scale);
         // 拖动中：画布尺寸与像素比保持不变（子树不重建、不重排），只改变外层缩放
         final logical = _frozenLogical ?? live;
         final dprScale = _frozenScale ?? scale;

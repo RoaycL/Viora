@@ -287,9 +287,11 @@ class _VioraAppState extends ConsumerState<VioraApp> with WidgetsBindingObserver
         child: _WithTitleBar(
           canGoBack: _canGoBack,
           onBack: _handleBack,
-          // Windows 离屏幕近，界面按 2240 宽的画布缩放（比电视的 1920 小约 15%），更精致
+          // Windows 离屏幕近，界面按 2240 宽的画布缩放（比电视的 1920 小约 15%），更精致。
+          // 窗口窄于约 1340 时不再继续缩小（否则 960 宽的窗口正文只有 10 像素），改为画布变窄、列数变少
           child: DesignScale(
             designWidth: PlatformProfile.isDesktop ? 2240 : 1920,
+            minScale: PlatformProfile.isDesktop ? 0.6 : 0,
             child: Stack(
               children: [
                 ?child,

@@ -419,4 +419,15 @@ void main() {
     expect(find.text('续播电影'), findsNothing);
     await unmount(tester);
   });
+
+  testWidgets('Windows 最小窗口（960×540）：画布按最小缩放变窄，首页排版不溢出', (tester) async {
+    await pumpHome(tester, profile: PlatformProfile.desktop, viewport: const Size(960, 540));
+    await tester.pumpAndSettle();
+    expect(tester.takeException(), isNull);
+    await press(tester, LogicalKeyboardKey.arrowDown);
+    await press(tester, LogicalKeyboardKey.arrowRight, repeats: 3);
+    expect(tester.takeException(), isNull);
+    expect(focused, startsWith('row'));
+    await unmount(tester);
+  });
 }
