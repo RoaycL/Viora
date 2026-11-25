@@ -1,0 +1,19 @@
+# 重新编译 ExoPlayer FFmpeg 音频扩展的原生库（android/ffmpeg/build.sh），产物在 Actions 页面的 Artifacts 里下载，
+# 解压后覆盖 android/app/src/main/jniLibs/ 再提交。只在升级 Media3 / FFmpeg 时手动运行，平时发布不用。
+name: FFmpeg 音频扩展
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      # GitHub 的 Ubuntu 镜像自带 Android NDK
+      - name: 编译
+        run: android/ffmpeg/build.sh "$ANDROID_NDK_LATEST_HOME"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ffmpeg-jniLibs
+          path: android/app/src/main/jniLibs/

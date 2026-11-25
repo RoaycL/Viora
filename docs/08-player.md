@@ -62,11 +62,15 @@ v0.17.8-beta2 起（ExoPlayer FFmpeg 音频）：
 
 | 改动 | 说明 |
 | --- | --- |
-| FFmpeg 音频解码 | 依赖 `org.jellyfin.media3:media3-ffmpeg-decoder`（Jellyfin 预编译的 Media3 FFmpeg 扩展，LGPL，每个架构约 1.4 MB）。电视既不能直通、又没有系统解码器的 DTS / DTS-HD / TrueHD 等音轨在 ExoPlayer 里软解成 PCM，不再「设备不支持该音频格式」退回 mpv（mpv 在安卓上只能输出 SDR，HDR 就没了） |
+| FFmpeg 音频解码 | 电视既不能直通、又没有系统解码器的 DTS / DTS-HD / TrueHD 等音轨在 ExoPlayer 里用 FFmpeg 软解成 PCM，不再「设备不支持该音频格式」退回 mpv（mpv 在安卓上只能输出 SDR，HDR 就没了）。支持 AAC、MP3、AC3、E-AC3、TrueHD、DTS、Vorbis、Opus、AMR、FLAC、ALAC、G.711 |
 | 扩展渲染器排在后面 | `EXTENSION_RENDERER_MODE_ON`（原来是 `PREFER`，当时没有扩展、不影响）：系统解码器 / 直通优先，FFmpeg 只兜底。用 `PREFER` 的话 FFmpeg 排在前面，会把能直通的 AC3 / E-AC3 / TrueHD 也解成 PCM |
 | 媒体信息「音频输出」 | ExoPlayer 显示音频怎么输出：「直通 · Dolby TrueHD」「系统解码（c2.android.aac.decoder）→ PCM · 2 声道」「FFmpeg 软解 → PCM · 7.1 声道」 |
 
-扩展是 1.9.0 版（Jellyfin 还没发 1.10.x），应用用的是 Media3 1.10.1：扩展引用的 47 个 Media3 方法 / 字段已对照 1.10.1 的类逐个核对，抽象方法也都实现了。**升级 Media3 或扩展时要重新核对**（javap 列出扩展 classes.jar 里引用的 `androidx/media3` 成员，再到新版 jar 里查）。
+扩展怎么来的：
+- Java 部分：`android/app/src/main/java/androidx/media3/decoder/ffmpeg/`，取自 Media3 1.10.1 的 `libraries/decoder_ffmpeg`（Apache 2.0；只去掉了 checker-qual 注解，没要视频渲染器），和应用一起编译，版本和应用用的 Media3 一致
+- 原生库：`android/app/src/main/jniLibs/<架构>/libffmpegJNI.so`（arm64-v8a、armeabi-v7a、x86_64），由 `android/ffmpeg/build.sh` 编译：FFmpeg 6.0.1 只开上面这些音频解码器，不加 `--enable-gpl` / `--enable-nonfree`，按 LGPL 2.1+ 授权，静态链接进单独的 `libffmpegJNI.so`；JNI 封装 `android/ffmpeg/ffmpeg_jni.cc` 同样取自 Media3 1.10.1
+- 编好的 .so 提交在仓库里，平时发布不重新编译。**升级 Media3 时**：换掉 Java 文件和 `ffmpeg_jni.cc`，运行 Actions →「FFmpeg 音频扩展」（`.github/workflows/ffmpeg.yml`）重新编译，把产物覆盖到 `jniLibs/` 提交
+- LGPL 要求注明：设置 →「关于与更新」显示「音频解码：FFmpeg 6.0（LGPL 2.1+）」（只在安卓上显示）
 
 v0.7.0 起可调（设置 → 播放）：
 
