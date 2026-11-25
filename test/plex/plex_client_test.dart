@@ -349,4 +349,16 @@ void main() {
     final client = mediaServerClient(config: config, server: server, appVersion: 'test');
     expect((await client.resume()).map((i) => i.id), ['2']);
   });
+
+  test('下一集：以前看完过、这次重看到一半的那集优先', () async {
+    final fake = await _Fake.start();
+    addTearDown(() => fake.http.close(force: true));
+    fake.body = (_) => _mc({
+      'Metadata': [
+        {'ratingKey': '1', 'type': 'episode', 'parentIndex': 1, 'index': 1, 'viewCount': 1, 'viewOffset': 5000},
+        {'ratingKey': '2', 'type': 'episode', 'parentIndex': 1, 'index': 2},
+      ],
+    });
+    expect((await _client(fake).nextUp('100'))?.id, '1');
+  });
 }

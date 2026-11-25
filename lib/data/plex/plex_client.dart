@@ -480,7 +480,7 @@ class PlexClient extends EmbyClient {
   Future<MediaItem?> nextUp(String seriesId) async {
     final eps = await episodes(seriesId);
     final regular = eps.where((e) => (e.seasonNumber ?? 1) > 0).toList();
-    final partial = regular.where((e) => e.position > Duration.zero && !e.played).firstOrNull;
+    final partial = regular.where((e) => e.position > Duration.zero).firstOrNull; // 重看到一半的也算（played 是以前看完过）
     if (partial != null) return partial;
     final last = regular.lastIndexWhere((e) => e.played);
     if (last < 0) return regular.firstOrNull;
