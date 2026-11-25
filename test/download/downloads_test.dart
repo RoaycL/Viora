@@ -118,6 +118,9 @@ void main() {
     final bob = accountScope(_client(fake.url, user: 'bob').server);
     expect(Downloads.instance.playable('s', 'x1', account: bob), isNull);
     expect(Downloads.instance.find('s', 'x1', account: bob), isNull);
+    // 文件被删掉了：不再当成已下载
+    File(back.path).deleteSync();
+    expect(Downloads.instance.playable('s', 'x1', account: account), isNull);
   });
 
   test('暂停后继续：从已下载的位置断点续传', () async {

@@ -262,6 +262,8 @@ class Downloads extends ChangeNotifier {
       if (e.serverId != serverId || e.itemId != itemId || e.state != DownloadState.done) continue;
       if (e.account != account) continue;
       if (sourceId != null && e.source.id != sourceId) continue;
+      // 文件在应用开着时被删掉 / 挪走了：不当成已下载（照常在线播）
+      if (!File(e.path).existsSync()) continue;
       return e;
     }
     return null;
@@ -465,7 +467,10 @@ class Downloads extends ChangeNotifier {
         await _finish(e, part, e.received);
       }
     } catch (err) {
-      await sink?.close();
+      // 写盘失败（比如磁盘满了）时关闭也可能出错：不能让它盖过原来的错误、跳过下面的状态更新
+      try {
+        await sink?.close();
+      } catch (_) {}
       if (e.state == DownloadState.downloading) {
         if (cancel.isCancelled) {
           e.state = DownloadState.paused;
