@@ -45,6 +45,8 @@ android {
     buildTypes {
         release {
             signingConfig = signingConfigs.getByName("release")
+            // Flutter 默认会用 R8 压缩发布包；FFmpeg 音频扩展的 JNI 回调要保留（proguard-rules.pro）
+            proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
         }
         debug {
             signingConfig = signingConfigs.getByName("release")
