@@ -97,6 +97,8 @@ class _DesignScaleState extends State<DesignScale> {
         // 拖动中：画布尺寸与像素比保持不变（子树不重建、不重排），只改变外层缩放
         final logical = _frozenLogical ?? live;
         final dprScale = _frozenScale ?? scale;
+        // 冻结的画布可能比按最小缩放算出的宽：外层缩放按当前窗口宽度和冻结的画布宽度算，快照正好铺满窗口
+        final outer = _frozenLogical != null ? constraints.maxWidth / logical.width : scale;
         _appliedLogical = logical;
         _appliedScale = dprScale;
         final mq = MediaQuery.of(context);
@@ -108,7 +110,7 @@ class _DesignScaleState extends State<DesignScale> {
             maxWidth: double.infinity,
             maxHeight: double.infinity,
             child: Transform.scale(
-              scale: scale,
+              scale: outer,
               alignment: Alignment.topLeft,
               child: SizedBox(
                 width: logical.width,

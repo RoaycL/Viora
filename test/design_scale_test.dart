@@ -64,4 +64,26 @@ void main() {
     expect(seen!.width, closeTo(1600, 0.01));
     expect(seen!.height, closeTo(900, 0.01));
   });
+
+  testWidgets('最小缩放下拖动窗口：冻结的快照按当前窗口宽度缩放，正好铺满不被裁掉', (tester) async {
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+    tester.view.physicalSize = const Size(1200, 700);
+    await tester.pumpWidget(const DesignScale(designWidth: 2240, minScale: 0.6, child: SizedBox.expand()));
+    // 单次改变到 1200 宽：缩放 0.6，画布 2000 宽
+    tester.view.physicalSize = const Size(1200, 675);
+    await tester.pump(const Duration(seconds: 1));
+    // 画面在窗口里实际占的宽度
+    double shown() => tester.getRect(find.byType(SizedBox).last).width;
+    expect(shown(), closeTo(1200, 0.01));
+    // 连续拖窄到 960：画布冻结在 2000 宽，快照缩到 960 宽（不是按 0.6 画成 1200 宽再被裁掉）
+    for (final w in [1100.0, 1000.0, 960.0]) {
+      tester.view.physicalSize = Size(w, 675);
+      await tester.pump(const Duration(milliseconds: 16));
+    }
+    expect(shown(), closeTo(960, 0.01));
+    // 停下后按最小缩放重新布局：画布变成 1600 宽，仍然铺满窗口
+    await tester.pump(const Duration(milliseconds: 300));
+    expect(shown(), closeTo(960, 0.01));
+  });
 }
