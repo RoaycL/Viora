@@ -89,8 +89,11 @@ class MpvEngine extends PlayerEngine {
   /// 显卡负担是 1080p 的 4 倍。按屏幕大小输出后画质不变（本来也要缩小到屏幕大小），GPU 占用明显下降，掉帧更少
   void _fitTexture(VideoParams p) {
     if (!PlatformProfile.isDesktop || _disposed) return;
-    final w = p.dw ?? p.w, h = p.dh ?? p.h;
-    if (w == null || h == null || w <= 0 || h <= 0) return;
+    final dw = p.dw ?? p.w, dh = p.dh ?? p.h;
+    if (dw == null || dh == null || dw <= 0 || dh <= 0) return;
+    // 旋转 90° / 270° 的片源（竖拍视频）宽高互换，和 media_kit 默认按片源建纹理时一样
+    final rotated = p.rotate == 90 || p.rotate == 270;
+    final w = rotated ? dh : dw, h = rotated ? dw : dh;
     final displays = WidgetsBinding.instance.platformDispatcher.displays;
     if (displays.isEmpty) return;
     // 多显示器取最大的一块：窗口拖到 4K 屏上也不会糊

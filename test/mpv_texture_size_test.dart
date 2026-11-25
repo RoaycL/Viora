@@ -23,6 +23,13 @@ void main() {
       expect(MpvEngine.textureSizeFor(1280, 720, const Size(1920, 1080)), isNull);
     });
 
+    test('竖屏片源（已按旋转换成竖的宽高）保持竖的比例', () {
+      // 3840×2160 旋转 90° → 2160×3840；在 1920×1080 屏幕上按填满：1920×3414
+      final r = MpvEngine.textureSizeFor(2160, 3840, const Size(1920, 1080))!;
+      expect(r.$1 < r.$2, isTrue);
+      expect(r.$1, 1920);
+    });
+
     test('屏幕大小未知时不限制', () {
       expect(MpvEngine.textureSizeFor(3840, 2160, Size.zero), isNull);
     });
