@@ -58,6 +58,16 @@ v0.17.8 起（播放功能，对标 Infuse 等）：
 | 音量增强 | Windows 音量 | 音量最高 200%（mpv `volume-max=200`），超过 100% 时提示「增强」、音量滑块变琥珀色；按住 ↑ 时停在 100%，要再按一次才进入增强。片源本身响度高时可能削波 |
 | 第二字幕 | 字幕菜单 → 第二字幕（mpv） | 双语字幕：第二条显示在主字幕下方、字号 80%（mpv `secondary-sid`）。只列文字字幕（PGS / VobSub 等图片字幕不行），换片后自动关闭。ExoPlayer 只有一个字幕渲染器，不支持 |
 
+v0.17.8-beta2 起（ExoPlayer FFmpeg 音频）：
+
+| 改动 | 说明 |
+| --- | --- |
+| FFmpeg 音频解码 | 依赖 `org.jellyfin.media3:media3-ffmpeg-decoder`（Jellyfin 预编译的 Media3 FFmpeg 扩展，LGPL，每个架构约 1.4 MB）。电视既不能直通、又没有系统解码器的 DTS / DTS-HD / TrueHD 等音轨在 ExoPlayer 里软解成 PCM，不再「设备不支持该音频格式」退回 mpv（mpv 在安卓上只能输出 SDR，HDR 就没了） |
+| 扩展渲染器排在后面 | `EXTENSION_RENDERER_MODE_ON`（原来是 `PREFER`，当时没有扩展、不影响）：系统解码器 / 直通优先，FFmpeg 只兜底。用 `PREFER` 的话 FFmpeg 排在前面，会把能直通的 AC3 / E-AC3 / TrueHD 也解成 PCM |
+| 媒体信息「音频输出」 | ExoPlayer 显示音频怎么输出：「直通 · Dolby TrueHD」「系统解码（c2.android.aac.decoder）→ PCM · 2 声道」「FFmpeg 软解 → PCM · 7.1 声道」 |
+
+扩展是 1.9.0 版（Jellyfin 还没发 1.10.x），应用用的是 Media3 1.10.1：扩展引用的 47 个 Media3 方法 / 字段已对照 1.10.1 的类逐个核对，抽象方法也都实现了。**升级 Media3 或扩展时要重新核对**（javap 列出扩展 classes.jar 里引用的 `androidx/media3` 成员，再到新版 jar 里查）。
+
 v0.7.0 起可调（设置 → 播放）：
 
 | 设置 | 选项 | 说明 |

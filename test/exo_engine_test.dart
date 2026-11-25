@@ -67,6 +67,7 @@ void main() {
       ],
     });
     sink.success({'id': 7, 'event': 'video', 'width': 3840, 'height': 2160, 'frameRate': 23.976, 'hdr': 'HDR10'});
+    sink.success({'id': 7, 'event': 'audioOutput', 'label': 'FFmpeg 软解 → PCM · 7.1 声道'});
     sink.success({'id': 7, 'event': 'error', 'message': 'ERROR_CODE_DECODER_INIT_FAILED', 'fallback': true});
     sink.success({'id': 7, 'event': 'completed'});
     await Future<void>.delayed(Duration.zero);
@@ -80,6 +81,7 @@ void main() {
     expect(s.audio?.displayName, 'zh · EAC3 · 5.1');
     expect(s.subtitle, isNull);
     expect(s.video.hdr, 'HDR10');
+    expect(s.audioOutput, 'FFmpeg 软解 → PCM · 7.1 声道');
     expect(errors.single.canFallback, isTrue);
     expect(completed, 1);
 

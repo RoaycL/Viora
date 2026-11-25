@@ -67,4 +67,8 @@ dependencies {
     // Android TV 默认播放内核（docs/08-player.md）
     implementation("androidx.media3:media3-exoplayer:1.10.1")
     implementation("androidx.media3:media3-ui:1.10.1")
+    // FFmpeg 音频解码（Jellyfin 预编译的 Media3 FFmpeg 扩展，LGPL）：电视既不能直通、又没有系统解码器的
+    // DTS / TrueHD 等音轨在 ExoPlayer 里软解成 PCM，不用退回 mpv（mpv 在安卓上只能输出 SDR）。
+    // 扩展是 1.9.0 版，引用的 Media3 接口已对照 1.10.1 逐个核对过；升级 Media3 时要一起检查（docs/08-player.md）
+    implementation("org.jellyfin.media3:media3-ffmpeg-decoder:1.9.0+1")
 }

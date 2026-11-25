@@ -3045,6 +3045,7 @@ class _InfoPanel extends StatelessWidget {
       ('动态范围', v.hdr ?? source?.rangeLabel ?? 'SDR'),
       if (v.codec != null) ('视频编码', v.codec!),
       if (state.audio != null) ('音轨', state.audio!.displayName),
+      if (state.audioOutput != null) ('音频输出', state.audioOutput!),
       if (source?.bitrate != null) ('码率', '${(source!.bitrate! / 1000000).toStringAsFixed(2)} Mbps'),
       ('缓冲', '${(state.buffered - state.position).inSeconds} 秒'),
       if (request != null) ('播放 UA', request!.userAgent),
