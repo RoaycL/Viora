@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:viora/data/cache/account_scope.dart';
 import 'package:viora/data/config/app_config.dart';
 import 'package:viora/data/download/downloads.dart';
 import 'package:viora/data/emby/emby_client.dart';
@@ -23,6 +24,12 @@ class _Fake {
       var from = 0;
       if (range != null) {
         from = int.parse(RegExp(r'bytes=(\d+)-').firstMatch(range)!.group(1)!);
+        if (from >= f.body.length) {
+          req.response.statusCode = 416;
+          req.response.headers.set('content-range', 'bytes */${f.body.length}');
+          await req.response.close();
+          return;
+        }
         req.response.statusCode = 206;
       }
       final rest = f.body.sublist(from);
@@ -42,13 +49,13 @@ class _Fake {
   String get url => 'http://127.0.0.1:${http.port}';
 }
 
-EmbyClient _client(String url) {
+EmbyClient _client(String url, {String user = 'alice'}) {
   final server = ServerConfig(
     id: 's',
     type: ServerType.emby,
     name: 'home',
-    username: 'alice',
-    userId: 'u1',
+    username: user,
+    userId: 'id-$user',
     token: 'token',
     lines: [ServerLine(id: 'l', name: 'main', url: url)],
   );
@@ -97,15 +104,20 @@ void main() {
     expect(File(e.path).readAsBytesSync(), body);
     expect(e.path, endsWith('电影 测试 1 [x1].mkv'));
 
-    Downloads.instance.recordProgress('s', 'x1', const Duration(minutes: 5), played: false);
+    final account = accountScope(_client(fake.url).server);
+    Downloads.instance.recordProgress('s', 'x1', const Duration(minutes: 5), account: account, played: false);
     await Future<void>.delayed(const Duration(milliseconds: 50));
     Downloads.instance.debugReset();
     await Downloads.instance.load();
-    final back = Downloads.instance.playable('s', 'x1')!;
+    final back = Downloads.instance.playable('s', 'x1', account: account)!;
     expect(back.path, e.path);
     expect(back.position, const Duration(minutes: 5));
     expect(back.source.video?.width, 3840);
-    expect(Downloads.instance.playable('s', 'x1', sourceId: 'other'), isNull);
+    expect(Downloads.instance.playable('s', 'x1', account: account, sourceId: 'other'), isNull);
+    // 同一服务器换了账号：不用上一个账号下载的文件
+    final bob = accountScope(_client(fake.url, user: 'bob').server);
+    expect(Downloads.instance.playable('s', 'x1', account: bob), isNull);
+    expect(Downloads.instance.find('s', 'x1', account: bob), isNull);
   });
 
   test('暂停后继续：从已下载的位置断点续传', () async {
@@ -138,5 +150,38 @@ void main() {
     await Downloads.instance.remove(e);
     expect(File(e.path).existsSync(), isFalse);
     expect(Downloads.instance.entries, isEmpty);
+  });
+
+  test('同一部的两个版本、两个账号下的同一部：各存各的文件，删一个不影响另一个', () async {
+    final body = List<int>.generate(4000, (i) => i % 13);
+    final fake = await _Fake.start(body);
+    addTearDown(() => fake.http.close(force: true));
+    const other = MediaSourceInfo(serverId: 's', itemId: 'x1', id: 'src2', container: 'mkv', size: 4000);
+    final a = await Downloads.instance.add(_client(fake.url), _item, _source);
+    final b = await Downloads.instance.add(_client(fake.url), _item, other);
+    final c = await Downloads.instance.add(_client(fake.url, user: 'bob'), _item, _source);
+    await _until(() => [a, b, c].every((e) => e.state == DownloadState.done));
+    expect({a.path, b.path, c.path}, hasLength(3));
+    await Downloads.instance.remove(a);
+    expect(File(b.path).readAsBytesSync(), body);
+    expect(File(c.path).readAsBytesSync(), body);
+  });
+
+  test('上次写完了还没改名就退出：续传时服务器回 416，直接把 .part 当成下好的文件', () async {
+    final body = List<int>.generate(4000, (i) => i % 11);
+    final fake = await _Fake.start(body);
+    addTearDown(() => fake.http.close(force: true));
+    final client = _client(fake.url);
+    final e = await Downloads.instance.add(client, _item, _source);
+    await _until(() => e.state == DownloadState.done);
+    // 模拟：文件还是 .part、列表里是暂停
+    File(e.path).renameSync(e.partPath);
+    e.state = DownloadState.paused;
+    Downloads.instance.resume(e, client);
+    await _until(() => e.state != DownloadState.queued && e.state != DownloadState.downloading);
+    expect(e.state, DownloadState.done, reason: e.error);
+    expect(fake.ranges.last, 'bytes=4000-');
+    expect(File(e.path).readAsBytesSync(), body);
+    expect(File(e.partPath).existsSync(), isFalse);
   });
 }

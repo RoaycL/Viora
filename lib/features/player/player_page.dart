@@ -730,7 +730,12 @@ class _PlayerPageState extends ConsumerState<PlayerPage> with WidgetsBindingObse
       // 已下载完：直接播本地文件，不请求播放信息（没有网络也能看）。下载列表启动时就在读，这里不等它
       final downloads = Downloads.instance;
       final local = downloads.loaded
-          ? downloads.playable(widget.serverId, widget.itemId, sourceId: sourceId ?? widget.sourceId)
+          ? downloads.playable(
+              widget.serverId,
+              widget.itemId,
+              account: accountScope(client.server),
+              sourceId: sourceId ?? widget.sourceId,
+            )
           : null;
       final itemFuture = recent != null
           ? Future.value(recent)
@@ -826,6 +831,7 @@ class _PlayerPageState extends ConsumerState<PlayerPage> with WidgetsBindingObse
         widget.serverId,
         widget.itemId,
         position,
+        account: accountScope(client.server),
         played: completed || (total > 0 && position.inMilliseconds >= total * 0.9),
       );
       // 继续观看先按本机的进度显示（不等服务器刷新回来）；看到 90% 以上服务器会标为已看，这里也移出。

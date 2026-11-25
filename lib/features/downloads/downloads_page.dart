@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../app/theme.dart';
+import '../../data/cache/account_scope.dart';
 import '../../data/download/downloads.dart';
 import '../../data/media/server_registry.dart';
 import '../../ui/focus/focus_auto_scroll.dart';
@@ -44,7 +45,11 @@ class _DownloadsPageState extends ConsumerState<DownloadsPage> {
     return ListenableBuilder(
       listenable: Downloads.instance,
       builder: (context, _) {
-        final list = Downloads.instance.entries.reversed.toList();
+        // 只列当前登录账号的下载（同一服务器换了账号，不显示上一个账号的）；服务器删掉了的照常列出，可以删除文件
+        final list = Downloads.instance.entries.reversed.where((e) {
+          final client = ref.read(serverClientProvider(e.serverId));
+          return client == null || accountScope(client.server) == e.account;
+        }).toList();
         final done = list.where((e) => e.state == DownloadState.done).length;
         return FocusAutoScroll(
           child: SingleChildScrollView(

@@ -475,7 +475,7 @@ class _ItemDetailPageState extends ConsumerState<ItemDetailPage> {
                   listenable: Downloads.instance,
                   builder: (context, _) {
                     final o = selected;
-                    final d = Downloads.instance.find(o.item.serverId, o.item.id, sourceId: o.source.id);
+                    final d = _findDownload(o);
                     final state = d?.source.id == o.source.id ? d?.state : null;
                     return CircleIconButton(
                       focusNode: node,
@@ -604,8 +604,20 @@ class _ItemDetailPageState extends ConsumerState<ItemDetailPage> {
   }
 
   /// 下载选中的版本；已下载完的到「下载」页，下载中的暂停
+  /// 当前账号下这个版本的下载
+  DownloadEntry? _findDownload(SourceOption o) {
+    final client = ref.read(serverClientProvider(o.item.serverId));
+    if (client == null) return null;
+    return Downloads.instance.find(
+      o.item.serverId,
+      o.item.id,
+      account: accountScope(client.server),
+      sourceId: o.source.id,
+    );
+  }
+
   Future<void> _download(SourceOption o) async {
-    final d = Downloads.instance.find(o.item.serverId, o.item.id, sourceId: o.source.id);
+    final d = _findDownload(o);
     if (d != null && d.source.id == o.source.id) {
       switch (d.state) {
         case DownloadState.done:

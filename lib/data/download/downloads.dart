@@ -255,10 +255,12 @@ class Downloads extends ChangeNotifier {
     return base;
   }
 
-  /// 这一集 / 这部电影已下载完的文件；[sourceId] 不为空时只要这个版本
-  DownloadEntry? playable(String serverId, String itemId, {String? sourceId}) {
+  /// 这一集 / 这部电影已下载完的文件；[sourceId] 不为空时只要这个版本。
+  /// [account] 是当前登录的账号（`accountScope`）：同一服务器换了账号，不用上一个账号下载的文件和进度
+  DownloadEntry? playable(String serverId, String itemId, {required String account, String? sourceId}) {
     for (final e in _entries) {
       if (e.serverId != serverId || e.itemId != itemId || e.state != DownloadState.done) continue;
+      if (e.account != account) continue;
       if (sourceId != null && e.source.id != sourceId) continue;
       return e;
     }
@@ -266,8 +268,8 @@ class Downloads extends ChangeNotifier {
   }
 
   /// 这一集 / 这部电影的下载（任意状态，优先 [sourceId] 这个版本）
-  DownloadEntry? find(String serverId, String itemId, {String? sourceId}) {
-    final all = _entries.where((e) => e.serverId == serverId && e.itemId == itemId).toList();
+  DownloadEntry? find(String serverId, String itemId, {required String account, String? sourceId}) {
+    final all = _entries.where((e) => e.serverId == serverId && e.itemId == itemId && e.account == account).toList();
     return all.where((e) => e.source.id == sourceId).firstOrNull ?? all.firstOrNull;
   }
 
@@ -285,7 +287,7 @@ class Downloads extends ChangeNotifier {
       account: account,
       item: item,
       source: source,
-      path: '${_dir!}${Platform.pathSeparator}${fileNameFor(item, source)}',
+      path: _uniquePath(fileNameFor(item, source)),
       total: source.size,
     );
     _entries.add(e);
@@ -297,6 +299,19 @@ class Downloads extends ChangeNotifier {
   }
 
   final _clients = <String, EmbyClient>{};
+
+  /// 文件路径不和别的下载重复（同一部的不同版本、不同账号下的同一部）：重名时加「 (2)」「 (3)」…
+  String _uniquePath(String name) {
+    final dot = name.lastIndexOf('.');
+    final (base, ext) = dot > 0 ? (name.substring(0, dot), name.substring(dot)) : (name, '');
+    final used = {for (final e in _entries) e.path.toLowerCase()};
+    for (var n = 1; ; n++) {
+      final path = '${_dir!}${Platform.pathSeparator}$base${n == 1 ? '' : ' ($n)'}$ext';
+      if (used.contains(path.toLowerCase())) continue;
+      if (File(path).existsSync() || File('$path.part').existsSync()) continue;
+      return path;
+    }
+  }
 
   void pause(DownloadEntry e) {
     if (e.state == DownloadState.done) return;
@@ -333,10 +348,16 @@ class Downloads extends ChangeNotifier {
   }
 
   /// 播放页停止时记下本机的进度（下载页「继续播放」用）
-  void recordProgress(String serverId, String itemId, Duration position, {required bool played}) {
+  void recordProgress(
+    String serverId,
+    String itemId,
+    Duration position, {
+    required String account,
+    required bool played,
+  }) {
     var changed = false;
     for (final e in _entries) {
-      if (e.serverId == serverId && e.itemId == itemId && e.state == DownloadState.done) {
+      if (e.serverId == serverId && e.itemId == itemId && e.account == account && e.state == DownloadState.done) {
         e.position = played ? Duration.zero : position;
         e.played = played;
         e.progressAt = DateTime.now();
@@ -381,43 +402,58 @@ class Downloads extends ChangeNotifier {
         receiveTimeout: const Duration(seconds: 60),
         headers: req.headers,
         responseType: ResponseType.stream,
-        validateStatus: (s) => s != null && s < 400,
+        validateStatus: (s) => s != null && (s < 400 || s == 416),
       ),
     );
     IOSink? sink;
     try {
-      final resp = await dio.getUri<ResponseBody>(
+      Future<Response<ResponseBody>> get(int from) => dio.getUri<ResponseBody>(
         req.url,
-        options: Options(headers: {if (start > 0) 'Range': 'bytes=$start-'}),
+        options: Options(headers: {if (from > 0) 'Range': 'bytes=$from-'}),
         cancelToken: cancel,
       );
-      // 服务器不支持断点续传（返回 200 而不是 206）：从头下载
-      if (start > 0 && resp.statusCode != 206) start = 0;
-      final length = int.tryParse(resp.headers.value(HttpHeaders.contentLengthHeader) ?? '');
-      if (length != null) e.total = start + length;
-      e.received = start;
-      sink = part.openWrite(mode: start > 0 ? FileMode.append : FileMode.write);
-      var lastNotify = DateTime.now();
-      await for (final chunk in resp.data!.stream) {
-        sink.add(chunk);
-        e.received += chunk.length;
-        final now = DateTime.now();
-        if (now.difference(lastNotify) > const Duration(milliseconds: 500)) {
-          lastNotify = now;
-          notifyListeners();
-          _saveSoon();
+      var resp = await get(start);
+      // 416：续传的起点已经在文件末尾（上次写完了还没来得及改名），或者 .part 和服务器上的文件对不上
+      var complete = false;
+      if (resp.statusCode == 416) {
+        resp.data?.stream.listen(null).cancel().ignore();
+        final range = resp.headers.value(HttpHeaders.contentRangeHeader) ?? '';
+        final full = int.tryParse(RegExp(r'/(\d+)').firstMatch(range)?.group(1) ?? '') ?? e.total;
+        if (start > 0 && full != null && start == full) {
+          complete = true;
+        } else {
+          // 对不上：丢掉 .part 从头下
+          start = 0;
+          resp = await get(0);
+          if (resp.statusCode == 416) throw const HttpException('服务器拒绝了下载请求（416）');
         }
       }
-      await sink.flush();
-      await sink.close();
-      sink = null;
-      if (e.total != null && e.received < e.total!) throw const HttpException('连接中断，下载不完整');
-      final target = File(e.path);
-      if (await target.exists()) await target.delete();
-      await part.rename(e.path);
-      e.total = e.received;
-      e.state = DownloadState.done;
-      _clients.remove(e.id);
+      if (complete) {
+        await _finish(e, part, start);
+      } else {
+        // 服务器不支持断点续传（返回 200 而不是 206）：从头下载
+        if (start > 0 && resp.statusCode != 206) start = 0;
+        final length = int.tryParse(resp.headers.value(HttpHeaders.contentLengthHeader) ?? '');
+        if (length != null) e.total = start + length;
+        e.received = start;
+        sink = part.openWrite(mode: start > 0 ? FileMode.append : FileMode.write);
+        var lastNotify = DateTime.now();
+        await for (final chunk in resp.data!.stream) {
+          sink.add(chunk);
+          e.received += chunk.length;
+          final now = DateTime.now();
+          if (now.difference(lastNotify) > const Duration(milliseconds: 500)) {
+            lastNotify = now;
+            notifyListeners();
+            _saveSoon();
+          }
+        }
+        await sink.flush();
+        await sink.close();
+        sink = null;
+        if (e.total != null && e.received < e.total!) throw const HttpException('连接中断，下载不完整');
+        await _finish(e, part, e.received);
+      }
     } catch (err) {
       await sink?.close();
       if (e.state == DownloadState.downloading) {
@@ -435,6 +471,17 @@ class Downloads extends ChangeNotifier {
     }
     await _save();
     notifyListeners();
+  }
+
+  /// 下载完：.part 改成正式文件名
+  Future<void> _finish(DownloadEntry e, File part, int size) async {
+    final target = File(e.path);
+    if (await target.exists()) await target.delete();
+    await part.rename(e.path);
+    e.received = size;
+    e.total = size;
+    e.state = DownloadState.done;
+    _clients.remove(e.id);
   }
 
   void _saveSoon() {
