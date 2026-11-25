@@ -159,6 +159,8 @@
 | Android TV | 自绘屏幕键盘（拼音首字母、全字母、数字符号三种布局）+ 系统语音输入；服务器地址等长文本额外提供**手机扫码输入**（TV 起局域网网页，后续版本） |
 | Windows | 物理键盘直接输入；IME 正常可用 |
 
+**语音搜索（v0.17.8-beta3 起）**：电视搜索页的屏幕键盘在数字后面多一个「语音」键（系统有语音识别界面时才显示，部分国产盒子没有）。按下拉起系统语音识别（`RecognizerIntent`，中文），识别出的文字去掉末尾标点后直接搜索。实现：`MainActivity.kt` 的 `viora/voice` 通道、`lib/core/voice/voice_input.dart`。Android 11 起要在 `AndroidManifest.xml` 的 `<queries>` 里声明才能查到语音识别界面。
+
 ## 5. 实现要点（Flutter）
 
 - `app/input/intent_mapper.dart`：`Shortcuts` 把 `LogicalKeyboardKey.arrowUp/select/enter/gameButtonA/goBack/escape/contextMenu/mediaPlayPause/...` 统一映射到自定义 `Intent`；长按通过 `KeyRepeatEvent` 计时识别。

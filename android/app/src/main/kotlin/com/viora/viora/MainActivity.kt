@@ -7,6 +7,7 @@ import android.content.Intent
 import android.net.Uri
 import android.os.Build
 import android.provider.Settings
+import android.speech.RecognizerIntent
 import androidx.annotation.RequiresApi
 import androidx.core.content.FileProvider
 import com.viora.viora.exo.ExoPlugin
@@ -17,6 +18,9 @@ import java.io.File
 
 class MainActivity : FlutterActivity() {
     private var exo: ExoPlugin? = null
+
+    /** 正在等语音识别结果的调用（同时只有一个） */
+    private var voiceResult: MethodChannel.Result? = null
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
@@ -30,6 +34,23 @@ class MainActivity : FlutterActivity() {
                 }
             } else {
                 result.notImplemented()
+            }
+        }
+        // 搜索页语音输入：拉起系统的语音识别界面（Google TV / 电视自带的语音助手），返回识别出的文字
+        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "viora/voice").setMethodCallHandler { call, result ->
+            when (call.method) {
+                "available" -> result.success(speechIntent().resolveActivity(packageManager) != null)
+                "recognize" -> {
+                    voiceResult?.success(null)
+                    voiceResult = null
+                    try {
+                        startActivityForResult(speechIntent(call.argument<String>("prompt")), VOICE_REQUEST)
+                        voiceResult = result
+                    } catch (e: Exception) {
+                        result.success(null)
+                    }
+                }
+                else -> result.notImplemented()
             }
         }
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "viora/update").setMethodCallHandler { call, result ->
@@ -87,6 +108,29 @@ class MainActivity : FlutterActivity() {
         }
     }
 
+    private fun speechIntent(prompt: String? = null) = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
+        putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
+        putExtra(RecognizerIntent.EXTRA_LANGUAGE, "zh-CN")
+        putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 1)
+        if (prompt != null) putExtra(RecognizerIntent.EXTRA_PROMPT, prompt)
+    }
+
+    @Deprecated("FlutterActivity 仍走 onActivityResult")
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        if (requestCode == VOICE_REQUEST) {
+            val text = if (resultCode == RESULT_OK) {
+                data?.getStringArrayListExtra(RecognizerIntent.EXTRA_RESULTS)?.firstOrNull()
+            } else {
+                null
+            }
+            voiceResult?.success(text)
+            voiceResult = null
+            return
+        }
+        @Suppress("DEPRECATION")
+        super.onActivityResult(requestCode, resultCode, data)
+    }
+
     override fun onStop() {
         exo?.pauseAll()
         super.onStop()
@@ -116,5 +160,9 @@ class MainActivity : FlutterActivity() {
             .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_ACTIVITY_NEW_TASK)
         startActivity(intent)
         return "installing"
+    }
+
+    private companion object {
+        const val VOICE_REQUEST = 0x766f
     }
 }

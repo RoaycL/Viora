@@ -10,6 +10,7 @@ import '../../ui/widgets/fill_grid.dart';
 import '../../app/platform_profile.dart';
 import '../../app/theme.dart';
 import '../../core/log/load_metrics.dart';
+import '../../core/voice/voice_input.dart';
 import '../../data/cache/account_scope.dart';
 import '../../data/config/config_store.dart';
 import '../../data/index/index_sync.dart';
@@ -57,11 +58,19 @@ class _SearchPageState extends ConsumerState<SearchPage> {
   bool _searchingRemote = false;
   int _pendingServers = 0;
 
+  /// 电视：系统有语音识别时屏幕键盘多一个「语音」键
+  bool _voice = false;
+
   @override
   void initState() {
     super.initState();
     _fieldFocus.addListener(() => setState(() {}));
     _loadRecent();
+    if (PlatformProfile.isTv) {
+      VoiceInput.available().then((v) {
+        if (mounted && v) setState(() => _voice = true);
+      });
+    }
     _query.text = widget.initialQuery;
     _query.addListener(_onChanged);
     if (widget.initialQuery.isNotEmpty) WidgetsBinding.instance.addPostFrameCallback((_) => _search());
@@ -72,6 +81,17 @@ class _SearchPageState extends ConsumerState<SearchPage> {
     _query.dispose();
     _fieldFocus.dispose();
     super.dispose();
+  }
+
+  /// 语音输入：说出片名，识别出来后直接搜索（去掉识别结果末尾的标点）
+  Future<void> _voiceSearch() async {
+    final text = await VoiceInput.recognize(prompt: '说出片名');
+    if (!mounted || text == null) return;
+    final q = text.replaceAll(RegExp(r'[。．.，,！!？?\s]+$'), '').trim();
+    if (q.isEmpty) return;
+    _query.text = q;
+    _query.selection = TextSelection.collapsed(offset: q.length);
+    _search();
   }
 
   Future<void> _loadRecent() async {
@@ -269,7 +289,13 @@ class _SearchPageState extends ConsumerState<SearchPage> {
                     // 电视：屏幕键盘最后一行有「搜索」键
                     field,
                     const SizedBox(height: 24),
-                    _Keyboard(onKey: _type, onBackspace: _backspace, onClear: () => _query.clear(), onSearch: _search),
+                    _Keyboard(
+                      onKey: _type,
+                      onBackspace: _backspace,
+                      onClear: () => _query.clear(),
+                      onSearch: _search,
+                      onVoice: _voice ? _voiceSearch : null,
+                    ),
                   ] else
                     // Windows：输入框右边一个「搜索」按钮，也可以直接按回车
                     Row(
@@ -660,12 +686,21 @@ class _ResultCardState extends ConsumerState<_ResultCard> {
 
 /// TV 屏幕键盘：字母数字（配合拼音首字母搜索），以及空格 / 删除 / 清空
 class _Keyboard extends StatelessWidget {
-  const _Keyboard({required this.onKey, required this.onBackspace, required this.onClear, required this.onSearch});
+  const _Keyboard({
+    required this.onKey,
+    required this.onBackspace,
+    required this.onClear,
+    required this.onSearch,
+    this.onVoice,
+  });
 
   final ValueChanged<String> onKey;
   final VoidCallback onBackspace;
   final VoidCallback onClear;
   final VoidCallback onSearch;
+
+  /// 语音输入；null = 系统没有语音识别，不显示这个键
+  final VoidCallback? onVoice;
 
   static const _keys = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ1234567890';
 
@@ -701,7 +736,11 @@ class _Keyboard extends StatelessWidget {
         Wrap(
           spacing: 10,
           runSpacing: 10,
-          children: [for (final c in _keys.split('')) key(c, () => onKey(c.toLowerCase()))],
+          children: [
+            for (final c in _keys.split('')) key(c, () => onKey(c.toLowerCase())),
+            // 语音键接在数字后面（同一行还有空位）
+            if (onVoice case final voice?) key('语音', voice, width: 170),
+          ],
         ),
         const SizedBox(height: 10),
         Row(
