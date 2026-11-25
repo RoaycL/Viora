@@ -48,8 +48,9 @@ class MpvEngine extends PlayerEngine {
           ),
         ),
       ),
-      s.videoParams.listen(
-        (p) => _set(
+      s.videoParams.listen((p) {
+        _fitTexture(p);
+        _set(
           (x) => x.copyWith(
             video: EngineVideoInfo(
               width: p.dw ?? p.w,
@@ -62,19 +63,59 @@ class MpvEngine extends PlayerEngine {
               codec: x.video.codec,
             ),
           ),
-        ),
-      ),
+        );
+      }),
       s.completed.listen((done) {
         if (done) _completed.add(null);
       }),
       s.error.listen((e) => _errors.add(EngineError(e, canFallback: false))),
     ]);
+    // 读系统代理要起一个 reg 进程（Windows 上几十到几百毫秒）：创建内核时就开始读，和取播放信息同时进行，
+    // 不占起播时间。open 时用这次的结果，之后再打开（换源、换集）照常重新读
+    _pendingProxy = SystemProxy.refresh()..ignore();
     // 下载速度：mpv 的 cache-speed（字节 / 秒），每秒读一次
     _speedTimer = Timer.periodic(const Duration(seconds: 1), (_) => _pollSpeed());
   }
 
   Timer? _speedTimer;
   bool _disposed = false;
+  Future<void>? _pendingProxy;
+
+  /// 桌面端画面纹理的固定大小；null = 跟片源分辨率一样（media_kit 默认）
+  (int, int)? _textureSize;
+
+  /// 桌面端：片源分辨率比屏幕大时（如 1080p / 2K 屏幕看 4K），让 mpv 直接按屏幕分辨率出画面。
+  /// media_kit 默认按片源分辨率建纹理：4K 片子每帧都要在 4K 上做缩放、HDR 色调映射，再交给 Flutter 缩小一次，
+  /// 显卡负担是 1080p 的 4 倍。按屏幕大小输出后画质不变（本来也要缩小到屏幕大小），GPU 占用明显下降，掉帧更少
+  void _fitTexture(VideoParams p) {
+    if (!PlatformProfile.isDesktop || _disposed) return;
+    final w = p.dw ?? p.w, h = p.dh ?? p.h;
+    if (w == null || h == null || w <= 0 || h <= 0) return;
+    final displays = WidgetsBinding.instance.platformDispatcher.displays;
+    if (displays.isEmpty) return;
+    // 多显示器取最大的一块：窗口拖到 4K 屏上也不会糊
+    var screen = Size.zero;
+    for (final d in displays) {
+      screen = Size(math.max(screen.width, d.size.width), math.max(screen.height, d.size.height));
+    }
+    final target = textureSizeFor(w, h, screen);
+    if (target == _textureSize) return;
+    _textureSize = target;
+    unawaited(
+      _video.setSize(width: target?.$1, height: target?.$2).catchError((Object e) => debugPrint('mpv setSize: $e')),
+    );
+  }
+
+  /// 片源 [width]×[height] 在 [screen]（物理像素）上需要的纹理大小：保持比例，按「填满」铺满屏幕所需的大小缩小，
+  /// 这样「适应」「填满」两种画面比例都不会被放大；片源本来就不比屏幕大时返回 null（不限制）
+  @visibleForTesting
+  static (int, int)? textureSizeFor(int width, int height, Size screen) {
+    if (screen.width <= 0 || screen.height <= 0) return null;
+    final scale = math.max(screen.width / width, screen.height / height);
+    if (scale >= 1) return null;
+    int even(double v) => math.max(2, (v / 2).round() * 2);
+    return (even(width * scale), even(height * scale));
+  }
 
   Future<void> _pollSpeed() async {
     final native = _player.platform;
@@ -142,9 +183,15 @@ class MpvEngine extends PlayerEngine {
       await set('user-agent', media.userAgent);
       // 跟随系统代理（设置 → 接口与网络）：播放也走代理；局域网地址直连
       // 每次开始播放前重新读系统代理：启动后才打开 / 关掉 Clash 时不会连到已经失效的代理
-      await SystemProxy.refresh();
+      final proxy = _pendingProxy ?? SystemProxy.refresh();
+      _pendingProxy = null;
+      await proxy;
       await set('http-proxy', SystemProxy.forMpv(media.url) ?? '');
       await set('network-timeout', '20');
+      // media_kit 默认 hr-seek-framedrop=no：精确跳转（续播、拖动进度、跳片头）时，从关键帧到目标位置之间的每一帧
+      // 都要完整解码并输出。4K HEVC 关键帧间隔常有 5~10 秒，跳一次要多等一两秒。改回 mpv 的默认 yes：
+      // 目标位置之前的帧解码后直接丢掉，落点一样准，续播起播和拖动明显更快（我们不用会改时间戳的视频滤镜）
+      await set('hr-seek-framedrop', 'yes');
       // 预读缓冲上限（设置 → 播放 → 播放缓冲上限）；超过内存上限时写到磁盘缓存，关闭播放器后清除
       // 电视（ExoPlayer 放不了的格式才会用到 mpv，多是高码率原盘）：缓冲全在内存里，封顶 96MB、回看 16MB，
       // 不然 2GB 的盒子上 256MB + 64MB 足以把内存吃满被系统杀掉

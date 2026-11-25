@@ -50,10 +50,19 @@ class ExoController(
     private var decoderName: String? = null
     private var reportedUnsupported = false
 
+    /** 杜比视界 P7 片源正在用 HEVC 解码器只播基础层（HDR10） */
+    private var dolbyVisionBaseLayer = false
+
     val player: ExoPlayer
 
     init {
-        val renderers = DefaultRenderersFactory(context)
+        // 视频渲染器换成能把杜比视界 P7 当 HDR10 基础层播的版本（DolbyVisionRenderers.kt），其余和默认一致
+        val renderers = VioraRenderersFactory(context) {
+            handler.post {
+                dolbyVisionBaseLayer = true
+                sendVideo()
+            }
+        }
             .setEnableDecoderFallback(true)
             .setExtensionRendererMode(DefaultRenderersFactory.EXTENSION_RENDERER_MODE_PREFER)
         trackSelector.parameters = trackSelector.buildUponParameters()
@@ -150,6 +159,7 @@ class ExoController(
         mediaItem = item
         subtitleConfigs.clear()
         reportedUnsupported = false
+        dolbyVisionBaseLayer = false
         player.setMediaSource(sources.createMediaSource(item), startMs.coerceAtLeast(0))
         sourcesFactory = sources
         player.prepare()
@@ -336,6 +346,7 @@ class ExoController(
     private fun sendVideo() {
         val f = player.videoFormat ?: return
         val hdr = when {
+            f.sampleMimeType == MimeTypes.VIDEO_DOLBY_VISION && dolbyVisionBaseLayer -> "HDR10（杜比视界 P7 基础层）"
             f.sampleMimeType == MimeTypes.VIDEO_DOLBY_VISION -> "Dolby Vision"
             f.colorInfo?.colorTransfer == C.COLOR_TRANSFER_ST2084 -> "HDR10"
             f.colorInfo?.colorTransfer == C.COLOR_TRANSFER_HLG -> "HLG"
