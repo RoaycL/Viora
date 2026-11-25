@@ -74,7 +74,6 @@ v0.17.8-beta2 起（ExoPlayer FFmpeg 音频）：
 - 编好的 .so 提交在仓库里，平时发布不重新编译。**升级 Media3 时**：换掉 Java 文件和 `ffmpeg_jni.cc`，运行 Actions →「FFmpeg 音频扩展」（`.github/workflows/ffmpeg.yml`）重新编译，把产物覆盖到 `jniLibs/` 提交
 - LGPL 要求注明：设置 →「关于与更新」显示「音频解码：FFmpeg 6.0（LGPL 2.1+）」（只在安卓上显示）
 
-<<<<<<< HEAD
 v0.17.8-beta3 起（字幕样式，对标 VidHub）：
 
 | 设置 | 选项 | 说明 |
@@ -85,8 +84,6 @@ v0.17.8-beta3 起（字幕样式，对标 VidHub）：
 
 位置：播放页「字幕 → 字幕样式」，随播放设置保存。ASS 等自带样式的字幕在 ExoPlayer 上仍按字幕自己的样式（`setApplyEmbeddedStyles(true)`）。实现：`lib/player/subtitle_look.dart`。
 
-=======
->>>>>>> origin/claude/project-thread-hhovfp
 v0.7.0 起可调（设置 → 播放）：
 
 | 设置 | 选项 | 说明 |
