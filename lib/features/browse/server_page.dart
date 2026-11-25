@@ -210,6 +210,9 @@ class LibraryGridPage extends ConsumerStatefulWidget {
 class _LibraryGridPageState extends ConsumerState<LibraryGridPage> {
   static const _pageSize = 60;
   final _items = <MediaItem>[];
+
+  /// 服务器上的分页位置：儿童模式在本地过滤掉的条目也算（Plex 没有服务器端分级过滤），不能用 _items.length
+  int _offset = 0;
   int _total = -1;
   bool _loading = false;
   String? _error;
@@ -222,21 +225,33 @@ class _LibraryGridPageState extends ConsumerState<LibraryGridPage> {
   }
 
   Future<void> _loadMore() async {
-    if (_loading || (_total >= 0 && _items.length >= _total)) return;
+    if (_loading || (_total >= 0 && _offset >= _total)) return;
     setState(() => _loading = true);
     try {
       final client = ref.read(serverClientProvider(widget.serverId));
       if (client == null) throw StateError('服务器不存在');
-      final page = await client.items(
-        parentId: widget.libraryId,
-        start: _items.length,
-        limit: _pageSize,
-        sortBy: _sort,
-        sortOrder: _sort.startsWith('SortName') ? 'Ascending' : 'Descending',
-      );
+      final sort = _sort;
+      final added = <MediaItem>[];
+      var offset = _offset;
+      PagedItems page;
+      // 一整页都被儿童模式过滤掉时接着取下一页，不然网格一直显示占位
+      do {
+        page = await client.items(
+          parentId: widget.libraryId,
+          start: offset,
+          limit: _pageSize,
+          sortBy: sort,
+          sortOrder: sort.startsWith('SortName') ? 'Ascending' : 'Descending',
+        );
+        offset += page.receivedCount;
+        added.addAll(page.items);
+      } while (added.isEmpty && page.receivedCount > 0 && offset < page.total);
+      if (!mounted || sort != _sort) return;
       setState(() {
-        _items.addAll(page.items);
-        _total = page.total;
+        _items.addAll(added);
+        _offset = offset;
+        // 服务器提前没有更多条目：按已取到的位置结束
+        _total = page.receivedCount == 0 ? offset : page.total;
         _error = null;
       });
     } catch (e) {
@@ -251,6 +266,7 @@ class _LibraryGridPageState extends ConsumerState<LibraryGridPage> {
     setState(() {
       _sort = sort;
       _items.clear();
+      _offset = 0;
       _total = -1;
     });
     _loadMore();

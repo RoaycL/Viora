@@ -257,7 +257,17 @@ class _ServerEditPageState extends ConsumerState<ServerEditPage> {
                     label: '服务器类型',
                     options: [for (final t in ServerType.values) (t, t.label)],
                     value: _type,
-                    onChanged: editing ? (_) {} : (t) => setState(() => _type = t),
+                    onChanged: editing
+                        ? (_) {}
+                        : (t) => setState(() {
+                            // 离开 Plex：作废还在等的 plex.tv 授权，免得它改掉其他类型服务器的账号密码并自动保存
+                            if (t != ServerType.plex) {
+                              _pinAttempt++;
+                              _pinTimer?.cancel();
+                              _pinCode = null;
+                            }
+                            _type = t;
+                          }),
                   ),
                   const SizedBox(height: 28),
                   VTextField(
