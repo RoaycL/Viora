@@ -227,10 +227,10 @@ class _LibraryGridPageState extends ConsumerState<LibraryGridPage> {
   Future<void> _loadMore() async {
     if (_loading || (_total >= 0 && _offset >= _total)) return;
     setState(() => _loading = true);
+    final sort = _sort;
     try {
       final client = ref.read(serverClientProvider(widget.serverId));
       if (client == null) throw StateError('服务器不存在');
-      final sort = _sort;
       final added = <MediaItem>[];
       var offset = _offset;
       PagedItems page;
@@ -255,9 +255,13 @@ class _LibraryGridPageState extends ConsumerState<LibraryGridPage> {
         _error = null;
       });
     } catch (e) {
-      setState(() => _error = e.toString());
+      if (mounted && sort == _sort) setState(() => _error = e.toString());
     } finally {
-      if (mounted) setState(() => _loading = false);
+      if (mounted) {
+        setState(() => _loading = false);
+        // 加载期间换了排序：_setSort 那次 _loadMore 因为正在加载直接返回了，这里按新排序重新取
+        if (sort != _sort) _loadMore();
+      }
     }
   }
 
