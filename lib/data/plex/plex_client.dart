@@ -344,6 +344,8 @@ class PlexClient extends EmbyClient {
       'title': j['grandparentTitle'],
       'thumb': j['grandparentThumb'],
       'art': j['grandparentArt'],
+      // 集的分级一般跟着剧集走：家长控制要用它过滤
+      'contentRating': j['contentRating'],
       'addedAt': j['addedAt'],
     }),
     'season' when j['parentRatingKey'] != null => parseItem({
@@ -353,6 +355,7 @@ class PlexClient extends EmbyClient {
       'thumb': j['parentThumb'],
       'art': j['art'],
       'year': j['parentYear'],
+      'contentRating': j['contentRating'] ?? j['parentContentRating'],
       'addedAt': j['addedAt'],
     }),
     _ => parseItem(j),
@@ -383,10 +386,9 @@ class PlexClient extends EmbyClient {
       if (e.statusCode != 404 && e.statusCode != 400) rethrow;
       c = await _get('/library/onDeck', _page(0, limit * 2));
     }
-    // 只要看了一半的（Plex 还会放"下一集"，和 Emby 的继续观看不同）
-    final items = _allowed(_metadata(c).map(parseItem).where((it) => it.position > Duration.zero && !it.played))
-        .take(limit)
-        .toList();
+    // 只要看了一半的（Plex 还会放没开始的"下一集"，和 Emby 的继续观看不同）。
+    // 不看 played：它来自 viewCount（以前看完过），重看到一半的也要留着
+    final items = _allowed(_metadata(c).map(parseItem).where((it) => it.position > Duration.zero)).take(limit).toList();
     _remember(items);
     return items;
   }
@@ -722,7 +724,8 @@ class PlexClient extends EmbyClient {
   /// [s] 是 Plex 的一个 `Media`（一个版本）；MediaSourceInfo.id 用它第一个 Part 的 ID
   @override
   MediaSourceInfo parseSource(String itemId, Map<String, dynamic> s) {
-    final part = (s['Part'] as List).first as Map<dynamic, dynamic>;
+    final parts = s['Part'] as List;
+    final part = parts.first as Map<dynamic, dynamic>;
     final partId = '${part['id']}';
     if (part['key'] is String) _partKeys['${_server.id}/$partId'] = part['key'] as String;
     final streams = <MediaStreamInfo>[];
@@ -779,10 +782,14 @@ class PlexClient extends EmbyClient {
       itemId: itemId,
       id: partId,
       container: container,
-      name: s['title'] as String? ?? file?.split(RegExp(r'[/\\]')).last,
+      // 分成多个文件的版本只能播放第一个文件：名称里写明，时长用这个文件的，进度和文件对得上
+      name: [
+        ?(s['title'] as String? ?? file?.split(RegExp(r'[/\\]')).last),
+        if (parts.length > 1) '共 ${parts.length} 段，只能播放第 1 段',
+      ].join(' · '),
       size: (part['size'] as num?)?.toInt(),
       bitrate: s['bitrate'] is num ? (s['bitrate'] as num).toInt() * 1000 : null,
-      duration: _ms(s['duration'] ?? part['duration']),
+      duration: _ms(parts.length > 1 ? part['duration'] : s['duration'] ?? part['duration']),
       streams: streams,
     );
   }

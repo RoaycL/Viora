@@ -275,4 +275,55 @@ void main() {
     expect(segs.map((s) => (s.type, s.start.inSeconds, s.end.inSeconds)), [('Intro', 1, 61), ('Outro', 1300, 1400)]);
     expect(fake.requests.single.queryParameters['includeMarkers'], '1');
   });
+
+  test('继续观看：以前看完过、这次重看到一半的也保留；没开始的下一集不放', () async {
+    final fake = await _Fake.start();
+    addTearDown(() => fake.http.close(force: true));
+    fake.body = (_) => _mc({
+      'Metadata': [
+        {'ratingKey': '1', 'type': 'movie', 'viewCount': 1, 'viewOffset': 60000, 'duration': 600000},
+        {'ratingKey': '2', 'type': 'episode', 'viewOffset': 0},
+      ],
+    });
+    final list = await _client(fake).resume();
+    expect(list.map((i) => i.id), ['1']);
+  });
+
+  test('最近添加合并成剧时保留分级，儿童模式能过滤', () async {
+    final fake = await _Fake.start();
+    addTearDown(() => fake.http.close(force: true));
+    fake.body = (_) => _mc({
+      'Metadata': [
+        {'ratingKey': '11', 'type': 'episode', 'grandparentRatingKey': '100', 'contentRating': 'TV-MA'},
+      ],
+    });
+    final list = await _client(fake).latest();
+    expect(list.single.officialRating, 'TV-MA');
+  });
+
+  test('分成多个文件的版本：名称写明只能播第 1 段，时长用第 1 段的', () async {
+    final fake = await _Fake.start();
+    addTearDown(() => fake.http.close(force: true));
+    fake.body = (_) => _mc({
+      'Metadata': [
+        {
+          'ratingKey': '20',
+          'type': 'movie',
+          'Media': [
+            {
+              'id': 5,
+              'duration': 7200000,
+              'Part': [
+                {'id': 1, 'key': '/library/parts/1/0/file.avi', 'file': '/m/A cd1.avi', 'duration': 3600000},
+                {'id': 2, 'key': '/library/parts/2/0/file.avi', 'file': '/m/A cd2.avi', 'duration': 3600000},
+              ],
+            },
+          ],
+        },
+      ],
+    });
+    final s = (await _client(fake).playbackInfo('20')).sources.single;
+    expect(s.name, 'A cd1.avi · 共 2 段，只能播放第 1 段');
+    expect(s.duration, const Duration(hours: 1));
+  });
 }
