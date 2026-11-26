@@ -142,6 +142,7 @@ class WebDavEntry extends ConsumerWidget {
                   ? null
                   : () => showContextMenu(
                       context,
+                      anchored: true,
                       title: 'WebDAV 同步',
                       actions: [
                         MenuAction('用本机配置覆盖云端', Icons.cloud_upload_outlined, () => _run(WebDavSyncMode.upload)),
@@ -319,14 +320,11 @@ Future<void> _connect(ProviderContainer ref, String id, void Function(String) lo
       await store.replaceServerIfUnchanged(initial, server);
       return;
     }
-    if (server.name.trim().isEmpty) {
-      try {
-        final info = await clientForDraft(config, server).publicInfo();
-        final name = (info['ServerName'] as String?)?.trim() ?? '';
-        if (name.isNotEmpty) server = server.copyWith(name: name);
-      } catch (_) {}
-    }
     if (!server.loggedIn) server = await clientForDraft(config, server).login();
+    if (server.name.trim().isEmpty) {
+      final name = await clientForDraft(config, server).serverName();
+      if (name.isNotEmpty) server = server.copyWith(name: name);
+    }
     if (!await store.replaceServerIfUnchanged(initial, server.copyWith(lastAccessAt: DateTime.now()))) {
       log('「${server.displayName}」连接期间地址或账号被修改 / 服务器已删除，这次连接结果不保存');
       return;

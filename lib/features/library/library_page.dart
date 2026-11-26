@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
+import '../../app/desktop_prefs.dart';
 import '../../app/platform_profile.dart';
 import '../../app/theme.dart';
 import '../../data/config/app_config.dart';
@@ -13,6 +14,7 @@ import '../../data/media/server_registry.dart';
 import '../../ui/focus/focusable.dart';
 import '../../ui/glass/glass.dart';
 import '../../ui/panels/context_menu.dart';
+import '../../ui/panels/form_dialog.dart';
 import '../../ui/widgets/buttons.dart';
 import '../../ui/widgets/cached_image.dart';
 import '../../ui/widgets/toast.dart';
@@ -54,7 +56,7 @@ class _LibraryPageState extends ConsumerState<LibraryPage> {
         // 早期添加的服务器可能没有名称：补上服务器自己报的名称
         if (s.name.trim().isEmpty) {
           try {
-            final n = ((await client.publicInfo())['ServerName'] as String?)?.trim() ?? '';
+            final n = await client.serverName();
             if (n.isNotEmpty) {
               await ref.read(configProvider.notifier).updateServer(s.id, (old) => old.copyWith(name: n));
             }
@@ -122,9 +124,13 @@ class _LibraryPageState extends ConsumerState<LibraryPage> {
                         runSpacing: gap,
                         children: [
                           for (var i = 0; i < servers.length; i++)
-                            SizedBox(
+                            _DraggableCard(
+                              key: ValueKey(servers[i].id),
+                              server: servers[i],
+                              index: i,
+                              indexOf: (id) => servers.indexWhere((s) => s.id == id),
                               width: width,
-                              child: _ServerCard(server: servers[i], autofocus: i == 0),
+                              autofocus: i == 0,
                             ),
                         ],
                       );
@@ -132,9 +138,11 @@ class _LibraryPageState extends ConsumerState<LibraryPage> {
                   ),
                 if (servers.isNotEmpty) ...[
                   const SizedBox(height: 28),
-                  const Text(
-                    'OK 进入 · 菜单键 / 长按 OK：测速、切换线路、编辑、重新登录、删除',
-                    style: TextStyle(fontSize: 18, color: VColors.textMuted),
+                  Text(
+                    PlatformProfile.isDesktop
+                        ? '单击进入 · 右键：测速、切换线路、编辑、删除 · 按住卡片拖动可以调整顺序'
+                        : 'OK 进入 · 菜单键 / 长按 OK：测速、切换线路、移动位置、编辑、删除',
+                    style: const TextStyle(fontSize: 18, color: VColors.textMuted),
                   ),
                 ],
               ],
@@ -142,6 +150,83 @@ class _LibraryPageState extends ConsumerState<LibraryPage> {
           ),
         ),
       ],
+    );
+  }
+}
+
+/// 按住卡片（鼠标 / 触屏长按）拖到另一张卡片上：挪到那张卡片的位置
+class _DraggableCard extends ConsumerStatefulWidget {
+  const _DraggableCard({
+    super.key,
+    required this.server,
+    required this.index,
+    required this.indexOf,
+    required this.width,
+    this.autofocus = false,
+  });
+
+  final ServerConfig server;
+  final int index;
+  final int Function(String id) indexOf;
+  final double width;
+  final bool autofocus;
+
+  @override
+  ConsumerState<_DraggableCard> createState() => _DraggableCardState();
+}
+
+class _DraggableCardState extends ConsumerState<_DraggableCard> {
+  /// 有卡片拖到这张上面（显示插入位置的高亮）
+  bool _hovering = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final card = _ServerCard(server: widget.server, autofocus: widget.autofocus);
+    return DragTarget<String>(
+      onWillAcceptWithDetails: (d) {
+        final ok = d.data != widget.server.id;
+        if (ok != _hovering) setState(() => _hovering = ok);
+        return ok;
+      },
+      onLeave: (_) => setState(() => _hovering = false),
+      onAcceptWithDetails: (d) {
+        setState(() => _hovering = false);
+        final from = widget.indexOf(d.data);
+        if (from < 0) return;
+        // 从前往后拖放到目标后面，从后往前拖放到目标前面：和目标交换到它原来的位置
+        ref.read(configProvider.notifier).moveServerTo(d.data, widget.server.id, after: from < widget.index);
+      },
+      builder: (context, _, _) => SizedBox(
+        width: widget.width,
+        child: LongPressDraggable<String>(
+          data: widget.server.id,
+          delay: const Duration(milliseconds: 350),
+          hapticFeedbackOnStart: true,
+          feedback: Material(
+            type: MaterialType.transparency,
+            child: SizedBox(
+              width: widget.width,
+              child: Opacity(
+                opacity: 0.9,
+                child: Transform.scale(
+                  scale: 1.04,
+                  child: IgnorePointer(child: _ServerCard(server: widget.server)),
+                ),
+              ),
+            ),
+          ),
+          childWhenDragging: Opacity(opacity: 0.3, child: IgnorePointer(child: card)),
+          child: AnimatedContainer(
+            duration: VMotion.focus,
+            // 画在前景上，不改变卡片大小
+            foregroundDecoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(VRadius.panel),
+              border: Border.all(color: _hovering ? VColors.accent : const Color(0x00000000), width: 3),
+            ),
+            child: card,
+          ),
+        ),
+      ),
     );
   }
 }
@@ -201,6 +286,9 @@ class _ServerCard extends ConsumerWidget {
 
   Future<void> _menu(BuildContext context, WidgetRef ref) {
     final store = ref.read(configProvider.notifier);
+    final visible = ref.read(configProvider).servers;
+    final index = visible.indexWhere((s) => s.id == server.id);
+    final count = visible.length;
     return showContextMenu(
       context,
       title: server.displayName,
@@ -212,27 +300,42 @@ class _ServerCard extends ConsumerWidget {
           showToast('测速完成：$ok / ${server.lines.length} 条线路可用');
         }),
         if (server.lines.length > 1)
-          MenuAction('切换线路', Icons.alt_route_rounded, () {
-            showContextMenu(
-              context,
-              title: '选择线路',
-              actions: [
+          // 二级菜单贴着「切换线路」这一项弹出，不再在鼠标位置另开一个菜单
+          MenuAction.submenu(
+            '切换线路',
+            Icons.alt_route_rounded,
+            title: '选择线路',
+            items: () {
+              final s = ref.read(configProvider).server(server.id) ?? server;
+              return [
                 MenuAction(
-                  '自动（测速最快）${server.activeLineId == null ? '  ✓' : ''}',
+                  '自动（测速最快）${s.activeLineId == null ? '  ✓' : ''}',
                   Icons.auto_awesome_rounded,
                   () => store.updateServer(server.id, (s) => s.copyWith(clearActiveLine: true)),
                 ),
-                for (final l in server.lines)
+                for (final l in s.lines)
                   MenuAction(
                     '${l.name} · ${l.latencyMs == null ? '不可用' : '${l.latencyMs}ms'}'
-                    '${server.activeLineId == l.id ? '  ✓' : ''}',
+                    '${s.activeLineId == l.id ? '  ✓' : ''}',
                     Icons.route_rounded,
                     () => store.updateServer(server.id, (s) => s.copyWith(activeLineId: l.id)),
                   ),
-              ],
-            );
-          }),
+              ];
+            },
+          ),
         MenuAction('编辑', Icons.edit_rounded, () => context.go('/library/edit/${server.id}')),
+        // Windows：固定到左侧导航栏，一点就打开这台服务器
+        if (PlatformProfile.isDesktop)
+          DesktopPrefs.instance.pinnedServers.value.contains(server.id)
+              ? MenuAction(
+                  '从侧边栏移除',
+                  Icons.push_pin_outlined,
+                  () => DesktopPrefs.instance.setServerPinned(server.id, false),
+                )
+              : MenuAction('添加到侧边栏', Icons.push_pin_rounded, () {
+                  DesktopPrefs.instance.setServerPinned(server.id, true);
+                  showToast('已把「${server.displayName}」添加到左侧导航栏');
+                }),
         MenuAction('重新同步索引', Icons.sync_rounded, () {
           showToast('正在重建「${server.displayName}」的索引…');
           ref.read(indexSyncProvider.notifier).syncServer(server.id, forceFull: true);
@@ -245,19 +348,25 @@ class _ServerCard extends ConsumerWidget {
             showToast('登录失败：$e');
           }
         }),
-        MenuAction('删除', Icons.delete_outline_rounded, () {
-          showContextMenu(
+        if (index > 0) MenuAction('向前移动', Icons.arrow_back_rounded, () => store.moveServer(server.id, -1)),
+        if (index >= 0 && index < count - 1)
+          MenuAction('向后移动', Icons.arrow_forward_rounded, () => store.moveServer(server.id, 1)),
+        MenuAction('删除', Icons.delete_outline_rounded, () async {
+          // 删除后这张卡片会被移除（ref 随之失效）：等待之前先拿到要用的对象
+          final index = ref.read(indexSyncProvider.notifier);
+          final ok = await showConfirmDialog(
             context,
             title: '删除「${server.displayName}」？',
-            actions: [
-              MenuAction('确认删除', Icons.delete_forever_rounded, () {
-                store.removeServer(server.id);
-                ref.read(indexSyncProvider.notifier).forget(server.id);
-                showToast('已删除「${server.displayName}」');
-              }),
-              MenuAction('取消', Icons.close_rounded, () {}),
-            ],
+            message: '会删除这台服务器的登录信息和聚合索引，服务器上的内容和观看记录不受影响。',
+            confirmLabel: '删除',
+            confirmIcon: Icons.delete_forever_rounded,
+            destructive: true,
           );
+          if (ok != true) return;
+          await store.removeServer(server.id);
+          index.forget(server.id);
+          await DesktopPrefs.instance.setServerPinned(server.id, false);
+          showToast('已删除「${server.displayName}」');
         }),
       ],
     );
@@ -267,7 +376,9 @@ class _ServerCard extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final s = server;
     final sync = ref.watch(indexSyncProvider.select((m) => m[s.id]));
-    final dot = switch (_status) {
+    // 本次运行里测过、确认连不上（或登录被拒）的服务器：红点，和没测过的灰点区分开
+    final offline = ref.watch(serverReachabilityProvider.select((m) => m.containsKey(s.id)));
+    final dot = switch (offline ? _Status.down : _status) {
       _Status.ok => VColors.ok,
       _Status.fallback => VColors.warn,
       _Status.down => VColors.bad,

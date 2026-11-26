@@ -4,6 +4,7 @@ import '../../app/theme.dart';
 import '../focus/focusable.dart';
 import '../glass/glass.dart';
 import '../widgets/buttons.dart';
+import '../widgets/form.dart';
 
 /// 居中的设置弹窗（磨砂玻璃）：放若干输入框，底部「取消 / 保存」。
 /// [onSave] 返回 true 才关闭（校验失败时保持打开）。遥控器返回键 / Esc / 点击空白处取消。
@@ -241,6 +242,133 @@ class SmallSwitch extends StatelessWidget {
           decoration: const BoxDecoration(color: Colors.white, shape: BoxShape.circle),
         ),
       ),
+    );
+  }
+}
+
+/// 居中的确认弹窗（删除、退出等需要用户确认的操作）：标题 + 说明 + 「取消 / 确认」两个按钮。
+/// 返回 true 表示确认，false 表示按了「取消」，null 表示返回键 / Esc / 点击空白处关掉。
+/// 焦点默认在「取消」上，避免误按删除。
+Future<bool?> showConfirmDialog(
+  BuildContext context, {
+  required String title,
+  String? message,
+  String confirmLabel = '确认',
+  String cancelLabel = '取消',
+  IconData confirmIcon = Icons.check_rounded,
+  bool destructive = false,
+  bool focusConfirm = false,
+}) {
+  return showGeneralDialog<bool>(
+    context: context,
+    barrierDismissible: true,
+    barrierLabel: '关闭',
+    barrierColor: const Color(0x8C07080B),
+    transitionDuration: VMotion.focus,
+    pageBuilder: (context, _, _) => Center(
+      child: Material(
+        type: MaterialType.transparency,
+        child: Glass(
+          width: 640,
+          radius: VRadius.panel,
+          blur: 40,
+          fill: const Color(0xCC14161E),
+          padding: const EdgeInsets.fromLTRB(40, 36, 40, 32),
+          child: FocusTraversalGroup(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(title, style: VText.h2.copyWith(fontSize: 30)),
+                if (message != null) ...[
+                  const SizedBox(height: 12),
+                  Text(message, style: VText.caption.copyWith(color: VColors.textSecondary)),
+                ],
+                const SizedBox(height: 32),
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.end,
+                  children: [
+                    PillButton(
+                      label: cancelLabel,
+                      autofocus: !focusConfirm,
+                      onPressed: () => Navigator.of(context).pop(false),
+                    ),
+                    const SizedBox(width: 16),
+                    _ConfirmButton(
+                      label: confirmLabel,
+                      icon: confirmIcon,
+                      destructive: destructive,
+                      autofocus: focusConfirm,
+                      onPressed: () => Navigator.of(context).pop(true),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    ),
+    transitionBuilder: (context, animation, _, child) => FadeTransition(
+      opacity: animation,
+      child: ScaleTransition(scale: Tween(begin: 0.97, end: 1.0).animate(animation), child: child),
+    ),
+  );
+}
+
+/// 确认按钮：删除类操作用红色文字，一眼看出是危险操作
+class _ConfirmButton extends StatelessWidget {
+  const _ConfirmButton({
+    required this.label,
+    required this.icon,
+    required this.destructive,
+    required this.autofocus,
+    required this.onPressed,
+  });
+
+  final String label;
+  final IconData icon;
+  final bool destructive;
+  final bool autofocus;
+  final VoidCallback onPressed;
+
+  @override
+  Widget build(BuildContext context) {
+    if (!destructive) return PillButton(label: label, icon: icon, autofocus: autofocus, onPressed: onPressed);
+    return VFocusable(
+      autofocus: autofocus,
+      onActivate: onPressed,
+      semanticLabel: label,
+      radius: VRadius.pill,
+      scale: 1.04,
+      showRing: false,
+      builder: (context, focused) {
+        final compact = InfoTipScope.compact(context);
+        return AnimatedContainer(
+          duration: VMotion.duration(context, VMotion.focus),
+          height: compact ? 48 : 68,
+          padding: EdgeInsets.only(left: compact ? 20 : 28, right: compact ? 24 : 32),
+          decoration: ShapeDecoration(
+            shape: const StadiumBorder(),
+            color: focused ? VColors.bad : const Color(0x33FF6B6B),
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(icon, size: compact ? 21 : 28, color: focused ? Colors.white : VColors.bad),
+              SizedBox(width: compact ? 10 : 12),
+              Text(
+                label,
+                style: TextStyle(
+                  fontSize: compact ? 19 : 24,
+                  fontWeight: FontWeight.w600,
+                  color: focused ? Colors.white : VColors.bad,
+                ),
+              ),
+            ],
+          ),
+        );
+      },
     );
   }
 }

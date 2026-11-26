@@ -25,6 +25,7 @@ import '../../ui/widgets/buttons.dart';
 import '../../ui/widgets/form.dart';
 import '../../ui/widgets/server_image.dart';
 import '../browse/media_cards.dart';
+import '../../ui/widgets/text_context_menu.dart';
 
 /// 聚合搜索（docs/04-aggregation.md §4）：
 /// 本地索引立即出结果（支持拼音首字母 / 全拼），再并发查各服务器补齐，同一部作品合并显示资源数。
@@ -473,7 +474,8 @@ extension on _SearchPageState {
     return AnimatedContainer(
       duration: VMotion.duration(context, VMotion.focus),
       height: 76,
-      padding: const EdgeInsets.only(left: 28, right: 10),
+      // 右边留的空和「搜索」按钮上下留的空一样（按钮高 56，上下各约 10）
+      padding: const EdgeInsets.only(left: 28, right: 8.5),
       decoration: BoxDecoration(
         color: focused ? const Color(0x1FFFFFFF) : const Color(0x14FFFFFF),
         borderRadius: BorderRadius.circular(999),
@@ -486,6 +488,7 @@ extension on _SearchPageState {
           const SizedBox(width: 18),
           Expanded(
             child: TextField(
+              contextMenuBuilder: textContextMenu,
               controller: _query,
               focusNode: _fieldFocus,
               autofocus: true,
@@ -514,7 +517,7 @@ extension on _SearchPageState {
               icon: const Icon(Icons.close_rounded, size: 26, color: VColors.textTertiary),
             ),
           const SizedBox(width: 8),
-          PillButton(label: '搜索', onPressed: typed.isEmpty ? null : _search),
+          _SearchButton(onPressed: typed.isEmpty ? null : _search),
         ],
       ),
     );
@@ -755,6 +758,43 @@ class _Keyboard extends StatelessWidget {
           ],
         ),
       ],
+    );
+  }
+}
+
+/// 搜索框里的「搜索」按钮：比普通胶囊按钮矮，嵌在搜索框里上下右留一样的空
+class _SearchButton extends StatelessWidget {
+  const _SearchButton({required this.onPressed});
+
+  final VoidCallback? onPressed;
+
+  @override
+  Widget build(BuildContext context) {
+    final enabled = onPressed != null;
+    return VFocusable(
+      onActivate: onPressed,
+      semanticLabel: '搜索',
+      radius: VRadius.pill,
+      scale: 1.04,
+      showRing: false,
+      builder: (context, focused) => AnimatedContainer(
+        duration: VMotion.duration(context, VMotion.focus),
+        height: 56,
+        padding: const EdgeInsets.symmetric(horizontal: 28),
+        alignment: Alignment.center,
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(999),
+          color: focused ? Colors.white : (enabled ? const Color(0x33FFFFFF) : const Color(0x14FFFFFF)),
+        ),
+        child: Text(
+          '搜索',
+          style: TextStyle(
+            fontSize: 22,
+            fontWeight: FontWeight.w600,
+            color: focused ? const Color(0xFF0B0C10) : (enabled ? Colors.white : VColors.textTertiary),
+          ),
+        ),
+      ),
     );
   }
 }

@@ -36,6 +36,20 @@ class DesktopPrefs {
   /// 上次改快捷方式图标时的 exe（路径 + 修改时间）：没更新过应用就不用每次启动都跑 PowerShell
   static const _kShortcutExe = 'viora.window.shortcutIconExe';
   static const _kNavCompact = 'viora.window.navCompact';
+  static const _kPinnedServers = 'viora.window.pinnedServers';
+
+  /// 固定在左侧导航栏里的服务器（资源库里右键「添加到侧边栏」），按添加顺序
+  final pinnedServers = ValueNotifier<List<String>>(const []);
+
+  /// 固定 / 取消固定一台服务器
+  Future<void> setServerPinned(String id, bool pinned) async {
+    final list = [...pinnedServers.value]..remove(id);
+    if (pinned) list.add(id);
+    pinnedServers.value = list;
+    try {
+      await (await SharedPreferences.getInstance()).setStringList(_kPinnedServers, list);
+    } catch (_) {}
+  }
 
   /// 左侧导航栏样式：false = 默认（一长条，设置在最下面），true = 紧凑（高度随项目、上下居中）
   final navCompact = ValueNotifier(false);
@@ -64,6 +78,7 @@ class DesktopPrefs {
       followSystemProxy.value = p.getBool(_kSystemProxy) ?? false;
       iconStyle.value = AppIconStyle.values.asNameMap()[p.getString(_kIcon)] ?? AppIconStyle.dark;
       navCompact.value = p.getBool(_kNavCompact) ?? false;
+      pinnedServers.value = p.getStringList(_kPinnedServers) ?? const [];
     } catch (_) {}
     // 用观察者监听系统深浅色变化：直接改 PlatformDispatcher.onPlatformBrightnessChanged 会顶掉 Flutter 自己的处理
     // （MediaQuery.platformBrightness 不再更新）

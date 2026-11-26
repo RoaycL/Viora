@@ -195,6 +195,14 @@ class _AppShellState extends State<AppShell> {
             scope: _railScope,
             onPointerLeave: focusContent,
             onSelect: _select,
+            location: widget.location,
+            onOpenServer: (id) {
+              _browsing = null;
+              context.go('/library/server/$id');
+              WidgetsBinding.instance.addPostFrameCallback((_) {
+                if (mounted && _hasFocusableContent) focusContent();
+              });
+            },
           );
     return ShellFocus(
       focusRail: focusRail,

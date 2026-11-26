@@ -161,4 +161,31 @@ void main() {
     expect(s['password'], 'secret');
     expect(s['token'], 'tok');
   });
+
+  test('资源库调整服务器顺序：拖到另一台的位置、前移后移', () async {
+    SharedPreferences.setMockInitialValues({});
+    ConfigStore.vault = MemoryVault();
+    final container = ProviderContainer();
+    addTearDown(container.dispose);
+    final store = container.read(configProvider.notifier);
+    await store.load();
+    for (final id in ['a', 'b', 'c', 'd']) {
+      await store.upsertServer(
+        ServerConfig(id: id, type: ServerType.emby, name: id, lines: server.lines, username: 'me'),
+      );
+    }
+    List<String> order() => [for (final s in container.read(configProvider).allServers) s.id];
+    // 从前往后拖：放到目标后面
+    await store.moveServerTo('a', 'c', after: true);
+    expect(order(), ['b', 'c', 'a', 'd']);
+    // 从后往前拖：放到目标前面
+    await store.moveServerTo('d', 'b');
+    expect(order(), ['d', 'b', 'c', 'a']);
+    await store.moveServer('a', -1);
+    expect(order(), ['d', 'b', 'a', 'c']);
+    await store.moveServer('d', -1);
+    expect(order(), ['d', 'b', 'a', 'c'], reason: '已经在最前面');
+    await store.moveServer('d', 1);
+    expect(order(), ['b', 'd', 'a', 'c']);
+  });
 }

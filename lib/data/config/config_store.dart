@@ -221,6 +221,28 @@ class ConfigStore extends Notifier<AppConfig> {
     return c.copyWith(servers: [for (final s in c.allServers) s.id == id ? change(s) : s]);
   });
 
+  /// 把服务器 [id] 挪到 [targetId] 的位置（资源库拖动排序）。[after] 为 true 时放在它后面。
+  /// 按完整列表挪：儿童模式隐藏的服务器保持原来的相对位置
+  Future<void> moveServerTo(String id, String targetId, {bool after = false}) => update((c) {
+    if (id == targetId) return c;
+    final list = [...c.allServers];
+    final i = list.indexWhere((s) => s.id == id);
+    if (i < 0 || !list.any((s) => s.id == targetId)) return c;
+    final moved = list.removeAt(i);
+    final t = list.indexWhere((s) => s.id == targetId);
+    list.insert(after ? t + 1 : t, moved);
+    return c.copyWith(servers: list);
+  });
+
+  /// 在资源库里向前（-1）/ 向后（1）挪一格（电视菜单用）
+  Future<void> moveServer(String id, int delta) {
+    final visible = state.servers;
+    final i = visible.indexWhere((s) => s.id == id);
+    final j = i + delta;
+    if (i < 0 || j < 0 || j >= visible.length) return Future.value();
+    return moveServerTo(id, visible[j].id, after: delta > 0);
+  }
+
   Future<void> removeServer(String id) =>
       update((c) => c.copyWith(servers: c.allServers.where((s) => s.id != id).toList()));
 }

@@ -286,8 +286,10 @@ Future<void> _openPopupMenu(
               child: _PopupMenu(title: title, actions: actions, depth: depth),
             ),
     ),
-    transitionBuilder: (context, animation, _, child) =>
-        FadeTransition(opacity: CurvedAnimation(parent: animation, curve: Curves.easeOut), child: child),
+    transitionBuilder: (context, animation, _, child) => FadeTransition(
+      opacity: CurvedAnimation(parent: animation, curve: Curves.easeOut),
+      child: child,
+    ),
   );
 }
 
@@ -372,13 +374,14 @@ class _PopupMenuState extends State<_PopupMenu> {
   Widget build(BuildContext context) {
     final actions = widget.actions();
     final title = widget.title;
-    // 电视在几米外看：保持原来的尺寸（宽 380、行高 50/64、字号 20），只有电脑用更紧凑的尺寸
+    // 电视在几米外看：保持原来的尺寸（宽 380、行高 50/64、字号 20）；电脑稍紧凑（字号 19），
+    // 跟资源库卡片、设置页的正文（18~20）一个量级，不会显得菜单字太小
     final tv = !PlatformProfile.isDesktop;
     return Material(
       type: MaterialType.transparency,
       // 轻一点：更通透的毛玻璃（填充约 55% 不透明，之前 90% 几乎是实心深灰）、更窄、行更矮、字更小
       child: Glass(
-        width: tv ? 380 : 320,
+        width: tv ? 380 : 340,
         radius: VRadius.card,
         blur: 40,
         fill: const Color(0x8C16181F),
@@ -395,7 +398,7 @@ class _PopupMenuState extends State<_PopupMenu> {
                   title,
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
-                  style: VText.small.copyWith(fontSize: tv ? null : 15, color: VColors.textTertiary),
+                  style: VText.small.copyWith(fontSize: tv ? null : 16, color: VColors.textTertiary),
                 ),
               ),
             Flexible(
@@ -422,7 +425,7 @@ class _PopupMenuState extends State<_PopupMenu> {
                           builder: (context, focused) => AnimatedContainer(
                             key: _itemKey(i),
                             duration: VMotion.focus,
-                            height: actions[i].detail == null ? (tv ? 50 : 42) : (tv ? 64 : 56),
+                            height: actions[i].detail == null ? (tv ? 50 : 46) : (tv ? 64 : 60),
                             padding: const EdgeInsets.symmetric(horizontal: 12),
                             decoration: BoxDecoration(
                               color: focused ? const Color(0x1FFFFFFF) : const Color(0x00FFFFFF),
@@ -430,19 +433,19 @@ class _PopupMenuState extends State<_PopupMenu> {
                             ),
                             child: Row(
                               children: [
-                                Icon(actions[i].icon, size: tv ? 22 : 19, color: const Color(0xE6FFFFFF)),
+                                Icon(actions[i].icon, size: tv ? 22 : 21, color: const Color(0xE6FFFFFF)),
                                 const SizedBox(width: 12),
                                 Expanded(
                                   child: _ItemText(
                                     label: actions[i].label,
                                     detail: actions[i].detail,
-                                    size: tv ? 20 : 17,
+                                    size: tv ? 20 : 19,
                                     color: Colors.white,
                                     detailColor: const Color(0x99FFFFFF),
                                   ),
                                 ),
                                 if (actions[i].submenu != null)
-                                  Icon(Icons.chevron_right_rounded, size: tv ? 22 : 19, color: const Color(0x80FFFFFF)),
+                                  Icon(Icons.chevron_right_rounded, size: tv ? 22 : 21, color: const Color(0x80FFFFFF)),
                               ],
                             ),
                           ),

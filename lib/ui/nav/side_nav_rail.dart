@@ -1,6 +1,9 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../app/desktop_prefs.dart';
+import '../../data/config/config_store.dart';
+import '../../features/library/library_page.dart' show ServerTypeLogo;
 import '../../app/theme.dart';
 import '../focus/focusable.dart';
 import '../focus/input_mode.dart';
@@ -41,8 +44,16 @@ class SideNavRail extends StatefulWidget {
     required this.nodes,
     required this.scope,
     required this.onSelect,
+    this.location = '',
+    this.onOpenServer,
     this.onPointerLeave,
   });
+
+  /// 当前页面地址（固定的服务器正在打开时高亮）
+  final String location;
+
+  /// 点了固定在导航栏里的服务器
+  final ValueChanged<String>? onOpenServer;
 
   /// 鼠标离开导航栏（Windows）：把焦点还给内容区
   final VoidCallback? onPointerLeave;
@@ -151,6 +162,18 @@ class _SideNavRailState extends State<SideNavRail> {
                         ),
                         const SizedBox(height: 14),
                       ],
+                      // 资源库里右键「添加到侧边栏」的服务器
+                      // 固定的服务器多了放不下时可以滚动，不把「设置」挤出去
+                      Flexible(
+                        child: SingleChildScrollView(
+                          clipBehavior: Clip.none,
+                          child: _PinnedServers(
+                            location: widget.location,
+                            expanded: _expanded,
+                            onOpen: widget.onOpenServer,
+                          ),
+                        ),
+                      ),
                       if (compact)
                         // 和上面的页面分开一点
                         Container(
@@ -328,6 +351,140 @@ class _Logo extends StatelessWidget {
             ],
           ),
         ),
+      ),
+    );
+  }
+}
+
+/// 固定在导航栏里的服务器：分隔线下面一台一行，图标是服务器类型的官方图标
+class _PinnedServers extends ConsumerStatefulWidget {
+  const _PinnedServers({required this.location, required this.expanded, this.onOpen});
+
+  final String location;
+  final bool expanded;
+  final ValueChanged<String>? onOpen;
+
+  @override
+  ConsumerState<_PinnedServers> createState() => _PinnedServersState();
+}
+
+class _PinnedServersState extends ConsumerState<_PinnedServers> {
+  final _nodes = <String, FocusNode>{};
+
+  @override
+  void dispose() {
+    for (final n in _nodes.values) {
+      n.dispose();
+    }
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final servers = ref.watch(configProvider.select((c) => c.servers));
+    return ValueListenableBuilder<List<String>>(
+      valueListenable: DesktopPrefs.instance.pinnedServers,
+      builder: (context, pinned, _) {
+        final list = [for (final id in pinned) ?servers.where((s) => s.id == id).firstOrNull];
+        if (list.isEmpty) return const SizedBox.shrink();
+        return Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Container(
+              margin: const EdgeInsets.fromLTRB(12, 0, 12, 14),
+              width: 32,
+              height: 1,
+              color: const Color(0x24FFFFFF),
+            ),
+            for (final s in list) ...[
+              _ServerRailItem(
+                label: s.displayName,
+                icon: ServerTypeLogo(s.type),
+                node: _nodes.putIfAbsent(s.id, () => FocusNode(debugLabel: 'nav:server:${s.id}')),
+                active: widget.location.startsWith('/library/server/${s.id}'),
+                expanded: widget.expanded,
+                onSelect: () => widget.onOpen?.call(s.id),
+              ),
+              const SizedBox(height: 14),
+            ],
+          ],
+        );
+      },
+    );
+  }
+}
+
+class _ServerRailItem extends StatelessWidget {
+  const _ServerRailItem({
+    required this.label,
+    required this.icon,
+    required this.node,
+    required this.active,
+    required this.expanded,
+    required this.onSelect,
+  });
+
+  final String label;
+  final Widget icon;
+  final FocusNode node;
+  final bool active;
+  final bool expanded;
+  final VoidCallback onSelect;
+
+  @override
+  Widget build(BuildContext context) {
+    return Tooltip(
+      message: expanded ? '' : label,
+      excludeFromSemantics: true,
+      child: VFocusable(
+        semanticLabel: label,
+        selected: active,
+        focusNode: node,
+        radius: VRadius.sm,
+        scale: 1.04,
+        alignment: Alignment.centerLeft,
+        showRing: false,
+        onActivate: onSelect,
+        builder: (context, focused) {
+          final Color bg = focused ? Colors.white : (active ? const Color(0x29FFFFFF) : const Color(0x00FFFFFF));
+          final Color fg = focused ? const Color(0xFF0B0C10) : (active ? Colors.white : const Color(0x9EFFFFFF));
+          return AnimatedContainer(
+            duration: VMotion.duration(context, VMotion.focus),
+            height: 56,
+            decoration: BoxDecoration(color: bg, borderRadius: BorderRadius.circular(VRadius.sm)),
+            child: ClipRect(
+              child: OverflowBox(
+                alignment: Alignment.centerLeft,
+                maxWidth: VSpace.navRailExpandedWidth,
+                child: Row(
+                  children: [
+                    SizedBox(
+                      width: 56,
+                      child: Center(child: SizedBox.square(dimension: 30, child: icon)),
+                    ),
+                    if (expanded) ...[
+                      const SizedBox(width: 4),
+                      SizedBox(
+                        width: VSpace.navRailExpandedWidth - 32 - 56 - 4 - 12,
+                        child: Text(
+                          label,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            fontSize: 22,
+                            color: fg,
+                            fontWeight: active ? FontWeight.w700 : FontWeight.w400,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+            ),
+          );
+        },
       ),
     );
   }

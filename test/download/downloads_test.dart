@@ -106,7 +106,7 @@ void main() {
 
     final account = accountScope(_client(fake.url).server);
     Downloads.instance.recordProgress('s', 'x1', const Duration(minutes: 5), account: account, played: false);
-    await Future<void>.delayed(const Duration(milliseconds: 50));
+    await Downloads.instance.debugFlush();
     Downloads.instance.debugReset();
     await Downloads.instance.load();
     final back = Downloads.instance.playable('s', 'x1', account: account)!;

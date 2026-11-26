@@ -193,6 +193,7 @@ class EmbyClient {
   /// [notify] 为 false 时不回调 [onServerChanged]（调用方把多台服务器的结果合并成一次保存）
   Future<ServerConfig> probeAll({bool notify = true, Duration? timeout}) async {
     final results = await Future.wait(_server.lines.map((line) => probe(line, timeout: timeout)));
+    await _dropLinesRejectingLogin(results, timeout: timeout);
     final lines = [
       for (var i = 0; i < _server.lines.length; i++)
         _server.lines[i].copyWith(latencyMs: results[i], clearLatency: results[i] == null),
@@ -210,8 +211,86 @@ class EmbyClient {
   /// 测速用的免登录接口
   String get _probePath => '/System/Info/Public';
 
+  /// 免登录接口通了不代表能用：有的线路（反代只转发了部分路径、按 UA / 地区拦截、返回网页登录页）
+  /// 测速通过却登录不上、取不到数据。已登录的服务器（Emby / Jellyfin / Plex / 飞牛同一套规则）再用登录令牌
+  /// 读一次需要登录的接口，读不到的线路（被拒、返回的不是数据、超时、网络出错）都当成不可用。
+  /// 所有线路都读不到时先用保存的密码重新登录一次再验；登录失败或仍然读不到，就和连不上一样（红点）
+  Future<void> _dropLinesRejectingLogin(List<int?> latency, {Duration? timeout}) async {
+    if (!_server.loggedIn || latency.every((l) => l == null)) return;
+    final limit = timeout ?? const Duration(seconds: 8);
+    Future<List<bool>> check() => Future.wait([
+      for (var i = 0; i < _server.lines.length; i++)
+        latency[i] == null ? Future.value(false) : _authCheck(_server.lines[i], timeout: limit),
+    ]);
+    var ok = await check();
+    if (!ok.contains(true)) {
+      // 重新登录走这次测速最快的线路（之前自动选的线路可能已经连不上了）；用户手动指定的线路不动
+      var fastest = -1;
+      for (var i = 0; i < latency.length; i++) {
+        if (latency[i] != null && (fastest < 0 || latency[i]! < latency[fastest]!)) fastest = i;
+      }
+      _autoLine[_server.id] = _server.lines[fastest].id;
+      try {
+        await login().timeout(limit + const Duration(seconds: 5));
+        ok = await check();
+      } catch (e) {
+        debugPrint('probe: ${_server.displayName} 所有线路都读不到数据，重新登录也失败：$e');
+      }
+    }
+    for (var i = 0; i < latency.length; i++) {
+      if (latency[i] != null && !ok[i]) {
+        debugPrint('probe: ${_server.displayName} · ${_server.lines[i].name} 测速通过但用登录令牌读不到数据，当作不可用');
+        latency[i] = null;
+      }
+    }
+  }
+
+  /// 验证登录用的接口：Emby / Jellyfin 读当前用户
+  String get _authProbePath => '/Users/${_server.userId}';
+
+  /// 验证接口的响应算不算读到了数据
+  bool _authProbeOk(Object? data) => data is Map;
+
+  /// 用登录令牌通过这条线路读 [_authProbePath]：读到数据才算能用；被拒、网页、超时、网络出错都算不能用
+  Future<bool> _authCheck(ServerLine l, {required Duration timeout}) async {
+    final c = composerFor(l);
+    final path = _authProbePath;
+    final url = c.finalUrl(c.resolve(path), RequestKind.api);
+    final dio = _dio()..options.connectTimeout = const Duration(seconds: 5);
+    try {
+      final request = dio.getUri<dynamic>(
+        url,
+        options: Options(headers: {...c.headers(RequestKind.api), ..._signedHeaders('GET', path, null, null)}),
+      );
+      final r = await request.timeout(timeout);
+      final code = r.statusCode ?? 0;
+      return code >= 200 && code < 300 && _authProbeOk(r.data);
+    } catch (_) {
+      return false;
+    } finally {
+      dio.close(force: true);
+    }
+  }
+
   Future<Map<String, dynamic>> publicInfo() async =>
       (await _request('GET', '/System/Info/Public', auth: false)) as Map<String, dynamic>;
+
+  /// 服务器名（Emby Web 用户菜单里用户名下面那一行，如「纸片人小站」）。
+  /// 先读免登录的 /System/Info/Public；读不到（空名称、按 UA / 未登录拦截）时，已登录的 Emby / Jellyfin
+  /// 再读登录后的 /System/Info。都读不到返回空字符串
+  Future<String> serverName() async {
+    String pick(Object? m) => m is Map ? (m['ServerName'] as String?)?.trim() ?? '' : '';
+    try {
+      final n = pick(await publicInfo());
+      if (n.isNotEmpty) return n;
+    } catch (_) {}
+    if (!_server.loggedIn || (_server.type != ServerType.emby && _server.type != ServerType.jellyfin)) return '';
+    try {
+      return pick(await _request('GET', '/System/Info'));
+    } catch (_) {
+      return '';
+    }
+  }
 
   // ───────────────────────── 登录 ─────────────────────────
 

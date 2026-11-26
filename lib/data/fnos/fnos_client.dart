@@ -114,6 +114,13 @@ class FnosClient extends EmbyClient {
   @override
   String get _probePath => '/v';
 
+  /// 验证登录：读当前用户（要令牌和 Authx 签名；HTTP 总是 200，看 code）
+  @override
+  String get _authProbePath => '$_api/user/info';
+
+  @override
+  bool _authProbeOk(Object? data) => data is Map && (data['code'] as num?)?.toInt() == 0;
+
   /// 飞牛没有免登录的服务器信息接口：名称用地址
   @override
   Future<Map<String, dynamic>> publicInfo() async => const {};
@@ -647,13 +654,22 @@ class FnosClient extends EmbyClient {
   static ImageRef? _img(String owner, ImageKind kind, Object? path) =>
       path is String && path.isNotEmpty ? ImageRef(owner, kind, tag: path) : null;
 
-  /// [ImageRef.tag] 里存的是飞牛的图片路径（如 /39/09/xxx.webp），`/sys/img` 按宽度缩放，不用登录
+  /// [ImageRef.tag] 里存的是飞牛的图片路径（如 /39/09/xxx.webp），`/sys/img` 按宽度缩放。
+  /// 图片要登录：不带令牌时返回 200 + `{"code":-2,"msg":"Auth Failed"}`（2026-11 在真实服务器上核实，整页封面都是空的）。
+  /// 网页端靠 Trim-MC-token cookie，这里和接口一样把令牌放在 Authorization（核实可用，不需要 Authx 签名）
   @override
   ({Uri url, Map<String, String> headers}) image(ImageRef ref, {int maxWidth = 440}) {
     final c = composer;
-    final path = ref.tag ?? '';
-    final original = c.resolve('$_api/sys/img${path.startsWith('/') ? path : '/$path'}', {'w': '$maxWidth'});
-    return (url: c.finalUrl(original, RequestKind.image), headers: {'User-Agent': c.userAgentFor(RequestKind.image)});
+    final tag = ref.tag ?? '';
+    final original = c.resolve('$_api/sys/img${tag.startsWith('/') ? tag : '/$tag'}', {'w': '$maxWidth'});
+    final token = _server.token;
+    return (
+      url: c.finalUrl(original, RequestKind.image),
+      headers: {
+        'User-Agent': c.userAgentFor(RequestKind.image),
+        if (token != null) ...{'Authorization': token, 'Cookie': 'mode=relay; Trim-MC-token=$token'},
+      },
+    );
   }
 
   // ───────────────────────── 解析 ─────────────────────────

@@ -38,6 +38,7 @@ import '../update/update_controller.dart';
 import '../update/update_dialog.dart';
 import 'online_subtitle_settings_section.dart';
 import 'support_actions.dart';
+import '../../ui/widgets/text_context_menu.dart';
 
 /// 设置（docs/06-ui-design.md §9）：播放、片头片尾、弹幕、媒体服务器、接口与网络、同步与备份、通用与关于。
 /// 文本框改完自动保存（停止输入 0.8 秒后，离开页面时也会保存），不需要点保存按钮。
@@ -437,6 +438,7 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
               label: '优先的服务器：${config.server(config.playback.pinnedServerId ?? '')?.displayName ?? '未选择'}',
               onPressed: () => showContextMenu(
                 context,
+                anchored: true,
                 title: '优先使用哪台服务器',
                 actions: [
                   for (final s in config.servers)
@@ -464,23 +466,10 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
           ),
           const SizedBox(height: 20),
           VToggle(
-            label: '关闭播放器后清除播放缓存',
-            subtitle: '退出播放时删除磁盘缓存文件和预加载的数据（连播下一集时保留）',
-            value: config.playback.clearCacheOnExit,
-            onChanged: (v) => _updatePlayback((p) => p.copyWith(clearCacheOnExit: v)),
-          ),
-          const SizedBox(height: 20),
-          VToggle(
             label: '连续自动播放 3 集后询问「还在观看吗？」',
             subtitle: '中间没有任何按键 / 点击时暂停并询问，避免睡着了一直播下去',
             value: config.playback.askStillWatching,
             onChanged: (v) => _updatePlayback((p) => p.copyWith(askStillWatching: v)),
-          ),
-          const SizedBox(height: 16),
-          PillButton(
-            icon: Icons.cleaning_services_outlined,
-            label: _cacheSize == null ? '立即清除播放缓存' : '立即清除播放缓存（当前 ${_formatBytes(_cacheSize!)}）',
-            onPressed: _clearCache,
           ),
           const SizedBox(height: 12),
           VToggle(
@@ -529,6 +518,20 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
                   .update((c) => c.copyWith(playback: c.playback.copyWith(tunneling: v))),
             ),
           ],
+          // 缓存相关放在这一节最下面
+          const SizedBox(height: 24),
+          VToggle(
+            label: '关闭播放器后清除播放缓存',
+            subtitle: '退出播放时删除磁盘缓存文件和预加载的数据（连播下一集时保留）',
+            value: config.playback.clearCacheOnExit,
+            onChanged: (v) => _updatePlayback((p) => p.copyWith(clearCacheOnExit: v)),
+          ),
+          const SizedBox(height: 16),
+          PillButton(
+            icon: Icons.cleaning_services_outlined,
+            label: _cacheSize == null ? '立即清除播放缓存' : '立即清除播放缓存（当前 ${_formatBytes(_cacheSize!)}）',
+            onPressed: _clearCache,
+          ),
         ],
       ),
 
@@ -577,11 +580,7 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
             for (final s in config.servers) ...[
               VToggle(
                 label: s.displayName,
-                subtitle: [
-                  s.type.label,
-                  if (s.lines.isNotEmpty) s.lines.first.url,
-                  if (!s.loggedIn) '未登录',
-                ].join(' · '),
+                subtitle: [s.type.label, if (s.lines.isNotEmpty) s.lines.first.url, if (!s.loggedIn) '未登录'].join(' · '),
                 value: s.aggregate,
                 onChanged: (v) =>
                     ref.read(configProvider.notifier).updateServer(s.id, (old) => old.copyWith(aggregate: v)),
@@ -1011,6 +1010,7 @@ class _SearchBox extends StatelessWidget {
           const SizedBox(width: 10),
           Expanded(
             child: TextField(
+              contextMenuBuilder: textContextMenu,
               controller: controller,
               style: VText.label.copyWith(fontSize: 19),
               cursorColor: Colors.white,

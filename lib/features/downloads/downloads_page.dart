@@ -9,6 +9,7 @@ import '../../data/download/downloads.dart';
 import '../../data/media/server_registry.dart';
 import '../../ui/focus/focus_auto_scroll.dart';
 import '../../ui/focus/row_focus.dart';
+import '../../ui/panels/context_menu.dart';
 import '../../ui/widgets/buttons.dart';
 import '../../ui/widgets/toast.dart';
 
@@ -69,12 +70,50 @@ class _DownloadsPageState extends ConsumerState<DownloadsPage> {
                     list.isEmpty ? '在详情页按「下载」，没有网络时也能在这里看' : '已下载 $done 个 · 共 ${list.length} 个',
                     style: VText.small.copyWith(color: VColors.textTertiary),
                   ),
+                  const SizedBox(height: 24),
+                  // 限速、播放时暂停：减轻下载对服务器带宽的占用
+                  FocusButtonRow(
+                    rowIndex: 0,
+                    autoScroll: false,
+                    children: [
+                      (node) => PillButton(
+                        focusNode: node,
+                        icon: Icons.speed_rounded,
+                        label: '限速：${_limitLabel(Downloads.instance.speedLimit)}',
+                        onPressed: () => showContextMenu(
+                          context,
+                          anchored: true,
+                          title: '下载限速（单个连接、一次只下一个）',
+                          actions: [
+                            for (final v in Downloads.speedLimits)
+                              MenuAction(
+                                '${_limitLabel(v)}${v == Downloads.instance.speedLimit ? '  ✓' : ''}',
+                                v == 0 ? Icons.all_inclusive_rounded : Icons.speed_rounded,
+                                () => Downloads.instance.setSpeedLimit(v),
+                              ),
+                          ],
+                        ),
+                      ),
+                      (node) => PillButton(
+                        focusNode: node,
+                        icon: Downloads.instance.pauseWhilePlaying
+                            ? Icons.pause_circle_outline_rounded
+                            : Icons.sync_rounded,
+                        label: Downloads.instance.pauseWhilePlaying ? '播放时暂停下载：开' : '播放时暂停下载：关',
+                        onPressed: () => Downloads.instance.setPauseWhilePlaying(!Downloads.instance.pauseWhilePlaying),
+                      ),
+                    ],
+                  ),
+                  if (Downloads.instance.waitingForPlayback) ...[
+                    const SizedBox(height: 12),
+                    Text('正在播放，下载已暂停，关掉播放页后自动继续', style: VText.small.copyWith(color: VColors.warn)),
+                  ],
                   const SizedBox(height: 32),
                   for (var i = 0; i < list.length; i++) ...[
                     _Row(
                       key: ValueKey(list[i].id),
                       entry: list[i],
-                      rowIndex: i,
+                      rowIndex: i + 1,
                       onPlay: () => _play(list[i]),
                       onPause: () => Downloads.instance.pause(list[i]),
                       onResume: () => _resume(list[i]),
@@ -91,6 +130,8 @@ class _DownloadsPageState extends ConsumerState<DownloadsPage> {
     );
   }
 }
+
+String _limitLabel(int mbps) => mbps == 0 ? '不限' : '$mbps MB/s';
 
 class _Row extends StatelessWidget {
   const _Row({

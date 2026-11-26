@@ -404,20 +404,23 @@ class _PlayerPageState extends ConsumerState<PlayerPage> with WidgetsBindingObse
     await _engine?.pause();
     if (!mounted) return;
     var exit = false;
-    await _menu(
-      () => showContextMenu(
+    // 居中的确认弹窗：返回键 / 点空白处关掉时保持暂停，不退出也不继续
+    await _menu(() async {
+      final r = await showConfirmDialog(
         context,
-        anchored: true,
-        title: '还在观看吗？已经连续自动播放了 $_autoPlayStreak 集',
-        actions: [
-          MenuAction('继续观看', Icons.play_arrow_rounded, () {
-            _autoPlayStreak = 0;
-            _engine?.play();
-          }),
-          MenuAction('退出播放', Icons.close_rounded, () => exit = true),
-        ],
-      ),
-    );
+        title: '还在观看吗？',
+        message: '已经连续自动播放了 $_autoPlayStreak 集',
+        confirmLabel: '继续观看',
+        confirmIcon: Icons.play_arrow_rounded,
+        cancelLabel: '退出播放',
+        focusConfirm: true,
+      );
+      if (r == true) {
+        _autoPlayStreak = 0;
+        _engine?.play();
+      }
+      exit = r == false;
+    });
     if (exit && mounted) context.pop();
   }
 
@@ -874,19 +877,20 @@ class _PlayerPageState extends ConsumerState<PlayerPage> with WidgetsBindingObse
         playSessionId: _playSessionId,
       );
       final session = _playSessionId;
-      _stopReport = Future(() async {
-        await PendingPlayReports.add(pending);
-        if (await client.reportStopped(source, position, session)) await PendingPlayReports.done(pending);
-      }).catchError((Object _) {}).whenComplete(() {
-        // 应用正在关闭（容器已销毁）时不再刷新
-        try {
-          final refresh = container?.read(mediaFeedRefreshProvider.notifier);
-          refresh?.refresh(MediaFeedKind.resume);
-          // 播完的集会从继续观看移到观看记录：两边都刷新
-          refresh?.refresh(MediaFeedKind.recentlyPlayed);
-          container?.invalidate(itemProvider(key));
-        } on StateError catch (_) {}
-      });
+      _stopReport =
+          Future(() async {
+            await PendingPlayReports.add(pending);
+            if (await client.reportStopped(source, position, session)) await PendingPlayReports.done(pending);
+          }).catchError((Object _) {}).whenComplete(() {
+            // 应用正在关闭（容器已销毁）时不再刷新
+            try {
+              final refresh = container?.read(mediaFeedRefreshProvider.notifier);
+              refresh?.refresh(MediaFeedKind.resume);
+              // 播完的集会从继续观看移到观看记录：两边都刷新
+              refresh?.refresh(MediaFeedKind.recentlyPlayed);
+              container?.invalidate(itemProvider(key));
+            } on StateError catch (_) {}
+          });
     }
   }
 
