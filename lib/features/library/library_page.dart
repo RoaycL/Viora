@@ -376,7 +376,9 @@ class _ServerCard extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final s = server;
     final sync = ref.watch(indexSyncProvider.select((m) => m[s.id]));
-    final dot = switch (_status) {
+    // 本次运行里测过、确认连不上（或登录被拒）的服务器：红点，和没测过的灰点区分开
+    final offline = ref.watch(serverReachabilityProvider.select((m) => m.containsKey(s.id)));
+    final dot = switch (offline ? _Status.down : _status) {
       _Status.ok => VColors.ok,
       _Status.fallback => VColors.warn,
       _Status.down => VColors.bad,
