@@ -213,25 +213,46 @@ class EmbyClient {
 
   /// 免登录接口通了不代表能用：有的线路（反代只转发了部分路径、按 UA / 地区拦截、返回网页登录页）
   /// 测速通过却登录不上、取不到数据。已登录的 Emby / Jellyfin 再用登录令牌读一次当前用户，
-  /// 读不到的线路当成不可用（自动选线跳过它，资源库卡片也不显示成连通）。
-  /// 所有线路都读不到时多半是令牌过期，不是线路的问题：保持原来的测速结果，用的时候会重新登录
+  /// 明确被拒的线路当成不可用（自动选线跳过它，资源库卡片也不显示成连通）；超时、网络出错说明不了问题，照旧。
+  /// 所有线路都被拒时可能只是令牌过期：用保存的密码重新登录一次再验；登录被拒，就和连不上一样处理
   Future<void> _dropLinesRejectingLogin(List<int?> latency, {Duration? timeout}) async {
     if (!_server.loggedIn || (_server.type != ServerType.emby && _server.type != ServerType.jellyfin)) return;
-    final ok = await Future.wait([
+    if (latency.every((l) => l == null)) return;
+    Future<List<bool?>> check() => Future.wait([
       for (var i = 0; i < _server.lines.length; i++)
-        latency[i] == null ? Future.value(false) : _authCheck(_server.lines[i], timeout: timeout),
+        latency[i] == null ? Future<bool?>.value() : _authCheck(_server.lines[i], timeout: timeout),
     ]);
-    if (!ok.contains(true)) return;
-    for (var i = 0; i < latency.length; i++) {
-      if (latency[i] != null && !ok[i]) {
-        debugPrint('probe: ${_server.displayName} · ${_server.lines[i].name} 测速通过但用登录令牌读不到数据，当作不可用');
-        latency[i] = null;
+    void drop(List<bool?> ok) {
+      for (var i = 0; i < latency.length; i++) {
+        if (latency[i] != null && ok[i] == false) {
+          debugPrint('probe: ${_server.displayName} · ${_server.lines[i].name} 测速通过但登录令牌被拒，当作不可用');
+          latency[i] = null;
+        }
       }
     }
+
+    var ok = await check();
+    if (ok.contains(true)) return drop(ok);
+    // 有线路超时 / 网络出错：判断不了是不是登录的问题，保持测速结果
+    if (ok.indexed.any((e) => latency[e.$1] != null && e.$2 == null)) return;
+    try {
+      await login();
+    } on MediaServerException catch (e) {
+      if (e.statusCode == 401 || e.statusCode == 403) {
+        debugPrint('probe: ${_server.displayName} 所有线路都读不到数据，重新登录也被拒：$e');
+        latency.fillRange(0, latency.length, null);
+      }
+      return;
+    } catch (_) {
+      return;
+    }
+    ok = await check();
+    if (ok.contains(true) || !ok.contains(null)) drop(ok);
   }
 
-  /// 用登录令牌通过这条线路读当前用户：返回 JSON 对象才算能用
-  Future<bool> _authCheck(ServerLine l, {Duration? timeout}) async {
+  /// 用登录令牌通过这条线路读当前用户：返回 JSON 对象为 true，有响应但不是（401、网页等）为 false，
+  /// 超时 / 网络出错为 null
+  Future<bool?> _authCheck(ServerLine l, {Duration? timeout}) async {
     final c = composerFor(l);
     final url = c.finalUrl(c.resolve('/Users/${_server.userId}'), RequestKind.api);
     final dio = _dio()..options.connectTimeout = const Duration(seconds: 5);
@@ -241,7 +262,7 @@ class EmbyClient {
       final code = r.statusCode ?? 0;
       return code >= 200 && code < 300 && r.data is Map;
     } catch (_) {
-      return false;
+      return null;
     } finally {
       dio.close(force: true);
     }

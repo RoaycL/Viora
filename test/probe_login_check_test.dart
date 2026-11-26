@@ -47,4 +47,36 @@ void main() {
     expect(probed.lines.firstWhere((l) => l.id == 'bad').latencyMs, isNull);
     expect(probed.lines.firstWhere((l) => l.id == 'good').latencyMs, isNotNull);
   });
+
+  test('测速：所有线路都读不到数据、重新登录也失败：和连不上一样当作不可用', () async {
+    var logins = 0;
+    final s = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+    addTearDown(() => s.close(force: true));
+    s.listen((req) async {
+      final path = req.uri.path;
+      if (path.endsWith('/System/Info/Public')) {
+        req.response.headers.contentType = ContentType.json;
+        req.response.write(jsonEncode({'ServerName': 'x'}));
+      } else if (path.endsWith('/Users/AuthenticateByName')) {
+        logins++;
+        req.response.statusCode = 401;
+      } else {
+        req.response.statusCode = 401;
+      }
+      await req.response.close();
+    });
+    final server = ServerConfig(
+      id: 's',
+      type: ServerType.emby,
+      name: '服务器',
+      username: 'me',
+      password: 'wrong',
+      token: 'expired',
+      userId: 'uid',
+      lines: [ServerLine(id: 'l', name: '主线路', url: 'http://127.0.0.1:${s.port}')],
+    );
+    final probed = await clientForDraft(const AppConfig(), server).probeAll(notify: false);
+    expect(logins, greaterThan(0), reason: '先试着重新登录');
+    expect(probed.lines.single.latencyMs, isNull);
+  });
 }
