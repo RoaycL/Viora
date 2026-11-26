@@ -87,6 +87,7 @@ flutter:
     - assets/images/emby_logo.png
     - assets/brands/
     - assets/images/jellyfin_logo.png
+    - assets/images/fnos_logo.png
 
   fonts:
     # Windows 的界面主字体：小米 MiSans 完整字符集（全部 CJK 基本区 + 扩展 A、西文、标点，字形未改；只去掉 hinting）
