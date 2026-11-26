@@ -46,7 +46,11 @@ class FnosClient extends EmbyClient {
     required super.appVersion,
     super.onServerChanged,
     super.onProbed,
-  });
+  }) : _accountId = server.userId;
+
+  /// 已确认的飞牛用户 guid：重新登录时 /user/info 暂时取不到，也不能换成别的用户 ID
+  /// （用户 ID 变了会被当成换了账号：清掉索引、历史换命名空间、丢掉待补发的上报）
+  String? _accountId;
 
   static const _api = '/v/api/v1';
 
@@ -146,13 +150,16 @@ class FnosClient extends EmbyClient {
     }
     final token = _map(data)['token'];
     if (token is! String || token.isEmpty) throw const MediaServerException('飞牛影视登录成功但没有返回令牌');
-    _server = _server.copyWith(token: token, userId: _server.username.trim().toLowerCase());
+    // 用户 ID 用飞牛的用户 guid（换账号才算换账号）。先放一个占位，让 /user/info 能带上令牌
+    _server = _server.copyWith(token: token, userId: _accountId ?? 'pending');
     try {
-      // 用户 ID 用飞牛的用户 guid（换账号才算换账号）；取不到就用用户名
       final guid = _map(await _fn('GET', '/user/info', retried: true))['guid'];
-      if (guid is String && guid.isNotEmpty) _server = _server.copyWith(userId: guid);
+      if (guid is! String || guid.isEmpty) throw const MediaServerException('飞牛影视没有返回用户信息');
+      _accountId = guid;
+      _server = _server.copyWith(userId: guid);
     } on MediaServerException catch (e) {
-      if (e.statusCode == 401) {
+      // 以前确认过 guid（令牌过期重新登录）：沿用它；第一次登录取不到就算登录失败，不能先用一个别的 ID 存下来
+      if (e.statusCode == 401 || _accountId == null) {
         _server = _server.copyWith(clearSession: true);
         rethrow;
       }
@@ -562,6 +569,17 @@ class FnosClient extends EmbyClient {
     );
   }
 
+  /// 播放器加载外挂字幕时只能给地址、带不上签名头：先下载到本机临时文件
+  @override
+  Future<Uri?> subtitleUri(MediaSourceInfo source, MediaStreamInfo stream) async {
+    final path = stream.deliveryUrl;
+    if (path == null || path.isEmpty) return null;
+    final data = await _request('GET', path, bytes: true);
+    if (data is! List<int> || data.isEmpty) throw const MediaServerException('字幕下载失败');
+    final ext = stream.codec == null || stream.codec!.isEmpty ? 'srt' : stream.codec!;
+    return Uri.file(await saveSubtitleFile(SubtitleFile('${path.split('/').last}.$ext', data)));
+  }
+
   @override
   Future<List<RemoteSubtitle>> searchSubtitles(String itemId, String language) async => const [];
 
@@ -579,8 +597,15 @@ class FnosClient extends EmbyClient {
     bool paused = false,
     String? event,
   }) async {
-    final guids = _streamGuids[_key(s.id)];
     try {
+      var guids = _streamGuids[_key(s.id)];
+      var duration = s.duration;
+      // 重启后补发的停止上报只有条目和文件 ID：重新取一次播放信息，补上流 guid 和时长
+      if (guids == null || duration == null) {
+        final source = (await playbackInfo(s.itemId, isPlayback: false)).sources.where((x) => x.id == s.id).firstOrNull;
+        guids = _streamGuids[_key(s.id)];
+        duration ??= source?.duration;
+      }
       await _fn(
         'POST',
         '/play/record',
@@ -592,7 +617,7 @@ class FnosClient extends EmbyClient {
           'subtitle_guid': '',
           'play_link': '',
           'ts': position.inSeconds,
-          'duration': s.duration?.inSeconds ?? 0,
+          'duration': duration?.inSeconds ?? 0,
         },
       );
       if (!path.endsWith('/Progress')) debugPrint('fnos record ok ${s.itemId} @${position.inSeconds}s');

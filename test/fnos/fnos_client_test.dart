@@ -31,6 +31,9 @@ class _Fake {
   int logins = 0;
   Object? Function(_Req r) data = (_) => null;
 
+  /// 非空时代替 /user/info 的响应
+  Map<String, Object?>? Function(_Req r) infoOverride = (_) => null;
+
   static Future<_Fake> start() async {
     final f = _Fake(await HttpServer.bind(InternetAddress.loopbackIPv4, 0));
     f.http.listen((request) async {
@@ -57,6 +60,8 @@ class _Fake {
     }
     if (r.headers.value('Authorization') != token) return {'code': -2, 'msg': 'Auth Failed', 'data': null};
     if (r.uri.path == '/v/api/v1/user/info') {
+      final o = infoOverride(r);
+      if (o != null) return o;
       return {
         'code': 0,
         'msg': '',
@@ -472,6 +477,89 @@ void main() {
     final w = fake.to('/item/watched').single;
     expect(w.method, 'DELETE');
     expect(w.json['item_guid'], 'ep5');
+  });
+
+  test('令牌过期重新登录时 /user/info 暂时出错：沿用原来的用户 guid，不当成换账号', () async {
+    final fake = await _Fake.start();
+    addTearDown(() => fake.http.close(force: true));
+    fake.token = 'tok-2';
+    var infoFails = true;
+    fake.data = (r) => {'movie': 1, 'tv': 0};
+    final changed = <ServerConfig>[];
+    final base = ServerConfig(
+      id: 'f',
+      type: ServerType.fnos,
+      name: 'nas',
+      username: 'u',
+      password: 'pw',
+      userId: 'user-guid',
+      token: 'tok-1',
+      lines: [ServerLine(id: 'l', name: 'main', url: fake.url)],
+    );
+    final client = mediaServerClient(
+      config: AppConfig(servers: [base]),
+      server: base,
+      appVersion: 'test',
+      onServerChanged: changed.add,
+    );
+    fake.infoOverride = (r) => infoFails ? {'code': -4, 'msg': 'Internal Error', 'data': null} : null;
+    await client.counts();
+    expect(client.server.token, 'tok-2');
+    expect(client.server.userId, 'user-guid');
+    expect(changed.map((s) => s.userId).toSet(), {'user-guid'});
+
+    // 第一次登录取不到用户信息：登录失败，不先存一个别的 ID
+    final fresh = mediaServerClient(
+      config: const AppConfig(),
+      server: base.copyWith(clearSession: true),
+      appVersion: 'test',
+    );
+    // 新客户端从没确认过 guid
+    final firstLogin = mediaServerClient(
+      config: const AppConfig(),
+      server: ServerConfig(
+        id: 'g',
+        type: ServerType.fnos,
+        name: 'nas',
+        username: 'u',
+        password: 'pw',
+        lines: [ServerLine(id: 'l', name: 'main', url: fake.url)],
+      ),
+      appVersion: 'test',
+    );
+    await expectLater(firstLogin.login(), throwsA(isA<MediaServerException>()));
+    expect(firstLogin.server.loggedIn, isFalse);
+    infoFails = false;
+    expect((await fresh.login()).userId, 'user-guid');
+  });
+
+  test('重启后补发的停止上报：重新取播放信息补上流 guid 和时长', () async {
+    final fake = await _Fake.start();
+    addTearDown(() => fake.http.close(force: true));
+    fake.data = (r) => switch (r.uri.path) {
+      '/v/api/v1/stream/list/item9' => {
+        'files': [
+          {'guid': 'file9', 'file_name': 'x.mkv', 'can_play': 1},
+        ],
+        'video_streams': [
+          {'media_guid': 'file9', 'guid': 'v9', 'index': 0, 'duration': 3000},
+        ],
+        'audio_streams': [
+          {'media_guid': 'file9', 'guid': 'a9', 'index': 1, 'is_default': 1},
+        ],
+      },
+      '/v/api/v1/play/record' => true,
+      _ => null,
+    };
+    final client = _client(fake);
+    final ok = await client.reportStopped(
+      const MediaSourceInfo(serverId: 'f', itemId: 'item9', id: 'file9', container: ''),
+      const Duration(seconds: 120),
+      null,
+    );
+    expect(ok, isTrue);
+    final rec = fake.to('/play/record').single.json;
+    expect((rec['video_guid'], rec['audio_guid'], rec['ts'], rec['duration']), ('v9', 'a9', 120, 3000));
   });
 
   test('图片走 /sys/img 按宽度缩放；地址末尾的 /v 去掉', () async {

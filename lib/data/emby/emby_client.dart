@@ -15,6 +15,7 @@ import '../config/app_config.dart';
 import '../media/media_models.dart';
 import '../media/zh.dart';
 import '../net/request_composer.dart';
+import '../subtitles/online_subtitles.dart' show SubtitleFile, saveSubtitleFile;
 
 part '../fnos/fnos_client.dart';
 part '../plex/plex_client.dart';
@@ -763,6 +764,9 @@ class EmbyClient {
       userAgent: headers['User-Agent']!,
     );
   }
+
+  /// 交给播放器加载的外挂字幕地址（播放器加载外挂字幕时带不上请求头，需要签名的服务器先下载到本机）
+  Future<Uri?> subtitleUri(MediaSourceInfo source, MediaStreamInfo stream) async => subtitle(source, stream)?.url;
 
   // ───────────────────────── 在线字幕 ─────────────────────────
 

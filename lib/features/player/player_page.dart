@@ -2253,9 +2253,13 @@ class _PlayerPageState extends ConsumerState<PlayerPage> with WidgetsBindingObse
           },
         ),
       for (final x in external)
-        MenuAction('外挂 · ${x.displayName}', Icons.closed_caption_outlined, () {
-          final req = _client?.subtitle(_source!, x);
-          if (req != null) _engine?.addExternalSubtitle(req.url, title: x.displayName, language: x.language);
+        MenuAction('外挂 · ${x.displayName}', Icons.closed_caption_outlined, () async {
+          try {
+            final url = await _client?.subtitleUri(_source!, x);
+            if (url != null) await _engine?.addExternalSubtitle(url, title: x.displayName, language: x.language);
+          } catch (e) {
+            showToast('加载字幕失败：$e');
+          }
         }),
       MenuAction.submenu(
         '在线搜索字幕',
@@ -2477,9 +2481,9 @@ class _PlayerPageState extends ConsumerState<PlayerPage> with WidgetsBindingObse
       }
       setState(() => _source = updated);
       final x = added.last;
-      final req = client.subtitle(updated, x);
-      if (req == null) return;
-      await _engine?.addExternalSubtitle(req.url, title: x.displayName, language: x.language);
+      final url = await client.subtitleUri(updated, x);
+      if (url == null || !mounted) return;
+      await _engine?.addExternalSubtitle(url, title: x.displayName, language: x.language);
       showToast('已加载字幕：${x.displayName}');
     } catch (e) {
       showToast('下载字幕失败：$e');
