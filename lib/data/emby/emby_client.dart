@@ -212,57 +212,55 @@ class EmbyClient {
   String get _probePath => '/System/Info/Public';
 
   /// 免登录接口通了不代表能用：有的线路（反代只转发了部分路径、按 UA / 地区拦截、返回网页登录页）
-  /// 测速通过却登录不上、取不到数据。已登录的 Emby / Jellyfin 再用登录令牌读一次当前用户，
-  /// 明确被拒的线路当成不可用（自动选线跳过它，资源库卡片也不显示成连通）；超时、网络出错说明不了问题，照旧。
-  /// 所有线路都被拒时可能只是令牌过期：用保存的密码重新登录一次再验；登录被拒，就和连不上一样处理
+  /// 测速通过却登录不上、取不到数据。已登录的服务器（Emby / Jellyfin / Plex / 飞牛同一套规则）再用登录令牌
+  /// 读一次需要登录的接口，读不到的线路（被拒、返回的不是数据、超时、网络出错）都当成不可用。
+  /// 所有线路都读不到时先用保存的密码重新登录一次再验；登录失败或仍然读不到，就和连不上一样（红点）
   Future<void> _dropLinesRejectingLogin(List<int?> latency, {Duration? timeout}) async {
-    if (!_server.loggedIn || (_server.type != ServerType.emby && _server.type != ServerType.jellyfin)) return;
-    if (latency.every((l) => l == null)) return;
-    Future<List<bool?>> check() => Future.wait([
+    if (!_server.loggedIn || latency.every((l) => l == null)) return;
+    final limit = timeout ?? const Duration(seconds: 8);
+    Future<List<bool>> check() => Future.wait([
       for (var i = 0; i < _server.lines.length; i++)
-        latency[i] == null ? Future<bool?>.value() : _authCheck(_server.lines[i], timeout: timeout),
+        latency[i] == null ? Future.value(false) : _authCheck(_server.lines[i], timeout: limit),
     ]);
-    void drop(List<bool?> ok) {
-      for (var i = 0; i < latency.length; i++) {
-        if (latency[i] != null && ok[i] == false) {
-          debugPrint('probe: ${_server.displayName} · ${_server.lines[i].name} 测速通过但登录令牌被拒，当作不可用');
-          latency[i] = null;
-        }
-      }
-    }
-
     var ok = await check();
-    if (ok.contains(true)) return drop(ok);
-    // 有线路超时 / 网络出错：判断不了是不是登录的问题，保持测速结果
-    if (ok.indexed.any((e) => latency[e.$1] != null && e.$2 == null)) return;
-    try {
-      await login();
-    } on MediaServerException catch (e) {
-      if (e.statusCode == 401 || e.statusCode == 403) {
-        debugPrint('probe: ${_server.displayName} 所有线路都读不到数据，重新登录也被拒：$e');
-        latency.fillRange(0, latency.length, null);
+    if (!ok.contains(true)) {
+      try {
+        await login().timeout(limit + const Duration(seconds: 5));
+        ok = await check();
+      } catch (e) {
+        debugPrint('probe: ${_server.displayName} 所有线路都读不到数据，重新登录也失败：$e');
       }
-      return;
-    } catch (_) {
-      return;
     }
-    ok = await check();
-    if (ok.contains(true) || !ok.contains(null)) drop(ok);
+    for (var i = 0; i < latency.length; i++) {
+      if (latency[i] != null && !ok[i]) {
+        debugPrint('probe: ${_server.displayName} · ${_server.lines[i].name} 测速通过但用登录令牌读不到数据，当作不可用');
+        latency[i] = null;
+      }
+    }
   }
 
-  /// 用登录令牌通过这条线路读当前用户：返回 JSON 对象为 true，有响应但不是（401、网页等）为 false，
-  /// 超时 / 网络出错为 null
-  Future<bool?> _authCheck(ServerLine l, {Duration? timeout}) async {
+  /// 验证登录用的接口：Emby / Jellyfin 读当前用户
+  String get _authProbePath => '/Users/${_server.userId}';
+
+  /// 验证接口的响应算不算读到了数据
+  bool _authProbeOk(Object? data) => data is Map;
+
+  /// 用登录令牌通过这条线路读 [_authProbePath]：读到数据才算能用；被拒、网页、超时、网络出错都算不能用
+  Future<bool> _authCheck(ServerLine l, {required Duration timeout}) async {
     final c = composerFor(l);
-    final url = c.finalUrl(c.resolve('/Users/${_server.userId}'), RequestKind.api);
+    final path = _authProbePath;
+    final url = c.finalUrl(c.resolve(path), RequestKind.api);
     final dio = _dio()..options.connectTimeout = const Duration(seconds: 5);
     try {
-      final request = dio.getUri<dynamic>(url, options: Options(headers: c.headers(RequestKind.api)));
-      final r = await request.timeout(timeout ?? const Duration(seconds: 8));
+      final request = dio.getUri<dynamic>(
+        url,
+        options: Options(headers: {...c.headers(RequestKind.api), ..._signedHeaders('GET', path, null, null)}),
+      );
+      final r = await request.timeout(timeout);
       final code = r.statusCode ?? 0;
-      return code >= 200 && code < 300 && r.data is Map;
+      return code >= 200 && code < 300 && _authProbeOk(r.data);
     } catch (_) {
-      return null;
+      return false;
     } finally {
       dio.close(force: true);
     }

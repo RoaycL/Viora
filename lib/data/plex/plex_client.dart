@@ -100,6 +100,13 @@ class PlexClient extends EmbyClient {
   @override
   String get _probePath => '/identity';
 
+  /// 验证登录：读媒体库列表（要 X-Plex-Token）
+  @override
+  String get _authProbePath => '/library/sections';
+
+  @override
+  bool _authProbeOk(Object? data) => data is Map && data['MediaContainer'] is Map;
+
   @override
   Future<Map<String, dynamic>> publicInfo() async {
     final ident = _container(await _request('GET', '/identity', auth: false));

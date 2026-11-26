@@ -114,6 +114,13 @@ class FnosClient extends EmbyClient {
   @override
   String get _probePath => '/v';
 
+  /// 验证登录：读当前用户（要令牌和 Authx 签名；HTTP 总是 200，看 code）
+  @override
+  String get _authProbePath => '$_api/user/info';
+
+  @override
+  bool _authProbeOk(Object? data) => data is Map && (data['code'] as num?)?.toInt() == 0;
+
   /// 飞牛没有免登录的服务器信息接口：名称用地址
   @override
   Future<Map<String, dynamic>> publicInfo() async => const {};

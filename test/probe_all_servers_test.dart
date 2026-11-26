@@ -86,7 +86,11 @@ void main() {
     addTearDown(() => gate.complete());
     var healthyRequests = 0;
     fake.listen((request) async {
-      if (request.uri.path.startsWith('/working') && ++healthyRequests == 1) {
+      if (request.uri.path.startsWith('/working/emby/Users/')) {
+        request.response.headers.contentType = ContentType.json;
+        request.response.write('{"Id":"u"}');
+        await request.response.close();
+      } else if (request.uri.path.startsWith('/working') && ++healthyRequests == 1) {
         request.response.headers.contentType = ContentType.json;
         request.response.write('{}');
         await request.response.close();
