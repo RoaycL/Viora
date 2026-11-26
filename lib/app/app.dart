@@ -90,6 +90,14 @@ class _VioraAppState extends ConsumerState<VioraApp> with WidgetsBindingObserver
     _canGoBack.value = _router.canPop() || !_tabRoots.contains(_router.routerDelegate.currentConfiguration.uri.path);
   }
 
+  /// 搜索快捷键（Ctrl+F、/、Find、手柄 Y）：播放中（包括小窗）和弹窗里不响应——跳到搜索页会直接关掉播放器
+  void _openSearch() {
+    if (_topPath().startsWith('/play/') || MiniPlayerWindow.active.value) return;
+    final focus = FocusManager.instance.primaryFocus?.context;
+    if (focus != null && ModalRoute.of(focus) is PopupRoute) return;
+    _router.go('/search');
+  }
+
   /// 最上面那一页的路径（压栈打开的页面取它自己的路径）
   String _topPath() {
     final config = _router.routerDelegate.currentConfiguration;
@@ -279,8 +287,8 @@ class _VioraAppState extends ConsumerState<VioraApp> with WidgetsBindingObserver
             return null;
           },
         ),
-        SearchIntent: CallbackAction<SearchIntent>(onInvoke: (_) => _router.go('/search')),
-        SlashSearchIntent: SlashSearchAction(() => _router.go('/search')),
+        SearchIntent: CallbackAction<SearchIntent>(onInvoke: (_) => _openSearch()),
+        SlashSearchIntent: SlashSearchAction(_openSearch),
         PageIntent: PageAction(),
         FullScreenIntent: CallbackAction<FullScreenIntent>(onInvoke: (_) => toggleFullScreen()),
       },

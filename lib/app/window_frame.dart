@@ -145,49 +145,52 @@ abstract final class MiniPlayerWindow {
   static Rect? _saved;
   static bool _wasMaximized = false;
   static bool _wasFullScreen = false;
-  static bool _busy = false;
+
+  /// 进入 / 退出按顺序执行：以前进入还没完成时的退出请求被直接丢掉，窗口会卡在小窗里
+  static Future<void> _chain = Future<void>.value();
+
+  static Future<void> _serial(Future<void> Function() step) {
+    final next = _chain.then((_) => step()).catchError((Object e) => debugPrint('mini player window: $e'));
+    _chain = next;
+    return next;
+  }
 
   static const size = Size(512, 288);
 
-  static Future<void> enter() async {
-    if (!isDesktopWindow || active.value || _busy) return;
-    _busy = true;
-    try {
-      _wasFullScreen = await windowManager.isFullScreen();
-      if (_wasFullScreen) await _applyFullScreen(false);
-      _wasMaximized = await windowManager.isMaximized();
-      if (_wasMaximized) await windowManager.unmaximize();
-      _saved = await windowManager.getBounds();
-      await windowManager.setMinimumSize(const Size(320, 180));
-      final display = PlatformDispatcher.instance.displays.firstOrNull;
-      final screen = display == null ? const Size(1920, 1080) : display.size / display.devicePixelRatio;
-      // 右下角，留出任务栏的高度
-      await windowManager.setBounds(
-        Rect.fromLTWH(screen.width - size.width - 24, screen.height - size.height - 72, size.width, size.height),
-      );
-      await windowManager.setAlwaysOnTop(true);
-      active.value = true;
-    } finally {
-      _busy = false;
-    }
+  static Future<void> enter() => _serial(_enter);
+
+  static Future<void> exit() => _serial(_exit);
+
+  /// 按下时的状态在排队执行时才判断（连按两次：进入后再退出）
+  static Future<void> toggle() => _serial(() => active.value ? _exit() : _enter());
+
+  static Future<void> _enter() async {
+    if (!isDesktopWindow || active.value) return;
+    _wasFullScreen = await windowManager.isFullScreen();
+    if (_wasFullScreen) await _applyFullScreen(false);
+    _wasMaximized = await windowManager.isMaximized();
+    if (_wasMaximized) await windowManager.unmaximize();
+    _saved = await windowManager.getBounds();
+    await windowManager.setMinimumSize(const Size(320, 180));
+    final display = PlatformDispatcher.instance.displays.firstOrNull;
+    final screen = display == null ? const Size(1920, 1080) : display.size / display.devicePixelRatio;
+    // 右下角，留出任务栏的高度
+    await windowManager.setBounds(
+      Rect.fromLTWH(screen.width - size.width - 24, screen.height - size.height - 72, size.width, size.height),
+    );
+    await windowManager.setAlwaysOnTop(true);
+    active.value = true;
   }
 
-  static Future<void> exit() async {
-    if (!isDesktopWindow || !active.value || _busy) return;
-    _busy = true;
-    try {
-      active.value = false;
-      await windowManager.setAlwaysOnTop(false);
-      await windowManager.setMinimumSize(const Size(960, 540));
-      if (_saved != null) await windowManager.setBounds(_saved!);
-      if (_wasMaximized) await windowManager.maximize();
-      if (_wasFullScreen) await _applyFullScreen(true);
-    } finally {
-      _busy = false;
-    }
+  static Future<void> _exit() async {
+    if (!isDesktopWindow || !active.value) return;
+    active.value = false;
+    await windowManager.setAlwaysOnTop(false);
+    await windowManager.setMinimumSize(const Size(960, 540));
+    if (_saved != null) await windowManager.setBounds(_saved!);
+    if (_wasMaximized) await windowManager.maximize();
+    if (_wasFullScreen) await _applyFullScreen(true);
   }
-
-  static Future<void> toggle() => active.value ? exit() : enter();
 }
 
 /// 叠在应用最上层的标题栏（不参与 1920 画布缩放，按真实像素绘制）。

@@ -737,9 +737,22 @@ class _TrickplayThumbState extends State<TrickplayThumb> {
   Future<void> _load() async {
     final id = ++_request;
     final frame = await widget.trickplay.frameAt(widget.position);
+    if (frame == null) return;
     // 只用最新一次请求的结果（快速拖动时早发的请求可能晚回来）
-    if (!mounted || id != _request || frame == null) return;
+    if (!mounted || id != _request) {
+      frame.dispose();
+      return;
+    }
+    final old = _frame;
     setState(() => _frame = frame);
+    old?.dispose();
+  }
+
+  @override
+  void dispose() {
+    _frame?.dispose();
+    _frame = null;
+    super.dispose();
   }
 
   @override

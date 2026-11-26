@@ -18,7 +18,8 @@
 # 版本号没变时只构建，产物在 Actions 页面的 Artifacts 里下载。
 #
 # 只有 main 分支会触发：开发分支先合并到 main 再发布（手动运行时也只在 main 上创建 Release）。
-# 手动运行时填 promote_tag（如 v0.15.33）：只把这个已有的 Release 改成正式版并设为 Latest，不构建。
+# 发布不会被后面的推送取消（排队执行）：取消在上传中途会留下缺文件的 Release，而重跑时标签已存在会跳过发布。
+# Release 先建成草稿、所有文件传完再公开，中途失败也不会出现残缺的发布。
 name: Release
 
 on:
@@ -26,15 +27,10 @@ on:
     branches: [main]
     paths-ignore: ['docs/**', '**.md']
   workflow_dispatch:
-    inputs:
-      promote_tag:
-        description: '把已有的 Release 改成正式版（如 v0.15.33）；留空 = 正常构建'
-        required: false
-        default: ''
 
 concurrency:
   group: release-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 permissions:
   contents: write
@@ -43,25 +39,7 @@ env:
   FLUTTER_VERSION: '3.47.7'
 
 jobs:
-  promote:
-    if: github.event_name == 'workflow_dispatch' && inputs.promote_tag != ''
-    runs-on: ubuntu-latest
-    steps:
-      - name: 改为正式版
-        env:
-          GH_TOKEN: ${{ github.token }}
-          TAG: ${{ inputs.promote_tag }}
-        run: |
-          body=$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json body --jq .body)
-          printf '%s\n' "$body" | sed '1s/^测试版，仅供测试。$/正式版。/' > notes.md
-          gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" \
-            --prerelease=false --latest \
-            --title "Viora ${TAG}" \
-            --notes-file notes.md
-          gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json tagName,isPrerelease,name >> "$GITHUB_STEP_SUMMARY"
-
   prepare:
-    if: github.event_name != 'workflow_dispatch' || inputs.promote_tag == ''
     runs-on: ubuntu-latest
     outputs:
       version: ${{ steps.v.outputs.version }}
@@ -89,7 +67,9 @@ jobs:
           # 这个标签发过就不再发；正式版（或旧规则下同版本号的测试版 beta-v<版本>）发过之后，也不再发这个版本号的测试版
           exists=false
           for t in "$tag" "beta-v$version" $([ "$beta" = true ] && echo "v$version"); do
-            if gh release view "$t" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then exists=true; fi
+            # 上次中途失败留下的草稿不算已发布（发布步骤会先删掉它）
+            draft=$(gh release view "$t" --repo "$GITHUB_REPOSITORY" --json isDraft --jq .isDraft 2>/dev/null || true)
+            if [ "$draft" = false ]; then exists=true; fi
           done
           echo "version=$version" >> "$GITHUB_OUTPUT"
           echo "display=$display" >> "$GITHUB_OUTPUT"
@@ -243,9 +223,16 @@ jobs:
           else
             kind=(--title "Viora v$VERSION" --latest)
           fi
+          # 上次中途失败留下的同名草稿：删掉重来
+          if [ "$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json isDraft --jq .isDraft 2>/dev/null || true)" = true ]; then
+            gh release delete "$TAG" --repo "$GITHUB_REPOSITORY" --yes
+          fi
+          # 先建草稿（用户看不到，也不会被当成已发布），文件全部传完再公开
           gh release create "$TAG" $first \
             --repo "$GITHUB_REPOSITORY" \
             --target "$GITHUB_SHA" \
             --notes-file notes.md \
+            --draft \
             "${kind[@]}"
           gh release upload "$TAG" dist/*-android.split-*.apk --repo "$GITHUB_REPOSITORY"
+          gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --draft=false

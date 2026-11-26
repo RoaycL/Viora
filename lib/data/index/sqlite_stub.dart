@@ -14,6 +14,7 @@ abstract class Row {
 
 abstract class PreparedStatement {
   void execute([List<Object?> parameters = const []]);
+  List<Row> select([List<Object?> parameters = const []]);
   void close();
 }
 

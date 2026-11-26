@@ -4,6 +4,7 @@ import 'package:tray_manager/tray_manager.dart';
 import 'package:window_manager/window_manager.dart';
 
 import '../data/emby/emby_client.dart';
+import '../player/active_playback.dart';
 import 'desktop_prefs.dart';
 import 'window_frame.dart';
 
@@ -98,6 +99,8 @@ class DesktopTray with TrayListener, WindowListener {
       await windowManager.hide();
     } catch (_) {}
     await _hideTray();
+    // 正在播放时播放页还没销毁、没上报停止：先让它上报，再等上报发完
+    await ActivePlayback.stopAll();
     await EmbyClient.flushReports(timeout: const Duration(seconds: 3));
     await windowManager.setPreventClose(false);
     await windowManager.destroy();

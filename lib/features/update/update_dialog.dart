@@ -78,6 +78,13 @@ class _UpdateDialog extends ConsumerWidget {
               ),
             ),
             const SizedBox(height: 28),
+            if (controller.fellBackToProxy) ...[
+              Text(
+                '直连 GitHub 失败，这次经你设置的反向代理（${controller.proxyHost}）下载安装包，下载后按 SHA-256 校验。',
+                style: VText.caption.copyWith(color: VColors.textTertiary),
+              ),
+              const SizedBox(height: 16),
+            ],
             if (state is UpdateDownloading) ...[
               ProgressLine(state.progress ?? 0, height: 8),
               const SizedBox(height: 14),

@@ -12,14 +12,20 @@ abstract class Trickplay {
   /// 缩略图宽 / 高
   double get aspect;
 
-  /// [t] 附近的缩略图；还没下载好或出错时返回 null
+  /// [t] 附近的缩略图；还没下载好或出错时返回 null。
+  /// 返回的帧持有图片的一份引用，用完要 [TrickplayFrame.dispose]
   Future<TrickplayFrame?> frameAt(Duration t);
+
+  /// 释放缓存的图片（退出播放、换版本时）。已经交出去的帧各自释放
+  void dispose();
 }
 
 class TrickplayFrame {
   const TrickplayFrame(this.image, this.src);
 
   final ui.Image image;
+
+  void dispose() => image.dispose();
 
   /// 缩略图在 [image] 里的位置（像素）
   final ui.Rect src;
@@ -94,18 +100,29 @@ class JellyfinTrickplay implements Trickplay {
   /// 已解码的拼图：一张通常有 100 个缩略图（10 × 10），留最近用过的几张就够来回拖
   final _cache = <int, Future<ui.Image?>>{};
   static const _keep = 6;
+  bool _disposed = false;
 
   @override
   double get aspect => tiles.width / tiles.height;
 
   @override
   Future<TrickplayFrame?> frameAt(Duration t) async {
+    if (_disposed) return null;
     final (tile, src) = tiles.cellAt(t);
     final image = await _tile(tile);
-    if (image == null) return null;
+    if (image == null || _disposed || _gone[image] == true) return null;
     // 最后一张拼图可能不满（高度更小）：超出范围的就不显示
     if (src.right > image.width || src.bottom > image.height) return null;
-    return TrickplayFrame(image, src);
+    return TrickplayFrame(image.clone(), src);
+  }
+
+  @override
+  void dispose() {
+    _disposed = true;
+    for (final f in _cache.values) {
+      _release(f);
+    }
+    _cache.clear();
   }
 
   Future<ui.Image?> _tile(int tile) {
@@ -118,7 +135,7 @@ class JellyfinTrickplay implements Trickplay {
     });
     _cache[tile] = f;
     while (_cache.length > _keep) {
-      _cache.remove(_cache.keys.first);
+      _release(_cache.remove(_cache.keys.first));
     }
     return f;
   }
@@ -193,6 +210,16 @@ class BifTrickplay implements Trickplay {
 
   final _cache = <int, Future<ui.Image?>>{};
   static const _keep = 24;
+  bool _disposed = false;
+
+  @override
+  void dispose() {
+    _disposed = true;
+    for (final f in _cache.values) {
+      _release(f);
+    }
+    _cache.clear();
+  }
 
   /// 解析 BIF；宽高比从第一张图里读
   static Future<BifTrickplay?> load(Uint8List bytes) async {
@@ -207,6 +234,7 @@ class BifTrickplay implements Trickplay {
 
   @override
   Future<TrickplayFrame?> frameAt(Duration t) async {
+    if (_disposed) return null;
     final i = index.indexAt(t);
     final hit = _cache.remove(i);
     final f =
@@ -220,13 +248,23 @@ class BifTrickplay implements Trickplay {
         );
     _cache[i] = f;
     while (_cache.length > _keep) {
-      _cache.remove(_cache.keys.first);
+      _release(_cache.remove(_cache.keys.first));
     }
     final image = await f;
-    if (image == null) return null;
-    return TrickplayFrame(image, ui.Rect.fromLTWH(0, 0, image.width.toDouble(), image.height.toDouble()));
+    if (image == null || _disposed || _gone[image] == true) return null;
+    return TrickplayFrame(image.clone(), ui.Rect.fromLTWH(0, 0, image.width.toDouble(), image.height.toDouble()));
   }
 }
+
+/// 缓存里淘汰的图片：解码完（或已经解码好）就释放显存（交出去的帧是各自的 clone，不受影响）
+void _release(Future<ui.Image?>? f) => f?.then((image) {
+  if (image == null) return;
+  _gone[image] = true;
+  image.dispose();
+}, onError: (_) {}).ignore();
+
+/// 已经释放的缓存图片（还在等它的 frameAt 不能再用）
+final _gone = Expando<bool>();
 
 Future<ui.Image> decodeImage(Uint8List bytes) async {
   final codec = await ui.instantiateImageCodec(bytes);

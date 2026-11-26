@@ -31,6 +31,7 @@ import '../../data/media/media_models.dart';
 import '../../data/media/server_registry.dart';
 import '../../domain/models/segment.dart';
 import '../../domain/models/segment_settings.dart';
+import '../../player/active_playback.dart';
 import '../../player/chapters.dart';
 import '../../data/download/downloads.dart';
 import '../../player/engine.dart';
@@ -293,6 +294,11 @@ class _PlayerPageState extends ConsumerState<PlayerPage> with WidgetsBindingObse
   @override
   void initState() {
     super.initState();
+    // 应用直接退出（托盘退出、关窗口、更新重启）时页面不会销毁：先在这里上报停止
+    ActivePlayback.register(this, () {
+      _reportStopped();
+      return _stopReport ?? Future<void>.value();
+    });
     SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
     // 视频画面要实时更新：播放时调整窗口大小不用界面快照
     DesignScale.snapshotAllowed.value = false;
@@ -814,6 +820,9 @@ class _PlayerPageState extends ConsumerState<PlayerPage> with WidgetsBindingObse
     }
   }
 
+  /// 最近一次停止上报（应用退出前要等它发完）
+  Future<void>? _stopReport;
+
   /// [completed]：播到了结尾（按片长上报，服务器据此标记为已看）
   void _reportStopped({bool completed = false}) {
     if (_stopped) return;
@@ -865,7 +874,7 @@ class _PlayerPageState extends ConsumerState<PlayerPage> with WidgetsBindingObse
         playSessionId: _playSessionId,
       );
       final session = _playSessionId;
-      Future(() async {
+      _stopReport = Future(() async {
         await PendingPlayReports.add(pending);
         if (await client.reportStopped(source, position, session)) await PendingPlayReports.done(pending);
       }).catchError((Object _) {}).whenComplete(() {
@@ -1488,6 +1497,8 @@ class _PlayerPageState extends ConsumerState<PlayerPage> with WidgetsBindingObse
       }
     });
     _reportStopped();
+    ActivePlayback.unregister(this);
+    _trickplay?.dispose();
     SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
     DesignScale.snapshotAllowed.value = true;
     for (final s in _engineSubs) {
@@ -1690,10 +1701,16 @@ class _PlayerPageState extends ConsumerState<PlayerPage> with WidgetsBindingObse
   Future<void> _loadTrickplay(EmbyClient client, MediaSourceInfo source) async {
     if (_trickplaySource == source.id) return;
     _trickplaySource = source.id;
+    final old = _trickplay;
     if (mounted) setState(() => _trickplay = null);
+    old?.dispose();
     try {
       final t = await client.trickplay(widget.itemId, source.id);
-      if (mounted && _trickplaySource == source.id) setState(() => _trickplay = t);
+      if (mounted && _trickplaySource == source.id) {
+        setState(() => _trickplay = t);
+      } else {
+        t?.dispose();
+      }
     } catch (e) {
       debugPrint('trickplay: $e');
       if (_trickplaySource == source.id) _trickplaySource = null; // 下次打开再试

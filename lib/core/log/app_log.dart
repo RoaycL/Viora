@@ -26,6 +26,7 @@ abstract final class AppLog {
   static int _written = 0;
 
   static void add(String message) {
+    message = redact(message);
     final t = DateTime.now();
     String two(int n) => n.toString().padLeft(2, '0');
     final stamp = '${two(t.hour)}:${two(t.minute)}:${two(t.second)}.${t.millisecond.toString().padLeft(3, '0')}';
@@ -42,6 +43,24 @@ abstract final class AppLog {
       _lines.removeFirst();
     }
   }
+
+  static final _secretParam = RegExp(
+    r'([?&](?:api_key|apikey|access_token|token|x-plex-token|x-emby-token|password|pw)=)[^&#\s"\x27]+',
+    caseSensitive: false,
+  );
+  static final _secretHeader = RegExp(
+    r'((?:X-Emby-Token|X-Plex-Token|Authorization|X-Emby-Authorization|Authx)\s*[:=]\s*)[^\s,;}]+',
+    caseSensitive: false,
+  );
+  static final _token = RegExp(r'(Token=")[^"]*(")');
+  static final _userInfo = RegExp(r'(\w+://)[^/\s:@]+:[^/\s@]+@');
+
+  /// 日志会被导出、分享：抹掉地址和异常信息里的令牌、密码（第三方库的异常常把完整请求地址打出来）
+  static String redact(String message) => message
+      .replaceAllMapped(_secretParam, (m) => '${m[1]}***')
+      .replaceAllMapped(_token, (m) => '${m[1]}***${m[2]}')
+      .replaceAllMapped(_secretHeader, (m) => '${m[1]}***')
+      .replaceAllMapped(_userInfo, (m) => '${m[1]}***@');
 
   /// 打开日志文件（应用数据目录）。上次运行的日志保留一份，导出时附在后面
   static Future<void> attachFile(Directory dir) async {

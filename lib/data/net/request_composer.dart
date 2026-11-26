@@ -139,6 +139,10 @@ class RequestComposer {
     final h = <String, String>{'User-Agent': userAgentFor(kind), 'Accept-Language': 'zh-CN,zh;q=0.9'};
     final auth = authorization();
     switch (server.type) {
+      // Emby / Jellyfin 的视频流、外挂字幕地址里已经带了 api_key，请求头不再带令牌：很多服务器把视频 302 到网盘 / CDN 直链，
+      // 播放器跟随跳转时会把请求头原样带过去（令牌泄露给第三方；Authorization 头还会让 S3 / OSS 预签名地址返回 400）
+      case ServerType.emby || ServerType.jellyfin when kind == RequestKind.stream:
+        break;
       case ServerType.emby:
         h['X-Emby-Authorization'] = auth;
         if (server.token != null) h['X-Emby-Token'] = server.token!;

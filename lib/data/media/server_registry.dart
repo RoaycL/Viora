@@ -12,6 +12,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../config/app_config.dart';
 import '../config/config_store.dart';
 import '../emby/emby_client.dart';
+import 'series_ratings.dart';
 import 'media_models.dart';
 import 'media_feed.dart';
 
@@ -433,4 +434,4 @@ final itemProvider = FutureProvider.family<MediaItem, ({String serverId, String 
 bool itemVisible(AppConfig c, MediaItem it) =>
     c.server(it.serverId) != null &&
     (!c.parental.enabled || !c.server(it.serverId)!.adult) &&
-    (!c.parental.enabled || it.kind == MediaKind.episode || c.parental.allows(it.officialRating));
+    (!c.parental.enabled || parentalAllowsItem(c.parental, it));
