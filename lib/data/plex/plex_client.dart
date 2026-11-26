@@ -376,6 +376,7 @@ class PlexClient extends EmbyClient {
 
   @override
   Future<List<MediaItem>> latest({String? parentId, int limit = 20}) async {
+    final since = DateTime.now();
     final c = await _get(parentId == null ? '/library/recentlyAdded' : '/library/sections/$parentId/recentlyAdded', {
       'includeGuids': '1',
       ..._page(0, limit * 3),
@@ -385,12 +386,13 @@ class PlexClient extends EmbyClient {
       for (final j in _metadata(c))
         if (const {'movie', 'show', 'season', 'episode'}.contains(j['type'])) _asSeries(j),
     ]).where((it) => seen.add(it.id)).take(limit).toList();
-    _remember(list);
+    _remember(list, since);
     return list;
   }
 
   @override
   Future<List<MediaItem>> resume({int limit = 20}) async {
+    final since = DateTime.now();
     Map<String, dynamic> c;
     try {
       c = await _get('/hubs/continueWatching/items', _page(0, limit * 2));
@@ -402,7 +404,7 @@ class PlexClient extends EmbyClient {
     // 只要看了一半的（Plex 还会放没开始的"下一集"，和 Emby 的继续观看不同）。
     // 不看 played：它来自 viewCount（以前看完过），重看到一半的也要留着
     final items = _allowed(_metadata(c).map(parseItem).where((it) => it.position > Duration.zero)).take(limit).toList();
-    _remember(items);
+    _remember(items, since);
     return items;
   }
 
@@ -471,6 +473,7 @@ class PlexClient extends EmbyClient {
 
   @override
   Future<List<MediaItem>> episodes(String seriesId, {String? seasonId}) async {
+    final since = DateTime.now();
     final c = await _get(
       seasonId == null ? '/library/metadata/$seriesId/allLeaves' : '/library/metadata/$seasonId/children',
       {'includeGuids': '1'},
@@ -479,7 +482,7 @@ class PlexClient extends EmbyClient {
       for (final j in _metadata(c))
         if (j['type'] == 'episode') parseItem(j),
     ];
-    _remember(list);
+    _remember(list, since);
     return list;
   }
 
