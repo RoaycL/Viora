@@ -352,6 +352,8 @@ class _ServerCard extends ConsumerWidget {
         if (index >= 0 && index < count - 1)
           MenuAction('向后移动', Icons.arrow_forward_rounded, () => store.moveServer(server.id, 1)),
         MenuAction('删除', Icons.delete_outline_rounded, () async {
+          // 删除后这张卡片会被移除（ref 随之失效）：等待之前先拿到要用的对象
+          final index = ref.read(indexSyncProvider.notifier);
           final ok = await showConfirmDialog(
             context,
             title: '删除「${server.displayName}」？',
@@ -362,8 +364,8 @@ class _ServerCard extends ConsumerWidget {
           );
           if (ok != true) return;
           await store.removeServer(server.id);
+          index.forget(server.id);
           await DesktopPrefs.instance.setServerPinned(server.id, false);
-          ref.read(indexSyncProvider.notifier).forget(server.id);
           showToast('已删除「${server.displayName}」');
         }),
       ],

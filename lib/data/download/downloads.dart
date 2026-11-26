@@ -371,6 +371,9 @@ class Downloads extends ChangeNotifier {
 
   final _clients = <String, EmbyClient>{};
 
+  /// 限速等待每次最多睡这么久，之后看一眼有没有暂停 / 改限速
+  static const _throttleSlice = Duration(milliseconds: 200);
+
   /// 下载时每收到这么多就等一次写盘
   static const _flushEvery = 4 << 20;
 
@@ -518,19 +521,27 @@ class Downloads extends ChangeNotifier {
         // 限速：按这次连接开始以来收到的字节算，收得比限速快就等一会儿再读（TCP 收窗口变小，服务器随之放慢发送）
         final clock = Stopwatch()..start();
         var got = 0;
+        var baseLimit = _speedLimit;
         await for (final chunk in resp.data!.stream) {
           sink.add(chunk);
           e.received += chunk.length;
           final limit = _speedLimit;
+          // 改了限速：从现在起按新的速度算，不拿之前按旧速度收的字节补算等待时间
+          if (limit != baseLimit) {
+            baseLimit = limit;
+            got = 0;
+            clock.reset();
+          }
           if (limit > 0) {
             got += chunk.length;
             final due = Duration(microseconds: got * 1000000 ~/ (limit << 20));
-            final ahead = due - clock.elapsed;
-            if (ahead > const Duration(milliseconds: 20)) await Future<void>.delayed(ahead);
+            // 分小段等：等待期间暂停、开始播放或改了限速都能马上生效
+            while (!cancel.isCancelled && _speedLimit == limit) {
+              final ahead = due - clock.elapsed;
+              if (ahead <= const Duration(milliseconds: 20)) break;
+              await Future<void>.delayed(ahead < _throttleSlice ? ahead : _throttleSlice);
+            }
             if (cancel.isCancelled) break;
-          } else {
-            got = 0;
-            clock.reset();
           }
           // 写盘比网速慢时不能一直往内存里攒：每攒够一段等它写完再继续收
           pending += chunk.length;
