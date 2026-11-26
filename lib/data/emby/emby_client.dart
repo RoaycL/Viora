@@ -193,6 +193,7 @@ class EmbyClient {
   /// [notify] 为 false 时不回调 [onServerChanged]（调用方把多台服务器的结果合并成一次保存）
   Future<ServerConfig> probeAll({bool notify = true, Duration? timeout}) async {
     final results = await Future.wait(_server.lines.map((line) => probe(line, timeout: timeout)));
+    await _dropLinesRejectingLogin(results, timeout: timeout);
     final lines = [
       for (var i = 0; i < _server.lines.length; i++)
         _server.lines[i].copyWith(latencyMs: results[i], clearLatency: results[i] == null),
@@ -209,6 +210,42 @@ class EmbyClient {
 
   /// 测速用的免登录接口
   String get _probePath => '/System/Info/Public';
+
+  /// 免登录接口通了不代表能用：有的线路（反代只转发了部分路径、按 UA / 地区拦截、返回网页登录页）
+  /// 测速通过却登录不上、取不到数据。已登录的 Emby / Jellyfin 再用登录令牌读一次当前用户，
+  /// 读不到的线路当成不可用（自动选线跳过它，资源库卡片也不显示成连通）。
+  /// 所有线路都读不到时多半是令牌过期，不是线路的问题：保持原来的测速结果，用的时候会重新登录
+  Future<void> _dropLinesRejectingLogin(List<int?> latency, {Duration? timeout}) async {
+    if (!_server.loggedIn || (_server.type != ServerType.emby && _server.type != ServerType.jellyfin)) return;
+    final ok = await Future.wait([
+      for (var i = 0; i < _server.lines.length; i++)
+        latency[i] == null ? Future.value(false) : _authCheck(_server.lines[i], timeout: timeout),
+    ]);
+    if (!ok.contains(true)) return;
+    for (var i = 0; i < latency.length; i++) {
+      if (latency[i] != null && !ok[i]) {
+        debugPrint('probe: ${_server.displayName} · ${_server.lines[i].name} 测速通过但用登录令牌读不到数据，当作不可用');
+        latency[i] = null;
+      }
+    }
+  }
+
+  /// 用登录令牌通过这条线路读当前用户：返回 JSON 对象才算能用
+  Future<bool> _authCheck(ServerLine l, {Duration? timeout}) async {
+    final c = composerFor(l);
+    final url = c.finalUrl(c.resolve('/Users/${_server.userId}'), RequestKind.api);
+    final dio = _dio()..options.connectTimeout = const Duration(seconds: 5);
+    try {
+      final request = dio.getUri<dynamic>(url, options: Options(headers: c.headers(RequestKind.api)));
+      final r = await request.timeout(timeout ?? const Duration(seconds: 8));
+      final code = r.statusCode ?? 0;
+      return code >= 200 && code < 300 && r.data is Map;
+    } catch (_) {
+      return false;
+    } finally {
+      dio.close(force: true);
+    }
+  }
 
   Future<Map<String, dynamic>> publicInfo() async =>
       (await _request('GET', '/System/Info/Public', auth: false)) as Map<String, dynamic>;
