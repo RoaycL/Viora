@@ -150,4 +150,50 @@ void main() {
       expect((await probeTyped(type, authOk: false)).lines.single.latencyMs, isNull);
     });
   }
+
+  test('测速：令牌过期、原来的线路也断了时，用这次测通的线路重新登录', () async {
+    final dead = await ServerSocket.bind(InternetAddress.loopbackIPv4, 0);
+    final deadPort = dead.port;
+    await dead.close();
+    final s = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+    addTearDown(() => s.close(force: true));
+    s.listen((req) async {
+      final path = req.uri.path;
+      req.response.headers.contentType = ContentType.json;
+      if (path.endsWith('/System/Info/Public')) {
+        req.response.write(jsonEncode({'ServerName': 'x'}));
+      } else if (path.endsWith('/Users/AuthenticateByName')) {
+        req.response.write(
+          jsonEncode({
+            'AccessToken': 'fresh',
+            'User': {'Id': 'uid'},
+          }),
+        );
+      } else if ((req.headers.value('X-Emby-Token') ?? '') == 'fresh') {
+        req.response.write(jsonEncode({'Id': 'uid'}));
+      } else {
+        req.response.statusCode = 401;
+      }
+      await req.response.close();
+    });
+    final server = ServerConfig(
+      id: 'relogin',
+      type: ServerType.emby,
+      name: '服务器',
+      username: 'me',
+      password: 'pw',
+      token: 'expired',
+      userId: 'uid',
+      lines: [
+        ServerLine(id: 'old', name: '原线路', url: 'http://127.0.0.1:$deadPort', latencyMs: 5),
+        ServerLine(id: 'alt', name: '备用', url: 'http://127.0.0.1:${s.port}'),
+      ],
+    );
+    final probed = await clientForDraft(
+      const AppConfig(),
+      server,
+    ).probeAll(notify: false, timeout: const Duration(seconds: 2));
+    expect(probed.lines.firstWhere((l) => l.id == 'alt').latencyMs, isNotNull);
+    expect(probed.lines.firstWhere((l) => l.id == 'old').latencyMs, isNull);
+  });
 }

@@ -224,6 +224,12 @@ class EmbyClient {
     ]);
     var ok = await check();
     if (!ok.contains(true)) {
+      // 重新登录走这次测速最快的线路（之前自动选的线路可能已经连不上了）；用户手动指定的线路不动
+      var fastest = -1;
+      for (var i = 0; i < latency.length; i++) {
+        if (latency[i] != null && (fastest < 0 || latency[i]! < latency[fastest]!)) fastest = i;
+      }
+      _autoLine[_server.id] = _server.lines[fastest].id;
       try {
         await login().timeout(limit + const Duration(seconds: 5));
         ok = await check();
