@@ -1,27 +1,35 @@
 part of '../emby/emby_client.dart';
 
-/// 按服务器类型创建客户端：Plex 用 [PlexClient]，Emby / Jellyfin 用 [EmbyClient]
+/// 按服务器类型创建客户端：Plex 用 [PlexClient]，飞牛影视用 [FnosClient]，Emby / Jellyfin 用 [EmbyClient]
 EmbyClient mediaServerClient({
   required AppConfig config,
   required ServerConfig server,
   required String appVersion,
   void Function(ServerConfig server)? onServerChanged,
   void Function(bool reachable)? onProbed,
-}) => server.type == ServerType.plex
-    ? PlexClient(
-        config: config,
-        server: server,
-        appVersion: appVersion,
-        onServerChanged: onServerChanged,
-        onProbed: onProbed,
-      )
-    : EmbyClient(
-        config: config,
-        server: server,
-        appVersion: appVersion,
-        onServerChanged: onServerChanged,
-        onProbed: onProbed,
-      );
+}) => switch (server.type) {
+  ServerType.plex => PlexClient(
+    config: config,
+    server: server,
+    appVersion: appVersion,
+    onServerChanged: onServerChanged,
+    onProbed: onProbed,
+  ),
+  ServerType.fnos => FnosClient(
+    config: config,
+    server: server,
+    appVersion: appVersion,
+    onServerChanged: onServerChanged,
+    onProbed: onProbed,
+  ),
+  ServerType.emby || ServerType.jellyfin => EmbyClient(
+    config: config,
+    server: server,
+    appVersion: appVersion,
+    onServerChanged: onServerChanged,
+    onProbed: onProbed,
+  ),
+};
 
 /// plex.tv/link 授权码
 typedef PlexPin = ({int id, String code});

@@ -274,13 +274,17 @@ class _ServerEditPageState extends ConsumerState<ServerEditPage> {
                     label: '服务器地址（多条线路换行或用分号分隔，可写成"名称 | 地址"）',
                     controller: _lines,
                     autofocus: !editing,
-                    hint: _type == ServerType.plex
-                        ? (_https ? 'plex.example.com:443' : '192.168.1.10:32400')
-                        : (_https ? 'emby.example.com:8920' : '192.168.1.10:8096'),
+                    hint: switch (_type) {
+                      ServerType.plex => _https ? 'plex.example.com:443' : '192.168.1.10:32400',
+                      ServerType.fnos => _https ? 'nas.example.com:5667' : '192.168.1.10:5666',
+                      _ => _https ? 'emby.example.com:8920' : '192.168.1.10:8096',
+                    },
                     keyboardType: TextInputType.url,
-                    helper: _type == ServerType.plex
-                        ? '填 Plex 服务器自己的地址（默认端口 32400）'
-                        : 'Emby 会自动补 /emby 路径；端口按地址里写的（Emby 默认 HTTP 8096 / HTTPS 8920）',
+                    helper: switch (_type) {
+                      ServerType.plex => '填 Plex 服务器自己的地址（默认端口 32400）',
+                      ServerType.fnos => '填飞牛 NAS 的地址（默认 HTTP 5666 / HTTPS 5667），和网页端打开飞牛影视的地址一样，不用加 /v',
+                      _ => 'Emby 会自动补 /emby 路径；端口按地址里写的（Emby 默认 HTTP 8096 / HTTPS 8920）',
+                    },
                   ),
                   const SizedBox(height: 16),
                   VToggle(
@@ -294,7 +298,11 @@ class _ServerEditPageState extends ConsumerState<ServerEditPage> {
                     children: [
                       Expanded(
                         child: VTextField(
-                          label: _type == ServerType.plex ? 'Plex 账号（邮箱或用户名）' : '用户名',
+                          label: switch (_type) {
+                            ServerType.plex => 'Plex 账号（邮箱或用户名）',
+                            ServerType.fnos => '飞牛账号',
+                            _ => '用户名',
+                          },
                           controller: _user,
                           credential: true,
                         ),

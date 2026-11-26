@@ -6,12 +6,12 @@
 | --- | --- | --- | --- | --- |
 | 登录 | 用户名密码 / API Key | 用户名密码 / Quick Connect | plex.tv PIN 登录 / Token | 用户名密码 |
 | 服务器发现 | 手填地址 | 手填地址 | plex.tv `resources` 返回所有连接（天然多线路） | 手填地址 |
-| Provider IDs | `ProviderIds` | `ProviderIds` | `Guid`（`includeGuids=1`） | 待抓包确认 |
-| 多版本 | `MediaSources` | `MediaSources` | `Media[]` / `Part[]` | 待确认 |
-| 服务器片头片尾 | Chapters 中的 `MarkerType`（IntroStart/IntroEnd，4.8+ 有 CreditsStart） | 10.10+ `MediaSegments` API；旧版本依赖 Intro Skipper 插件 | `includeMarkers=1` 返回 `Marker type=intro/credits` | 待确认 |
-| 进度上报 | `/Sessions/Playing*` | `/Sessions/Playing*` | `/:/timeline` | 待确认 |
+| Provider IDs | `ProviderIds` | `ProviderIds` | `Guid`（`includeGuids=1`） | 只有 `imdb_id`（`trim_id` 是飞牛自己的） |
+| 多版本 | `MediaSources` | `MediaSources` | `Media[]` / `Part[]` | `stream/list` 的 `files[]` |
+| 服务器片头片尾 | Chapters 中的 `MarkerType`（IntroStart/IntroEnd，4.8+ 有 CreditsStart） | 10.10+ `MediaSegments` API；旧版本依赖 Intro Skipper 插件 | `includeMarkers=1` 返回 `Marker type=intro/credits` | 只有按条目设置的跳过秒数（`play_config`），暂未接入 |
+| 进度上报 | `/Sessions/Playing*` | `/Sessions/Playing*` | `/:/timeline` | `POST /play/record` |
 
-> fnOS 没有公开文档的第三方 API，需要对其 Web 端抓包实现，单独放在 `data/servers/fnos/`，接口变化不影响其他适配器。v1 先实现浏览 + 播放 + 进度，其他能力按抓包结果补齐。
+> fnOS 没有公开文档的第三方 API，按它网页端的接口实现（见 §3a），接口变化不影响其他适配器。
 
 ## 2. Emby / Jellyfin
 
@@ -85,6 +85,35 @@ X-Emby-Authorization: MediaBrowser Client="Viora", Device="Living Room TV", Devi
 | 片头片尾 | 详情返回的 `Marker`（`type=intro` / `credits`，单位毫秒） |
 | 缩略图 | `GET /library/parts/{partId}/indexes/sd`（BIF） |
 | 已看 | `GET /:/scrobble`、`/:/unscrobble?identifier=com.plexapp.plugins.library&key=` |
+
+## 3a. 飞牛影视（fnOS）
+
+实现：`lib/data/fnos/fnos_client.dart` 的 `FnosClient`，和 Plex 一样是 `EmbyClient` 的子类。飞牛没有公开接口，按影视网页端（`trimemedia-web`）的 `/v/api/v1` 接口实现，参考了社区客户端 FlyNarwhal、Kodi 插件 fnmedia 的抓包结果，并在真机（2026-11）上核对过。
+
+- 地址：NAS 的地址（默认 HTTP 5666 / HTTPS 5667），和浏览器里打开飞牛影视的地址一样；末尾带 `/v` 也行（会去掉）。
+- 鉴权：`POST /v/api/v1/login {app_name: "trimemedia-web", username, password}` → `data.token`；之后每个请求带 `Authorization: <token>`（不加前缀）和 `Cookie: mode=relay`。`userId` 用 `GET /user/info` 的 `guid`。
+- 签名：每个请求带 `Authx: nonce=<6 位>&timestamp=<毫秒>&sign=md5(key_路径_nonce_时间戳_摘要_secret)`。路径不含查询参数；摘要是请求体的 md5，GET 带参数时是按参数名排序的 `k=v&k=v`（不编码）的 md5，都没有时是空串的 md5。POST / PUT / DELETE 的请求体末尾加随机 `nonce` 字段，签名按原样发出的 JSON 算。key / secret 是网页端里的常量，飞牛升级改了要跟着改。时间戳不校验时效。
+- 响应：`{code, msg, data}`，HTTP 状态一般都是 200。`code` 0 成功，-2 登录失效（自动用保存的密码重新登录一次），-15 密码错误，5000 签名错误（换 nonce 重试）。
+- 分页：`item/list` 用 `page`（从 1 开始）+ `page_size`；不传时服务器默认只给 500 条。`start` 不是页大小整数倍时取两页拼起来。按类型过滤用 `tags.type`（`Movie` / `TV`），集不能用它列。
+- 集的详情只有所属季（`parent_guid`），所属剧集要再查一次季的详情，按服务器缓存。
+- 图片：`/v/api/v1/sys/img{路径}?w=宽度`，不用登录。
+- 播放：NAS 上的文件 `GET /v/api/v1/media/range/{media_guid}`，带 Authorization 头（播放器请求头里有）。进度上报要带这个文件的视频 / 音频流 guid。
+- 还没做：网盘文件的直链（`POST /stream`）、服务端转码（`/play/play`）、FN Connect 中继、片头片尾、在线字幕、两步验证账号。
+
+| 用途 | 接口 |
+| --- | --- |
+| 媒体库 | `GET /v/api/v1/mediadb/list`、数量 `GET /mediadb/sum` |
+| 条目 | `POST /item/list {ancestor_guid, parent_guid, exclude_grouped_video, sort_column, sort_type, page, page_size, tags: {type}}` |
+| 收藏 | `POST /favorite/list`（同上）；`PUT` / `DELETE /item/favorite {item_guid}` |
+| 详情 | `GET /item/{guid}`；类型名 `GET /tag/genres` |
+| 季 / 集 | `GET /season/list/{剧集 guid}`、`GET /episode/list/{季 guid}` |
+| 继续观看 / 最近看过 | `GET /play/list`（`ts`、`duration` 单位秒） |
+| 搜索 | `GET /search/list?q=` |
+| 版本 / 流 | `GET /stream/list/{guid}`（`files`、`video_streams`、`audio_streams`、`subtitle_streams`）；上次播放的版本 `POST /play/info {item_guid}` |
+| 直链 | `GET /media/range/{media_guid}` |
+| 外挂字幕 | `GET /subtitle/dl/{guid}`（要签名） |
+| 进度 | `POST /play/record {item_guid, media_guid, video_guid, audio_guid, subtitle_guid, play_link, ts, duration}` |
+| 已看 | `POST` / `DELETE /item/watched {item_guid}` |
 
 ## 4. 多线路
 

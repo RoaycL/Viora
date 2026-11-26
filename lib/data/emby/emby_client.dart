@@ -15,7 +15,9 @@ import '../config/app_config.dart';
 import '../media/media_models.dart';
 import '../media/zh.dart';
 import '../net/request_composer.dart';
+import '../subtitles/online_subtitles.dart' show SubtitleFile, saveSubtitleFile;
 
+part '../fnos/fnos_client.dart';
 part '../plex/plex_client.dart';
 
 /// 交给播放器的最终请求：URL 已完成线路选择和代理改写，headers 含播放 UA 与鉴权。
@@ -92,7 +94,7 @@ String loginRejectedMessage(int status, Object? body, String where) {
 final Map<String, String> _autoLine = {};
 
 /// Emby / Jellyfin 客户端（两者 API 同源，差异见 docs/03-media-servers.md §2）。
-/// Plex 用子类 [PlexClient]（同一个库，复用线路、测速、重新登录与上报队列），用 [mediaServerClient] 按类型创建。
+/// Plex、飞牛影视用子类 [PlexClient]、[FnosClient]（同一个库，复用线路、测速、重新登录与上报队列），用 [mediaServerClient] 按类型创建。
 class EmbyClient {
   EmbyClient({
     required this.config,
@@ -296,7 +298,7 @@ class EmbyClient {
               data: body,
               options: Options(
                 method: method,
-                headers: c.headers(RequestKind.api),
+                headers: {...c.headers(RequestKind.api), ..._signedHeaders(method, path, query, body)},
                 contentType: Headers.jsonContentType,
                 responseType: bytes ? ResponseType.bytes : null,
               ),
@@ -371,6 +373,9 @@ class EmbyClient {
               lastError.error is HandshakeException),
     );
   }
+
+  /// 每个请求单独算的请求头（飞牛影视的签名）；[body] 是原样发出的请求体
+  Map<String, String> _signedHeaders(String method, String path, Map<String, String>? query, Object? body) => const {};
 
   String _describe(Object? e) {
     if (e is DioException) {
@@ -759,6 +764,9 @@ class EmbyClient {
       userAgent: headers['User-Agent']!,
     );
   }
+
+  /// 交给播放器加载的外挂字幕地址（播放器加载外挂字幕时带不上请求头，需要签名的服务器先下载到本机）
+  Future<Uri?> subtitleUri(MediaSourceInfo source, MediaStreamInfo stream) async => subtitle(source, stream)?.url;
 
   // ───────────────────────── 在线字幕 ─────────────────────────
 

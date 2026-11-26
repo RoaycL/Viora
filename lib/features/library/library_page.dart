@@ -449,10 +449,11 @@ LinearGradient _typeGradient(ServerType type) => LinearGradient(
     ServerType.emby => const [Color(0xFF7EE07A), Color(0xFF2E8B2A)],
     ServerType.jellyfin => const [Color(0xFFAA5CC3), Color(0xFF00A4DC)],
     ServerType.plex => const [Color(0xFFF5C04A), Color(0xFFCC7B19)],
+    ServerType.fnos => const [Color(0xFF5B8CFF), Color(0xFF1F4FD8)],
   },
 );
 
-/// Emby / Jellyfin 官方图标；Plex 画一个琥珀色的箭头（不打包 Plex 的商标图）
+/// Emby / Jellyfin 官方图标；Plex 画一个琥珀色的箭头、飞牛影视画一个蓝底的"飞"字（不打包它们的商标图）
 class ServerTypeLogo extends StatelessWidget {
   const ServerTypeLogo(this.type, {super.key});
 
@@ -461,6 +462,7 @@ class ServerTypeLogo extends StatelessWidget {
   @override
   Widget build(BuildContext context) => switch (type) {
     ServerType.plex => const AspectRatio(aspectRatio: 1, child: CustomPaint(painter: _ChevronPainter())),
+    ServerType.fnos => const AspectRatio(aspectRatio: 1, child: CustomPaint(painter: _FnosMarkPainter())),
     ServerType.emby || ServerType.jellyfin => Image.asset(
       type == ServerType.emby ? 'assets/images/emby_logo.png' : 'assets/images/jellyfin_logo.png',
       fit: BoxFit.contain,
@@ -489,6 +491,31 @@ class _ChevronPainter extends CustomPainter {
 
   @override
   bool shouldRepaint(_ChevronPainter oldDelegate) => false;
+}
+
+class _FnosMarkPainter extends CustomPainter {
+  const _FnosMarkPainter();
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final w = size.shortestSide;
+    final rect = Rect.fromLTWH((size.width - w) / 2, (size.height - w) / 2, w, w).deflate(w * 0.06);
+    canvas.drawRRect(
+      RRect.fromRectAndRadius(rect, Radius.circular(w * 0.24)),
+      Paint()..color = const Color(0xFF2F6BFF),
+    );
+    final text = TextPainter(
+      text: TextSpan(
+        text: '飞',
+        style: TextStyle(color: Colors.white, fontSize: w * 0.56, fontWeight: FontWeight.w700, height: 1),
+      ),
+      textDirection: TextDirection.ltr,
+    )..layout();
+    text.paint(canvas, rect.center - Offset(text.width / 2, text.height / 2));
+  }
+
+  @override
+  bool shouldRepaint(_FnosMarkPainter oldDelegate) => false;
 }
 
 String _ago(DateTime? t) {
