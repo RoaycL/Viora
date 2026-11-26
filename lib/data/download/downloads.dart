@@ -5,6 +5,9 @@ import 'dart:io';
 import 'package:dio/dio.dart';
 import 'package:flutter/foundation.dart';
 import 'package:path_provider/path_provider.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+
+import '../../player/active_playback.dart';
 
 import '../cache/account_scope.dart';
 import '../emby/emby_client.dart';
@@ -155,7 +158,10 @@ MediaSourceInfo sourceFromJson(Map<String, Object?> j) => MediaSourceInfo(
 );
 
 /// 离线下载（docs/08-player.md「离线下载」）：下载服务器上的原始文件（Static 直接播放地址，不转码），
-/// 一次下载一个，支持暂停和断点续传（HTTP Range）。下载列表存在应用数据目录的 downloads.json。
+/// 一次下载一个（单连接，不分段并发），支持暂停和断点续传（HTTP Range）。下载列表存在应用数据目录的 downloads.json。
+///
+/// 减轻对服务器的压力：可以限速（[speedLimit]），打开播放页时暂停下载、关掉后从断点接着下（[pauseWhilePlaying]），
+/// 免得下载和自己或别人的播放抢服务器的上行带宽。
 ///
 /// 播放页打开已下载完的条目时直接播本地文件（[playable]），不请求播放信息，没有网络也能看；
 /// 离线看的进度先记在这里，停止上报会存进待补发列表，联网后自动同步给服务器。
@@ -175,6 +181,60 @@ class Downloads extends ChangeNotifier {
   Timer? _saveTimer;
   Future<void>? _running;
   Future<void> _saving = Future.value();
+
+  static const _kSpeedLimit = 'viora.download.speedLimitMBps';
+  static const _kPauseWhilePlaying = 'viora.download.pauseWhilePlaying';
+
+  /// 可选的限速档位（MB/s），0 = 不限速
+  static const speedLimits = [0, 2, 5, 10, 20];
+
+  /// 下载限速（MB/s，0 = 不限）。本机设置，不同步到其他设备
+  int get speedLimit => _speedLimit;
+  int _speedLimit = 0;
+
+  /// 播放时暂停下载（播放页关掉后自动继续）。默认打开
+  bool get pauseWhilePlaying => _pauseWhilePlaying;
+  bool _pauseWhilePlaying = true;
+
+  /// 因为开始播放而让出来的下载：播放结束后接着下
+  bool _yielding = false;
+  bool _listening = false;
+
+  Future<void> setSpeedLimit(int mbps) async {
+    _speedLimit = mbps;
+    notifyListeners();
+    try {
+      await (await SharedPreferences.getInstance()).setInt(_kSpeedLimit, mbps);
+    } catch (_) {}
+  }
+
+  Future<void> setPauseWhilePlaying(bool v) async {
+    _pauseWhilePlaying = v;
+    _onPlayback();
+    notifyListeners();
+    try {
+      await (await SharedPreferences.getInstance()).setBool(_kPauseWhilePlaying, v);
+    } catch (_) {}
+  }
+
+  bool get _holdForPlayback => _pauseWhilePlaying && ActivePlayback.active.value;
+
+  /// 播放页打开：正在下的先停下（状态改回排队，播放结束后从断点续传）；播放页关掉：继续
+  void _onPlayback() {
+    if (_holdForPlayback) {
+      if (_active != null && !_yielding) {
+        _yielding = true;
+        _cancel?.cancel();
+      }
+    } else {
+      _pump();
+    }
+    notifyListeners();
+  }
+
+  /// 有下载在等播放结束（下载页显示提示）
+  bool get waitingForPlayback =>
+      _holdForPlayback && _entries.any((e) => e.state == DownloadState.queued || e.state == DownloadState.downloading);
 
   /// 测试用：等当前这个下载任务收尾（文件写完、关掉）
   @visibleForTesting
@@ -208,6 +268,15 @@ class Downloads extends ChangeNotifier {
   bool _loaded = false;
 
   Future<void> _load() async {
+    if (!_listening) {
+      _listening = true;
+      ActivePlayback.active.addListener(_onPlayback);
+    }
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      _speedLimit = prefs.getInt(_kSpeedLimit) ?? 0;
+      _pauseWhilePlaying = prefs.getBool(_kPauseWhilePlaying) ?? true;
+    } catch (_) {}
     try {
       final support = debugDir ?? (await getApplicationSupportDirectory()).path;
       _indexPath = '$support${Platform.pathSeparator}downloads.json';
@@ -376,7 +445,7 @@ class Downloads extends ChangeNotifier {
   }
 
   void _pump() {
-    if (_active != null) return;
+    if (_active != null || _holdForPlayback) return;
     final next = _entries.where((e) => e.state == DownloadState.queued).firstOrNull;
     if (next == null) return;
     final client = _clients[next.id];
@@ -446,9 +515,23 @@ class Downloads extends ChangeNotifier {
         sink = part.openWrite(mode: start > 0 ? FileMode.append : FileMode.write);
         var lastNotify = DateTime.now();
         var pending = 0;
+        // 限速：按这次连接开始以来收到的字节算，收得比限速快就等一会儿再读（TCP 收窗口变小，服务器随之放慢发送）
+        final clock = Stopwatch()..start();
+        var got = 0;
         await for (final chunk in resp.data!.stream) {
           sink.add(chunk);
           e.received += chunk.length;
+          final limit = _speedLimit;
+          if (limit > 0) {
+            got += chunk.length;
+            final due = Duration(microseconds: got * 1000000 ~/ (limit << 20));
+            final ahead = due - clock.elapsed;
+            if (ahead > const Duration(milliseconds: 20)) await Future<void>.delayed(ahead);
+            if (cancel.isCancelled) break;
+          } else {
+            got = 0;
+            clock.reset();
+          }
           // 写盘比网速慢时不能一直往内存里攒：每攒够一段等它写完再继续收
           pending += chunk.length;
           if (pending >= _flushEvery) {
@@ -465,6 +548,7 @@ class Downloads extends ChangeNotifier {
         await sink.flush();
         await sink.close();
         sink = null;
+        if (cancel.isCancelled) throw const HttpException('已暂停');
         if (e.total != null && e.received < e.total!) throw const HttpException('连接中断，下载不完整');
         await _finish(e, part, e.received);
       }
@@ -475,7 +559,8 @@ class Downloads extends ChangeNotifier {
       } catch (_) {}
       if (e.state == DownloadState.downloading) {
         if (cancel.isCancelled) {
-          e.state = DownloadState.paused;
+          // 为播放让路：排回队列，播放结束后接着下；用户自己暂停的保持暂停
+          e.state = _yielding ? DownloadState.queued : DownloadState.paused;
         } else {
           e.state = DownloadState.failed;
           e.error = err is DioException ? (err.message ?? err.type.name) : '$err';
@@ -485,6 +570,7 @@ class Downloads extends ChangeNotifier {
     } finally {
       dio?.close(force: true);
       if (identical(_cancel, cancel)) _cancel = null;
+      _yielding = false;
     }
     await _save();
     notifyListeners();

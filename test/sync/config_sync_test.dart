@@ -25,6 +25,26 @@ void main() {
   );
 
   group('mergeSyncPayload', () {
+    test('发过来的密码是空的：保留本机已有的密码，不退出登录', () {
+      final r = mergeSyncPayload(base, {
+        'viora': 1,
+        'servers': [
+          {
+            'type': 'emby',
+            'name': '家里',
+            'lines': [
+              {'name': '主线路', 'url': 'https://emby.home.com'},
+            ],
+            'username': 'me',
+            'password': '',
+          },
+        ],
+      });
+      final s = r.config.allServers.single;
+      expect(s.password, 'old');
+      expect(s.token, 't');
+    });
+
     test('同一台服务器更新（改了密码要重新登录），新服务器新增', () {
       final r = mergeSyncPayload(base, {
         'viora': 1,

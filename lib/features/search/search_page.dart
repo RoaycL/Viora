@@ -25,6 +25,7 @@ import '../../ui/widgets/buttons.dart';
 import '../../ui/widgets/form.dart';
 import '../../ui/widgets/server_image.dart';
 import '../browse/media_cards.dart';
+import '../../ui/widgets/text_context_menu.dart';
 
 /// 聚合搜索（docs/04-aggregation.md §4）：
 /// 本地索引立即出结果（支持拼音首字母 / 全拼），再并发查各服务器补齐，同一部作品合并显示资源数。
@@ -486,6 +487,7 @@ extension on _SearchPageState {
           const SizedBox(width: 18),
           Expanded(
             child: TextField(
+              contextMenuBuilder: textContextMenu,
               controller: _query,
               focusNode: _fieldFocus,
               autofocus: true,

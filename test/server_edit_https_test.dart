@@ -20,7 +20,8 @@ void main() {
     expect(httpsToggle().value, isFalse);
     expect(find.textContaining('所有线路使用 http://'), findsOneWidget);
 
-    await tester.enterText(find.byType(TextField).first, 'https://emby.example.com:8920');
+    // 第一个输入框是主线路名称，第二个是地址
+    await tester.enterText(find.byType(TextField).at(1), 'https://emby.example.com:8920');
     await tester.pump();
     expect(httpsToggle().value, isTrue);
     expect(find.textContaining('所有线路使用 https://'), findsOneWidget);

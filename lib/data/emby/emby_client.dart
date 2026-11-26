@@ -213,6 +213,23 @@ class EmbyClient {
   Future<Map<String, dynamic>> publicInfo() async =>
       (await _request('GET', '/System/Info/Public', auth: false)) as Map<String, dynamic>;
 
+  /// 服务器名（Emby Web 用户菜单里用户名下面那一行，如「纸片人小站」）。
+  /// 先读免登录的 /System/Info/Public；读不到（空名称、按 UA / 未登录拦截）时，已登录的 Emby / Jellyfin
+  /// 再读登录后的 /System/Info。都读不到返回空字符串
+  Future<String> serverName() async {
+    String pick(Object? m) => m is Map ? (m['ServerName'] as String?)?.trim() ?? '' : '';
+    try {
+      final n = pick(await publicInfo());
+      if (n.isNotEmpty) return n;
+    } catch (_) {}
+    if (!_server.loggedIn || (_server.type != ServerType.emby && _server.type != ServerType.jellyfin)) return '';
+    try {
+      return pick(await _request('GET', '/System/Info'));
+    } catch (_) {
+      return '';
+    }
+  }
+
   // ───────────────────────── 登录 ─────────────────────────
 
   Future<ServerConfig> login() async {

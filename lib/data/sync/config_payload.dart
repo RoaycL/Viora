@@ -161,7 +161,7 @@ SyncMergeResult mergeSyncPayload(AppConfig c, Map<String, dynamic> p, {bool repl
       if (lines.isEmpty) continue;
       final type = ServerType.parse(raw['type'] as String?);
       final username = (raw['username'] as String? ?? '').trim();
-      final password = raw['password'] as String? ?? '';
+      final incomingPassword = raw['password'] as String? ?? '';
       final name = (raw['name'] as String? ?? '').trim();
       final ua = (raw['userAgent'] as String?)?.trim();
       final i = list.indexWhere(
@@ -174,6 +174,9 @@ SyncMergeResult mergeSyncPayload(AppConfig c, Map<String, dynamic> p, {bool repl
       if (i >= 0) {
         final old = list[i];
         kept.add(old.id);
+        // 发过来的密码是空的（手机网页没填密码、对方设备上这台没存密码）：保留本机已有的密码，
+        // 不然本机能登录的服务器会被清空密码、退出登录
+        final password = incomingPassword.isEmpty ? old.password : incomingPassword;
         final credentials = old.password != password;
         final aggregate = raw['aggregate'] as bool?;
         // 内容没变的不算更新，不重新登录
@@ -206,7 +209,7 @@ SyncMergeResult mergeSyncPayload(AppConfig c, Map<String, dynamic> p, {bool repl
           name: name,
           lines: lines,
           username: username,
-          password: password,
+          password: incomingPassword,
           userAgent: ua?.isEmpty ?? true ? null : ua,
           adult: raw['adult'] as bool? ?? false,
           aggregate: raw['aggregate'] as bool? ?? true,
