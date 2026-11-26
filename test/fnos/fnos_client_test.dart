@@ -568,6 +568,8 @@ void main() {
     final client = _client(fake, url: '${fake.url}/v/');
     final img = client.image(const ImageRef('x', ImageKind.primary, tag: '/39/09/p.webp'), maxWidth: 300);
     expect(img.url.toString(), '${fake.url}/v/api/v1/sys/img/39/09/p.webp?w=300');
-    expect(img.headers.containsKey('Authorization'), isFalse);
+    // 有的飞牛版本图片也要令牌和签名：和接口一样带上
+    expect(img.headers['Cookie'], 'mode=relay');
+    expect(img.headers.containsKey('Authx'), isTrue);
   });
 }
