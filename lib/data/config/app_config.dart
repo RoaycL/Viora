@@ -8,7 +8,9 @@ import '../danmaku/danmaku_models.dart';
 
 enum ServerType {
   emby('Emby'),
-  jellyfin('Jellyfin');
+  jellyfin('Jellyfin'),
+  plex('Plex'),
+  fnos('飞牛影视');
 
   const ServerType(this.label);
   final String label;
