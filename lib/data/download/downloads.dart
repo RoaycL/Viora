@@ -248,6 +248,10 @@ class Downloads extends ChangeNotifier {
   @visibleForTesting
   static String? debugDir;
 
+  /// 等排队中的索引写入完成
+  @visibleForTesting
+  Future<void> debugFlush() => _saving;
+
   @visibleForTesting
   void debugReset() {
     _cancel?.cancel();
