@@ -654,6 +654,30 @@ class FnosClient extends EmbyClient {
   static ImageRef? _img(String owner, ImageKind kind, Object? path) =>
       path is String && path.isNotEmpty ? ImageRef(owner, kind, tag: path) : null;
 
+  /// 每台服务器上次因为图片失败去检查登录的时间：一屏几十张图同时失败只查一次，30 秒内不重复
+  static final _imageCheckAt = <String, DateTime>{};
+  static final _imageCheck = <String, Future<void>>{};
+
+  /// 封面加载失败：多半是令牌过期了（列表常从本地索引直接显示，封面先用旧令牌去请求）。
+  /// 调一个最便宜的接口，过期时 [_fn] 会自动重新登录并写回配置，客户端重建后图片带新令牌重新加载
+  @override
+  Future<void> onImageFailed() {
+    final id = _server.id;
+    final running = _imageCheck[id];
+    if (running != null) return running;
+    final last = _imageCheckAt[id];
+    if (_server.password.isEmpty || last != null && DateTime.now().difference(last) < const Duration(seconds: 30)) {
+      return Future.value();
+    }
+    _imageCheckAt[id] = DateTime.now();
+    return _imageCheck[id] = _fn('GET', '/user/info').then((_) {}, onError: (Object e) {
+      debugPrint('fnos image auth check failed: $e');
+    }).whenComplete(() {
+      // 不能写成 `=> _imageCheck.remove(id)`：remove 返回的正是这个 Future，会自己等自己
+      _imageCheck.remove(id);
+    });
+  }
+
   /// [ImageRef.tag] 里存的是飞牛的图片路径（如 /39/09/xxx.webp），`/sys/img` 按宽度缩放。
   /// 图片要登录：不带令牌时返回 200 + `{"code":-2,"msg":"Auth Failed"}`（2026-11 在真实服务器上核实，整页封面都是空的）。
   /// 网页端靠 Trim-MC-token cookie，这里和接口一样把令牌放在 Authorization（核实可用，不需要 Authx 签名）

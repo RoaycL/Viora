@@ -210,11 +210,13 @@ class CachedNetImage extends ImageProvider<CachedNetImage> {
     } catch (_) {}
   }
 
+  /// 请求头也算进图片的身份：飞牛的图要带登录令牌，令牌换了（重新登录）就是另一张图，
+  /// 不能一直沿用旧令牌那次失败的结果（以前只能等卡片尺寸变了、地址变了才重新加载）
   @override
-  bool operator ==(Object other) => other is CachedNetImage && other.url == url;
+  bool operator ==(Object other) => other is CachedNetImage && other.url == url && mapEquals(other.headers, headers);
 
   @override
-  int get hashCode => url.hashCode;
+  int get hashCode => Object.hash(url, Object.hashAllUnordered(headers.entries.map((e) => Object.hash(e.key, e.value))));
 
   @override
   String toString() => 'CachedNetImage($url)';

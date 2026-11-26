@@ -1012,6 +1012,10 @@ class EmbyClient {
 
   // ───────────────────────── 图片 ─────────────────────────
 
+  /// 一张服务器图片加载失败时调用（[ServerImage]）。Emby / Jellyfin 的图不用登录，什么都不做；
+  /// 飞牛会借此检查令牌是否过期，过期就重新登录
+  Future<void> onImageFailed() async {}
+
   ({Uri url, Map<String, String> headers}) image(ImageRef ref, {int maxWidth = 440}) {
     final c = composer;
     final kind = switch (ref.kind) {
