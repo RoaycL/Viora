@@ -142,9 +142,35 @@ class RequestComposer {
         if (server.token != null) h['X-Emby-Token'] = server.token!;
       case ServerType.jellyfin:
         h['Authorization'] = auth;
+      case ServerType.plex:
+        h.addAll(plexIdentityHeaders(config, appVersion));
+        h['Accept'] = 'application/json';
+        if (server.token != null) h['X-Plex-Token'] = server.token!;
     }
     return h;
   }
+}
+
+/// Plex 的客户端身份（docs/03-media-servers.md §3）。Client-Identifier 按安装区分（Plex 一个应用只算一台设备），
+/// plex.tv 登录、PIN 授权和访问服务器用同一个
+Map<String, String> plexIdentityHeaders(AppConfig config, String appVersion) {
+  final client = config.playback.clientName.trim();
+  final device = config.playback.deviceName.trim();
+  final platform = kIsWeb
+      ? 'Web'
+      : Platform.isAndroid
+      ? 'Android'
+      : Platform.isWindows
+      ? 'Windows'
+      : Platform.operatingSystem;
+  return {
+    'X-Plex-Client-Identifier': '${config.deviceId}-plex',
+    'X-Plex-Product': client.isEmpty ? 'Viora' : client,
+    'X-Plex-Version': appVersion,
+    'X-Plex-Device-Name': device.isEmpty ? defaultDeviceName() : device,
+    'X-Plex-Device': defaultDeviceName(),
+    'X-Plex-Platform': platform,
+  };
 }
 
 /// 局域网地址：私有网段 IPv4、localhost、`.local` / `.lan` 或不带点的主机名（如 `nas`）

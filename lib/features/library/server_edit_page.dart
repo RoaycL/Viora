@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
@@ -15,7 +17,7 @@ import '../../ui/widgets/buttons.dart';
 import '../../ui/widgets/form.dart';
 import '../../ui/widgets/toast.dart';
 
-/// 添加 / 编辑媒体服务器（Emby / Jellyfin）。
+/// 添加 / 编辑媒体服务器（Emby / Jellyfin / Plex）。
 ///
 /// 多条线路：每行一个地址，可写成 `名称 | 地址`，例如
 /// `主线路 | https://emby.example.com` 与 `CF | https://cf.example.com:8443`。
@@ -44,6 +46,13 @@ class _ServerEditPageState extends ConsumerState<ServerEditPage> {
   bool _busy = false;
   String? _error;
   ServerConfig? _existing;
+
+  /// plex.tv/link 授权码（正在等用户输入时显示）
+  String? _pinCode;
+  Timer? _pinTimer;
+
+  /// 每次重新获取授权码加 1：之前那次还没返回的结果直接丢掉
+  int _pinAttempt = 0;
 
   @override
   void initState() {
@@ -75,6 +84,8 @@ class _ServerEditPageState extends ConsumerState<ServerEditPage> {
 
   @override
   void dispose() {
+    _pinAttempt++;
+    _pinTimer?.cancel();
     for (final c in [_name, _lines, _user, _pass, _ua]) {
       c.dispose();
     }
@@ -109,6 +120,62 @@ class _ServerEditPageState extends ConsumerState<ServerEditPage> {
     if (url.isEmpty) return false;
     return isLanHost(Uri.tryParse(url.contains('://') ? url : 'http://$url')?.host ?? '');
   });
+
+  /// Plex：申请授权码，用户在手机 / 电脑上打开 plex.tv/link 输入后拿到账号令牌，填进密码框（用户名留空）并保存
+  Future<void> _startPlexPin() async {
+    _pinTimer?.cancel();
+    final attempt = ++_pinAttempt;
+    bool stale() => !mounted || attempt != _pinAttempt;
+    setState(() {
+      _error = null;
+      _pinCode = null;
+    });
+    final config = ref.read(configProvider);
+    try {
+      final pin = await PlexClient.createPin(config, appVersion);
+      if (stale()) return;
+      setState(() => _pinCode = pin.code);
+      final started = DateTime.now();
+      var checking = false;
+      _pinTimer = Timer.periodic(const Duration(seconds: 2), (t) async {
+        if (stale()) {
+          t.cancel();
+          return;
+        }
+        if (checking) return;
+        if (DateTime.now().difference(started) > const Duration(minutes: 10)) {
+          t.cancel();
+          if (mounted) setState(() => _pinCode = null);
+          return;
+        }
+        checking = true;
+        try {
+          final token = await PlexClient.checkPin(config, appVersion, pin.id);
+          if (token == null || stale()) return;
+          t.cancel();
+          setState(() {
+            _pinCode = null;
+            _user.clear();
+            _pass.text = token;
+          });
+          showToast('plex.tv 授权成功');
+          if (_lines.text.trim().isNotEmpty) unawaited(_save());
+        } catch (e) {
+          t.cancel();
+          if (!stale()) {
+            setState(() {
+              _pinCode = null;
+              _error = e.toString();
+            });
+          }
+        } finally {
+          checking = false;
+        }
+      });
+    } catch (e) {
+      if (!stale()) setState(() => _error = e.toString());
+    }
+  }
 
   Future<void> _save() async {
     setState(() {
@@ -190,16 +257,30 @@ class _ServerEditPageState extends ConsumerState<ServerEditPage> {
                     label: '服务器类型',
                     options: [for (final t in ServerType.values) (t, t.label)],
                     value: _type,
-                    onChanged: editing ? (_) {} : (t) => setState(() => _type = t),
+                    onChanged: editing
+                        ? (_) {}
+                        : (t) => setState(() {
+                            // 离开 Plex：作废还在等的 plex.tv 授权，免得它改掉其他类型服务器的账号密码并自动保存
+                            if (t != ServerType.plex) {
+                              _pinAttempt++;
+                              _pinTimer?.cancel();
+                              _pinCode = null;
+                            }
+                            _type = t;
+                          }),
                   ),
                   const SizedBox(height: 28),
                   VTextField(
                     label: '服务器地址（多条线路换行或用分号分隔，可写成"名称 | 地址"）',
                     controller: _lines,
                     autofocus: !editing,
-                    hint: _https ? 'emby.example.com:8920' : '192.168.1.10:8096',
+                    hint: _type == ServerType.plex
+                        ? (_https ? 'plex.example.com:443' : '192.168.1.10:32400')
+                        : (_https ? 'emby.example.com:8920' : '192.168.1.10:8096'),
                     keyboardType: TextInputType.url,
-                    helper: 'Emby 会自动补 /emby 路径；端口按地址里写的（Emby 默认 HTTP 8096 / HTTPS 8920）',
+                    helper: _type == ServerType.plex
+                        ? '填 Plex 服务器自己的地址（默认端口 32400）'
+                        : 'Emby 会自动补 /emby 路径；端口按地址里写的（Emby 默认 HTTP 8096 / HTTPS 8920）',
                   ),
                   const SizedBox(height: 16),
                   VToggle(
@@ -212,14 +293,52 @@ class _ServerEditPageState extends ConsumerState<ServerEditPage> {
                   Row(
                     children: [
                       Expanded(
-                        child: VTextField(label: '用户名', controller: _user, credential: true),
+                        child: VTextField(
+                          label: _type == ServerType.plex ? 'Plex 账号（邮箱或用户名）' : '用户名',
+                          controller: _user,
+                          credential: true,
+                        ),
                       ),
                       const SizedBox(width: 24),
                       Expanded(
-                        child: VTextField(label: '密码', controller: _pass, obscure: true),
+                        child: VTextField(
+                          label: '密码',
+                          controller: _pass,
+                          obscure: true,
+                          helper: _type == ServerType.plex ? '开了两步验证：密码后面直接接上 6 位验证码。账号留空时这里填 X-Plex-Token' : null,
+                        ),
                       ),
                     ],
                   ),
+                  if (_type == ServerType.plex) ...[
+                    const SizedBox(height: 20),
+                    Row(
+                      children: [
+                        PillButton(
+                          icon: Icons.link_rounded,
+                          label: _pinCode == null ? '用 plex.tv/link 授权登录' : '重新获取授权码',
+                          onPressed: _busy ? null : _startPlexPin,
+                        ),
+                        if (_pinCode != null) ...[
+                          const SizedBox(width: 28),
+                          Flexible(
+                            child: Text.rich(
+                              TextSpan(
+                                children: [
+                                  const TextSpan(text: '在手机或电脑上打开 plex.tv/link，输入  '),
+                                  TextSpan(
+                                    text: _pinCode,
+                                    style: VText.h1.copyWith(letterSpacing: 6, color: const Color(0xFFE5A00D)),
+                                  ),
+                                ],
+                              ),
+                              style: VText.label,
+                            ),
+                          ),
+                        ],
+                      ],
+                    ),
+                  ],
                   const SizedBox(height: 24),
                   Row(
                     children: [

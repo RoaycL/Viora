@@ -58,8 +58,18 @@ X-Emby-Authorization: MediaBrowser Client="Viora", Device="Living Room TV", Devi
 
 ## 3. Plex
 
-- 登录：`POST https://plex.tv/api/v2/pins` 获取 code → TV 上显示 `plex.tv/link` 与 4 位码（遥控器友好）→ 轮询 pin 拿到 `authToken`。
-- 服务器与线路：`GET https://plex.tv/api/v2/resources?includeHttps=1&includeRelay=1` 返回每台服务器的多个 `connections`（本地、远程、relay），直接映射为 `ServerLine`，复用测速与自动选线。
+实现：`lib/data/plex/plex_client.dart` 的 `PlexClient`，是 `EmbyClient` 的子类（同一个 Dart 库），线路、测速、代理、401 重新登录、上报队列沿用，接口与解析覆盖；`mediaServerClient()` 按 `ServerType` 创建。
+
+- 登录（三选一）：
+  - plex.tv 账号 + 密码：`POST https://plex.tv/users/sign_in.json`（两步验证的验证码接在密码后面）。
+  - `POST https://plex.tv/api/v2/pins` 获取 code → 页面显示 `plex.tv/link` 与 4 位码（遥控器友好）→ 每 2 秒轮询 pin 拿到 `authToken`，填进密码框、用户名留空。
+  - 用户名留空、密码直接填 `X-Plex-Token`。
+- 拿到账号令牌后用服务器的 `/identity` 里的 `machineIdentifier` 到 `GET https://plex.tv/api/v2/resources` 找这台服务器的 `accessToken`（共享服务器必须用它），找不到直接用账号令牌。
+- 服务器地址仍由用户手填（尚未用 `resources` 的 `connections` 自动生成线路）。
+- `X-Plex-Client-Identifier` 按安装（`{deviceId}-plex`），所有 Plex 服务器共用。
+- 没有对应能力：收藏（Plex 服务器上没有）、服务器在线字幕搜索（只用内置在线字幕来源）、用户头像。
+- 图片：`ImageRef.tag` 存 Plex 图片路径，经 `/photo/:/transcode` 缩放。
+- 跨库查询（搜索、最近看过）每个库取前 N 条合并排序；建索引时各库首尾相接分页。
 - 公共 Header：`X-Plex-Token`、`X-Plex-Client-Identifier`、`X-Plex-Product`、`X-Plex-Version`、`X-Plex-Platform`、`Accept: application/json`。
 
 | 用途 | 接口 |
@@ -68,11 +78,13 @@ X-Emby-Authorization: MediaBrowser Client="Viora", Device="Living Room TV", Devi
 | 条目 | `GET /library/sections/{id}/all?includeGuids=1&X-Plex-Container-Start=&X-Plex-Container-Size=` |
 | 详情 | `GET /library/metadata/{ratingKey}?includeMarkers=1&includeGuids=1&includeChapters=1` |
 | 季 / 集 | `GET /library/metadata/{ratingKey}/children` |
-| 继续观看 | `GET /hubs/continueWatching`（或 `/hubs/home/continueWatching`，按服务器版本兼容） |
-| 搜索 | `GET /hubs/search?query=` |
+| 继续观看 | `GET /hubs/continueWatching/items`，旧服务器退到 `/library/onDeck`（只保留看了一半的） |
+| 搜索 | 各库 `GET /library/sections/{id}/all?title=` 合并 |
 | 直链 | `Part.key`（`/library/parts/{id}/{ts}/file.mkv`）+ `X-Plex-Token` |
 | 进度 | `GET /:/timeline?ratingKey=&key=&state=playing|paused|stopped&time=&duration=` |
 | 片头片尾 | 详情返回的 `Marker`（`type=intro` / `credits`，单位毫秒） |
+| 缩略图 | `GET /library/parts/{partId}/indexes/sd`（BIF） |
+| 已看 | `GET /:/scrobble`、`/:/unscrobble?identifier=com.plexapp.plugins.library&key=` |
 
 ## 4. 多线路
 

@@ -1,7 +1,9 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io' show HandshakeException, HttpException, SocketException;
 import 'dart:math';
 
+import 'package:crypto/crypto.dart';
 import 'package:dio/dio.dart';
 import 'package:flutter/foundation.dart';
 
@@ -13,6 +15,8 @@ import '../config/app_config.dart';
 import '../media/media_models.dart';
 import '../media/zh.dart';
 import '../net/request_composer.dart';
+
+part '../plex/plex_client.dart';
 
 /// 交给播放器的最终请求：URL 已完成线路选择和代理改写，headers 含播放 UA 与鉴权。
 class PlaybackRequest {
@@ -88,6 +92,7 @@ String loginRejectedMessage(int status, Object? body, String where) {
 final Map<String, String> _autoLine = {};
 
 /// Emby / Jellyfin 客户端（两者 API 同源，差异见 docs/03-media-servers.md §2）。
+/// Plex 用子类 [PlexClient]（同一个库，复用线路、测速、重新登录与上报队列），用 [mediaServerClient] 按类型创建。
 class EmbyClient {
   EmbyClient({
     required this.config,
@@ -152,7 +157,7 @@ class EmbyClient {
   /// 测一条线路的延迟（3 次取中位数）；不可用返回 null。
   Future<int?> probe(ServerLine l, {Duration? timeout}) async {
     final c = composerFor(l);
-    final url = c.finalUrl(c.resolve('/System/Info/Public'), RequestKind.api);
+    final url = c.finalUrl(c.resolve(_probePath), RequestKind.api);
     final dio = _dio()..options.connectTimeout = const Duration(seconds: 5);
     final elapsed = Stopwatch()..start();
     final samples = <int>[];
@@ -198,6 +203,9 @@ class EmbyClient {
     }
     return _server;
   }
+
+  /// 测速用的免登录接口
+  String get _probePath => '/System/Info/Public';
 
   Future<Map<String, dynamic>> publicInfo() async =>
       (await _request('GET', '/System/Info/Public', auth: false)) as Map<String, dynamic>;
