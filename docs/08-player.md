@@ -65,7 +65,7 @@ v0.17.8-beta2 起（ExoPlayer FFmpeg 音频）：
 | FFmpeg 音频解码 | 电视既不能直通、又没有系统解码器的 DTS / DTS-HD / TrueHD 等音轨在 ExoPlayer 里用 FFmpeg 软解成 PCM，不再「设备不支持该音频格式」退回 mpv（mpv 在安卓上只能输出 SDR，HDR 就没了）。支持 AAC、MP3、AC3、E-AC3、TrueHD、DTS、Vorbis、Opus、AMR、FLAC、ALAC、G.711 |
 | 扩展渲染器排在后面 | `EXTENSION_RENDERER_MODE_ON`（原来是 `PREFER`，当时没有扩展、不影响）：系统解码器 / 直通优先，FFmpeg 只兜底。用 `PREFER` 的话 FFmpeg 排在前面，会把能直通的 AC3 / E-AC3 / TrueHD 也解成 PCM |
 | 媒体信息「音频输出」 | ExoPlayer 显示音频怎么输出：「直通 · Dolby TrueHD」「系统解码（c2.android.aac.decoder）→ PCM · 2 声道」「FFmpeg 软解 → PCM · 7.1 声道」 |
-| 续播不再多等一次条目请求 | 进入播放页要知道续播位置，原来总要再取一次单条详情（经反代约 1~2 秒，续播时最多等 3 秒才开始加载）。现在 10 分钟内从「继续观看」「最新」、集列表或详情页取到过的条目直接用；这台设备上报进度、标记已看 / 未看时清掉对应条目，不会用到自己改之前的旧进度。实现：`EmbyClient.recentItem` |
+| 续播不再多等一次条目请求 | 进入播放页要知道续播位置，原来总要再取一次单条详情（经反代约 1~2 秒，续播时最多等 3 秒才开始加载）。现在 10 分钟内从「继续观看」「最新」、集列表或详情页取到过的条目直接用；这台设备上报进度、标记已看 / 未看时（上报前和上报完成后各一次）清掉对应条目；在这之前发出的列表请求（比如退出播放后首页马上刷新「继续观看」）拿到的是旧进度，不记下来。实现：`EmbyClient.recentItem` |
 | 下一集播放信息补取 | 85% 时预加载的下一集播放信息只缓存 3 分钟，一集播完时常已过期，跳下一集还要重新请求。现在剩 90 秒或进入片尾后每 15 秒检查一次：缓存撑不到切下一集（剩余时间最多按 90 秒算，再留 30 秒余量）就重新取播放信息和条目，撑得到就不发请求 |
 
 扩展怎么来的：
@@ -73,6 +73,16 @@ v0.17.8-beta2 起（ExoPlayer FFmpeg 音频）：
 - 原生库：`android/app/src/main/jniLibs/<架构>/libffmpegJNI.so`（arm64-v8a、armeabi-v7a、x86_64），由 `android/ffmpeg/build.sh` 编译：FFmpeg 6.0.1 只开上面这些音频解码器，不加 `--enable-gpl` / `--enable-nonfree`，按 LGPL 2.1+ 授权，静态链接进单独的 `libffmpegJNI.so`；JNI 封装 `android/ffmpeg/ffmpeg_jni.cc` 同样取自 Media3 1.10.1
 - 编好的 .so 提交在仓库里，平时发布不重新编译。**升级 Media3 时**：换掉 Java 文件和 `ffmpeg_jni.cc`，运行 Actions →「FFmpeg 音频扩展」（`.github/workflows/ffmpeg.yml`）重新编译，把产物覆盖到 `jniLibs/` 提交
 - LGPL 要求注明：设置 →「关于与更新」显示「音频解码：FFmpeg 6.0（LGPL 2.1+）」（只在安卓上显示）
+
+v0.17.8-beta3 起（字幕样式，对标 VidHub）：
+
+| 设置 | 选项 | 说明 |
+| --- | --- | --- |
+| 颜色 | 白 / 黄 / 浅灰 | 文字颜色；HDR 字幕亮度在这个颜色上再调暗 |
+| 边框 | 默认 / 描边 / 阴影 / 背景框 | 「默认」保持原来的样子：mpv 白字黑描边 + 柔和阴影，ExoPlayer 跟随系统字幕样式（没开系统字幕时是黑色底框）。背景框是半透明黑底 |
+| 描边 / 阴影粗细 | 细 / 标准 / 粗 / 特粗（0.6 / 1 / 1.6 / 2.2 倍） | 选背景框时不显示。mpv 直接改描边宽度；ExoPlayer（Media3）的描边固定 2dp、不能设置，所以粗细不是标准时另建一个字幕视图，给它的 Context 乘上像素密度（字号按画面高度的比例算，不受影响），叠在原字幕视图上、字幕内容从播放器 `onCues` 拿（`SubtitleStyle.kt` 的 `SubtitleOverlay`） |
+
+位置：播放页「字幕 → 字幕样式」，随播放设置保存。ASS 等自带样式的字幕在 ExoPlayer 上仍按字幕自己的样式（`setApplyEmbeddedStyles(true)`）。实现：`lib/player/subtitle_look.dart`。
 
 v0.7.0 起可调（设置 → 播放）：
 
@@ -208,3 +218,11 @@ start(title, episode, source):
 - **切换资源**：记录当前位置 → `reportStop` 旧服务器 → `open` 新资源并 seek 到原位置 → `reportStart` 新服务器。
 - **切换线路**（播放中网络失败）：保持资源不变，只换线路重新 `open` 到当前位置。
 - 进度只上报给实际播放的服务器；本地 `watch_history` 记录跨服务器的统一进度，详情页"继续"按钮读取它。
+
+## 6. 离线下载
+
+- 入口：详情页选中版本后的下载按钮（电影 / 单集，远端聚合的版本不能下）；导航栏「下载」看进度、暂停 / 继续、删除、播放。
+- 下载的是原始文件（`client.stream` 的直链，不转码），一次只下一个，按 `Range` 断点续传；服务器不支持 206 时从头下。先写 `.part`，下完再改名。
+- 存放位置：Windows 在「下载/Viora」；安卓在应用专属外部存储的 `downloads`（不需要存储权限，卸载时一起删除）。列表存在应用数据目录的 `downloads.json`。
+- 播放：播放页起播前先看这一集有没有下载完的文件（启动时已读入下载列表，不等），有就直接播本地文件，不请求播放信息；条目详情 3 秒取不到就用下载时存的。
+- 进度：停止时本机记一份（下载页「继续播放」用）；照常上报服务器，没网时进 `PendingPlayReports`，下次启动有网再补报（只保留 3 天）。

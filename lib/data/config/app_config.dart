@@ -1,5 +1,6 @@
 import 'dart:math';
 
+import '../../player/subtitle_look.dart';
 import '../danmaku/danmaku_models.dart';
 
 /// 本地保存的全部配置（服务器、线路、反向代理、播放 UA 等），整体序列化为一个 JSON。
@@ -257,7 +258,11 @@ class PlaybackConfig {
     this.audioDelayMs = 0,
     this.mpvHardwareDecoding = true,
     this.hdrSubtitleBrightness = 1.0,
+    this.subtitleLook = const SubtitleLook(),
   });
+
+  /// 字幕颜色、边框、描边粗细（播放页「字幕 → 字幕样式」）
+  final SubtitleLook subtitleLook;
 
   /// mpv 硬解（播放设置 → 解码方式）。按设备保存、不跨设备同步
   final bool mpvHardwareDecoding;
@@ -360,6 +365,7 @@ class PlaybackConfig {
     int? audioDelayMs,
     bool? mpvHardwareDecoding,
     double? hdrSubtitleBrightness,
+    SubtitleLook? subtitleLook,
   }) => PlaybackConfig(
     userAgent: userAgent ?? this.userAgent,
     uaForApi: uaForApi ?? this.uaForApi,
@@ -384,6 +390,7 @@ class PlaybackConfig {
     audioDelayMs: audioDelayMs ?? this.audioDelayMs,
     mpvHardwareDecoding: mpvHardwareDecoding ?? this.mpvHardwareDecoding,
     hdrSubtitleBrightness: hdrSubtitleBrightness ?? this.hdrSubtitleBrightness,
+    subtitleLook: subtitleLook ?? this.subtitleLook,
   );
 
   Map<String, dynamic> toJson() => {
@@ -410,6 +417,9 @@ class PlaybackConfig {
     'audioDelayMs': audioDelayMs,
     'mpvHardwareDecoding': mpvHardwareDecoding,
     'hdrSubtitleBrightness': hdrSubtitleBrightness,
+    'subtitleColor': subtitleLook.color,
+    'subtitleEdge': subtitleLook.edge.name,
+    'subtitleOutline': subtitleLook.outline,
   };
 
   factory PlaybackConfig.fromJson(Map<String, dynamic> j) => PlaybackConfig(
@@ -436,6 +446,11 @@ class PlaybackConfig {
     audioDelayMs: ((j['audioDelayMs'] as num?)?.toInt() ?? 0).clamp(-audioDelayLimitMs, audioDelayLimitMs),
     mpvHardwareDecoding: j['mpvHardwareDecoding'] as bool? ?? true,
     hdrSubtitleBrightness: ((j['hdrSubtitleBrightness'] as num?)?.toDouble() ?? 1.0).clamp(0.2, 1.0),
+    subtitleLook: SubtitleLook(
+      color: (j['subtitleColor'] as num?)?.toInt() ?? SubtitleLook.white,
+      edge: SubtitleEdge.values.asNameMap()[j['subtitleEdge']] ?? SubtitleEdge.auto,
+      outline: ((j['subtitleOutline'] as num?)?.toDouble() ?? 1.0).clamp(0.3, 3.0),
+    ),
   );
 }
 

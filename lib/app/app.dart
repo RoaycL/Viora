@@ -34,6 +34,7 @@ import 'theme.dart';
 import 'window_frame.dart';
 import '../ui/focus/input_mode.dart';
 import '../features/sync/webdav_service.dart';
+import '../data/download/downloads.dart';
 
 /// 启动时的后台任务（检查更新、同步聚合索引）；测试环境中关闭。
 bool autoCheckUpdatesOnLaunch = true;
@@ -77,7 +78,7 @@ class _VioraAppState extends ConsumerState<VioraApp> with WidgetsBindingObserver
   /// Windows 标题栏的返回按钮是否显示：不在顶层页面（首页 / 资源库 / 搜索 / 收藏 / 记录 / 设置）时显示
   final _canGoBack = ValueNotifier(false);
 
-  static const _tabRoots = {'/', '/library', '/search', '/favorites', '/history', '/settings'};
+  static const _tabRoots = {'/', '/library', '/search', '/favorites', '/history', '/downloads', '/settings'};
 
   void _updateCanGoBack() {
     // 播放页左上角已经有自己的 ✕（跟着控制层显示 / 隐藏），标题栏不再重复放返回
@@ -123,6 +124,8 @@ class _VioraAppState extends ConsumerState<VioraApp> with WidgetsBindingObserver
     WidgetsBinding.instance.addObserver(this);
     _router.routerDelegate.addListener(_scheduleCanGoBack);
     _autoCheckUpdate();
+    // 下载列表先读进来：没网时从下载页或详情页直接播本地文件
+    unawaited(Downloads.instance.load());
     // 上次异常退出时残留的播放缓存
     if (ref.read(configProvider).playback.clearCacheOnExit) PlaybackCache.clear();
     // WebDAV 同步：启动时同步一次，之后配置变化后自动同步（没填 WebDAV 时什么都不做）
@@ -287,9 +290,16 @@ class _VioraAppState extends ConsumerState<VioraApp> with WidgetsBindingObserver
         child: _WithTitleBar(
           canGoBack: _canGoBack,
           onBack: _handleBack,
-          // Windows 离屏幕近，界面按 2240 宽的画布缩放（比电视的 1920 小约 15%），更精致
-          child: DesignScale(
-            designWidth: PlatformProfile.isDesktop ? 2240 : 1920,
+          // Windows 离屏幕近，界面按 2240 宽的画布缩放（比电视的 1920 小约 15%），更精致。
+          // 窗口窄于约 1340 时不再继续缩小（否则 960 宽的窗口正文只有 10 像素），改为画布变窄、列数变少
+          // 迷你播放器窗口（512×288，可缩到 320×180）的控件按整张画布排的，不用最小缩放
+          child: ValueListenableBuilder<bool>(
+            valueListenable: MiniPlayerWindow.active,
+            builder: (context, mini, content) => DesignScale(
+              designWidth: PlatformProfile.isDesktop ? 2240 : 1920,
+              minScale: PlatformProfile.isDesktop && !mini ? 0.6 : 0,
+              child: content!,
+            ),
             child: Stack(
               children: [
                 ?child,

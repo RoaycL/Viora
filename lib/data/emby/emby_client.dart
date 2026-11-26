@@ -494,17 +494,19 @@ class EmbyClient {
   }
 
   Future<List<MediaItem>> latest({String? parentId, int limit = 20}) async {
+    final since = DateTime.now();
     final data = await _request(
       'GET',
       '/Users/${await _userId()}/Items/Latest',
       query: {'ParentId': ?parentId, 'Limit': '$limit', 'Fields': _userFields, ..._parentalQuery, ..._imageQuery},
     );
     final list = _allowed((data as List? ?? const []).cast<Map<String, dynamic>>().map(parseItem)).toList();
-    _remember(list);
+    _remember(list, since);
     return list;
   }
 
   Future<List<MediaItem>> resume({int limit = 20}) async {
+    final since = DateTime.now();
     final data = await _request(
       'GET',
       '/Users/${await _userId()}/Items/Resume',
@@ -515,7 +517,7 @@ class EmbyClient {
       throw const MediaServerException('服务器继续观看响应不完整');
     }
     final items = _allowed(list.map(parseItem)).toList();
-    _remember(items);
+    _remember(items, since);
     return items;
   }
 
@@ -529,10 +531,16 @@ class EmbyClient {
 
   String _recentKey(String id) => '${accountScope(_server)}/$id';
 
-  void _remember(Iterable<MediaItem> items) {
+  /// 什么时候清掉过（上报进度、标记已看）：在这之前发出的请求拿到的可能是旧进度，不记
+  static final _forgotAt = <String, DateTime>{};
+
+  /// [since]：这批条目的请求是什么时候发出的
+  void _remember(Iterable<MediaItem> items, DateTime since) {
     final now = DateTime.now();
     for (final it in items) {
       final key = _recentKey(it.id);
+      final forgot = _forgotAt[key];
+      if (forgot != null && !forgot.isBefore(since)) continue;
       _recentItems.remove(key);
       _recentItems[key] = (now, it);
     }
@@ -549,14 +557,26 @@ class EmbyClient {
   }
 
   /// 进度 / 已看状态要变了：之后要用最新的就得重新取
-  void forgetItem(String id) => _recentItems.remove(_recentKey(id));
+  void forgetItem(String id) {
+    final key = _recentKey(id);
+    _recentItems.remove(key);
+    _forgotAt.remove(key);
+    _forgotAt[key] = DateTime.now();
+    while (_forgotAt.length > _recentItemLimit) {
+      _forgotAt.remove(_forgotAt.keys.first);
+    }
+  }
 
   @visibleForTesting
-  static void clearRecentItems() => _recentItems.clear();
+  static void clearRecentItems() {
+    _recentItems.clear();
+    _forgotAt.clear();
+  }
 
   Future<MediaItem> item(String id) async {
+    final since = DateTime.now();
     final it = await _item(id);
-    _remember([it]);
+    _remember([it], since);
     return it;
   }
 
@@ -676,13 +696,14 @@ class EmbyClient {
   }
 
   Future<List<MediaItem>> episodes(String seriesId, {String? seasonId}) async {
+    final since = DateTime.now();
     final data = await _request(
       'GET',
       '/Shows/$seriesId/Episodes',
       query: {'UserId': await _userId(), 'SeasonId': ?seasonId, 'Fields': _userFields, ..._imageQuery},
     ) as Map<String, dynamic>;
     final list = (data['Items'] as List? ?? const []).cast<Map<String, dynamic>>().map(parseItem).toList();
-    _remember(list);
+    _remember(list, since);
     return list;
   }
 
@@ -826,10 +847,15 @@ class EmbyClient {
     bool paused = false,
     String? event,
   }) {
+    // 上报前后都清：上报还没被服务器处理时发出的列表请求（比如退出播放后首页立刻刷新「继续观看」）
+    // 拿到的是旧进度，不能记下来给下次起播用
     forgetItem(s.itemId);
     final f = _sendReport(path, s, position, playSessionId, paused: paused, event: event);
     _pendingReports.add(f);
-    return f.whenComplete(() => _pendingReports.remove(f));
+    return f.whenComplete(() {
+      _pendingReports.remove(f);
+      forgetItem(s.itemId);
+    });
   }
 
   Future<bool> _sendReport(

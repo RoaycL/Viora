@@ -1,3 +1,5 @@
+import '../../data/download/downloads.dart';
+import '../downloads/downloads_page.dart' show formatBytes;
 import '../../ui/widgets/end_of_page.dart';
 
 import 'package:flutter/material.dart';
@@ -318,6 +320,10 @@ class _ItemDetailPageState extends ConsumerState<ItemDetailPage> {
     // 各服务器的进度不相通：用最近在哪台看过的进度（默认选中的版本可能在另一台服务器上）
     final resumeAt = latestProgress(options)?.position ?? playTarget?.position ?? Duration.zero;
     if (selected != null) _warmDefault(selected);
+    final canDownload =
+        selected != null &&
+        !selected.source.isRemote &&
+        (selected.item.kind == MediaKind.movie || selected.item.kind == MediaKind.episode);
     void play(SourceOption? o, {bool fromStart = false}) {
       final target = playTarget;
       if (target == null) return;
@@ -420,6 +426,7 @@ class _ItemDetailPageState extends ConsumerState<ItemDetailPage> {
               if (zh.overview?.isNotEmpty == true) 'overview',
               'favorite',
               'played',
+              if (canDownload) 'download',
             ],
             children: [
               (node) => PillButton(
@@ -463,6 +470,32 @@ class _ItemDetailPageState extends ConsumerState<ItemDetailPage> {
                 tooltip: played ? '标记未看' : '标记已看',
                 onPressed: () => _togglePlayed(item, !played),
               ),
+              if (canDownload)
+                (node) => ListenableBuilder(
+                  listenable: Downloads.instance,
+                  builder: (context, _) {
+                    final o = selected;
+                    final d = _findDownload(o);
+                    final state = d?.source.id == o.source.id ? d?.state : null;
+                    return CircleIconButton(
+                      focusNode: node,
+                      icon: switch (state) {
+                        DownloadState.done => Icons.download_done_rounded,
+                        DownloadState.downloading || DownloadState.queued => Icons.downloading_rounded,
+                        _ => Icons.download_rounded,
+                      },
+                      tooltip: switch (state) {
+                        DownloadState.done => '已下载（到「下载」页播放或删除）',
+                        DownloadState.downloading =>
+                          '下载中${d!.fraction == null ? '' : ' ${(d.fraction! * 100).toStringAsFixed(0)}%'}',
+                        DownloadState.queued => '等待下载',
+                        _ =>
+                          '下载这个版本（${o.source.resolutionLabel}${o.source.size == null ? '' : ' · ${formatBytes(o.source.size!)}'}）',
+                      },
+                      onPressed: () => _download(o),
+                    );
+                  },
+                ),
             ],
           ),
         ],
@@ -568,6 +601,41 @@ class _ItemDetailPageState extends ConsumerState<ItemDetailPage> {
       setState(() => _favorite = !value);
       showToast('操作失败：$e');
     }
+  }
+
+  /// 下载选中的版本；已下载完的到「下载」页，下载中的暂停
+  /// 当前账号下这个版本的下载
+  DownloadEntry? _findDownload(SourceOption o) {
+    final client = ref.read(serverClientProvider(o.item.serverId));
+    if (client == null) return null;
+    return Downloads.instance.find(
+      o.item.serverId,
+      o.item.id,
+      account: accountScope(client.server),
+      sourceId: o.source.id,
+    );
+  }
+
+  Future<void> _download(SourceOption o) async {
+    final d = _findDownload(o);
+    if (d != null && d.source.id == o.source.id) {
+      switch (d.state) {
+        case DownloadState.done:
+          context.go('/downloads');
+        case DownloadState.downloading || DownloadState.queued:
+          Downloads.instance.pause(d);
+          showToast('已暂停下载');
+        case DownloadState.paused || DownloadState.failed:
+          final client = ref.read(serverClientProvider(o.item.serverId));
+          if (client != null) Downloads.instance.resume(d, client);
+          showToast('继续下载');
+      }
+      return;
+    }
+    final client = ref.read(serverClientProvider(o.item.serverId));
+    if (client == null) return;
+    await Downloads.instance.add(client, o.item, o.source);
+    showToast('已开始下载，可在「下载」页查看进度');
   }
 
   Future<void> _togglePlayed(MediaItem item, bool value) async {

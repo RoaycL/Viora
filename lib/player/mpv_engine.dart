@@ -305,6 +305,10 @@ class MpvEngine extends PlayerEngine {
   final _subScale = ValueNotifier(1.0);
   final _subPos = ValueNotifier(100);
   final _subBrightness = ValueNotifier(1.0);
+  final _subLook = ValueNotifier(const SubtitleLook());
+
+  @override
+  Future<void> setSubtitleLook(SubtitleLook look) async => _subLook.value = look;
 
   @override
   Future<void> setSubtitleScale(double scale) async => _subScale.value = scale;
@@ -379,7 +383,7 @@ class MpvEngine extends PlayerEngine {
           },
         ),
       ),
-      MpvSubtitleView(player: _player, scale: _subScale, position: _subPos, brightness: _subBrightness),
+      MpvSubtitleView(player: _player, scale: _subScale, position: _subPos, brightness: _subBrightness, look: _subLook),
     ],
   );
 
@@ -409,12 +413,16 @@ class MpvSubtitleView extends StatefulWidget {
     required this.scale,
     required this.position,
     this.brightness,
+    this.look,
   });
 
   final Player player;
 
   /// 字幕亮度（1 = 白色；HDR 片源上调暗）
   final ValueListenable<double>? brightness;
+
+  /// 字幕颜色、边框、描边粗细；null = 默认
+  final ValueListenable<SubtitleLook>? look;
 
   /// 字幕大小倍数（1 = 标准）
   final ValueListenable<double> scale;
@@ -469,7 +477,7 @@ class _MpvSubtitleViewState extends State<MpvSubtitleView> {
     return IgnorePointer(
       child: LayoutBuilder(
         builder: (context, c) => ListenableBuilder(
-          listenable: Listenable.merge([widget.scale, widget.position, ?widget.brightness]),
+          listenable: Listenable.merge([widget.scale, widget.position, ?widget.brightness, ?widget.look]),
           builder: (context, _) {
             // 跟 media_kit 原来的字幕一样按画面面积缩放（以 1080p 为准），再乘上字幕大小设置
             final size = c.biggest;
@@ -487,12 +495,14 @@ class _MpvSubtitleViewState extends State<MpvSubtitleView> {
                         text: text,
                         fontSize: MpvSubtitleView.fontSize(size, widget.scale.value),
                         brightness: widget.brightness?.value ?? 1,
+                        look: widget.look?.value ?? const SubtitleLook(),
                       ),
                     if (secondary.isNotEmpty)
                       _OutlinedSubtitle(
                         text: secondary,
                         fontSize: MpvSubtitleView.fontSize(size, widget.scale.value) * 0.8,
                         brightness: widget.brightness?.value ?? 1,
+                        look: widget.look?.value ?? const SubtitleLook(),
                       ),
                   ],
                 ),
@@ -505,41 +515,83 @@ class _MpvSubtitleViewState extends State<MpvSubtitleView> {
   }
 }
 
-/// 字幕文字：白字、黑色描边、柔和阴影（深色、浅色画面上都看得清，又不遮住画面）
+/// 字幕文字。默认白字、黑色描边、柔和阴影（深色、浅色画面上都看得清，又不遮住画面）；
+/// 「字幕样式」可改颜色、换成只有阴影或半透明底框、调描边粗细
 class _OutlinedSubtitle extends StatelessWidget {
-  const _OutlinedSubtitle({required this.text, required this.fontSize, this.brightness = 1});
+  const _OutlinedSubtitle({
+    required this.text,
+    required this.fontSize,
+    this.brightness = 1,
+    this.look = const SubtitleLook(),
+  });
 
   final String text;
   final double fontSize;
   final double brightness;
+  final SubtitleLook look;
 
   @override
   Widget build(BuildContext context) {
     final style = TextStyle(fontSize: fontSize, height: 1.3, fontWeight: FontWeight.w500, letterSpacing: 0.5);
-    return Stack(
-      children: [
-        Text(
-          text,
-          textAlign: TextAlign.center,
-          textScaler: TextScaler.noScaling,
-          style: style.copyWith(
-            foreground: Paint()
-              ..style = PaintingStyle.stroke
-              ..strokeWidth = (fontSize * 0.1).clamp(1.5, 5.0)
-              ..strokeJoin = StrokeJoin.round
-              ..color = const Color(0xE6000000),
-            shadows: [
-              Shadow(color: const Color(0x99000000), blurRadius: fontSize * 0.3, offset: Offset(0, fontSize * 0.05)),
-            ],
-          ),
-        ),
-        Text(
-          text,
-          textAlign: TextAlign.center,
-          textScaler: TextScaler.noScaling,
-          style: style.copyWith(color: Color.lerp(Colors.black, Colors.white, brightness)),
-        ),
-      ],
+    final k = look.outline;
+    final fill = Text(
+      text,
+      textAlign: TextAlign.center,
+      textScaler: TextScaler.noScaling,
+      style: style.copyWith(
+        color: Color.lerp(Colors.black, Color(look.color), brightness),
+        shadows: switch (look.edge) {
+          SubtitleEdge.shadow => [
+            Shadow(
+              color: const Color(0xE6000000),
+              blurRadius: fontSize * 0.08 * k,
+              offset: Offset(0, fontSize * 0.04 * k),
+            ),
+            Shadow(color: const Color(0x99000000), blurRadius: fontSize * 0.3 * k),
+          ],
+          _ => null,
+        },
+      ),
     );
+    switch (look.edge) {
+      case SubtitleEdge.shadow:
+        return fill;
+      case SubtitleEdge.box:
+        return DecoratedBox(
+          decoration: BoxDecoration(
+            color: const Color(0x99000000),
+            borderRadius: BorderRadius.circular(fontSize * 0.15),
+          ),
+          child: Padding(
+            padding: EdgeInsets.symmetric(horizontal: fontSize * 0.3, vertical: fontSize * 0.05),
+            child: fill,
+          ),
+        );
+      case SubtitleEdge.auto || SubtitleEdge.outline:
+        return Stack(
+          children: [
+            Text(
+              text,
+              textAlign: TextAlign.center,
+              textScaler: TextScaler.noScaling,
+              style: style.copyWith(
+                foreground: Paint()
+                  ..style = PaintingStyle.stroke
+                  ..strokeWidth = ((fontSize * 0.1).clamp(1.5, 5.0) * k).clamp(1.0, 11.0)
+                  ..strokeJoin = StrokeJoin.round
+                  ..color = const Color(0xE6000000),
+                shadows: [
+                  Shadow(
+                    color: const Color(0x99000000),
+                    blurRadius: fontSize * 0.3,
+                    offset: Offset(0, fontSize * 0.05),
+                  ),
+                ],
+              ),
+            ),
+            fill,
+          ],
+        );
+    }
   }
 }

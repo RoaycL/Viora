@@ -32,6 +32,7 @@ import '../../data/media/server_registry.dart';
 import '../../domain/models/segment.dart';
 import '../../domain/models/segment_settings.dart';
 import '../../player/chapters.dart';
+import '../../data/download/downloads.dart';
 import '../../player/engine.dart';
 import '../../player/sleep_timer.dart';
 import '../../player/exo_engine.dart';
@@ -726,19 +727,40 @@ class _PlayerPageState extends ConsumerState<PlayerPage> with WidgetsBindingObse
       // 条目（要用其中的续播位置）：10 分钟内从服务器取到过的直接用（首页继续观看、详情页、集列表都会取），
       // 不用在起播前再等一次单条详情；这台设备上报过进度后会重新取
       final recent = _item ?? client.recentItem(widget.itemId);
-      final itemFuture = recent != null ? Future.value(recent) : client.item(widget.itemId);
+      // 已下载完：直接播本地文件，不请求播放信息（没有网络也能看）。下载列表启动时就在读，这里不等它
+      final downloads = Downloads.instance;
+      final downloaded = downloads.loaded
+          ? downloads.playable(
+              widget.serverId,
+              widget.itemId,
+              account: accountScope(client.server),
+              sourceId: sourceId ?? widget.sourceId,
+            )
+          : null;
+      // 儿童模式下看不到的条目不走本地文件（和列表里的过滤一致）
+      final local = downloaded != null && itemVisible(ref.read(configProvider), downloaded.item) ? downloaded : null;
+      final itemFuture = recent != null
+          ? Future.value(recent)
+          : local != null
+          ? client.item(widget.itemId).timeout(const Duration(seconds: 3)).catchError((Object _) => local.item)
+          : client.item(widget.itemId);
       itemFuture.ignore();
       // 剧集的剧信息和条目一起提前取（片头跳过起播、片头片尾查询都要用）
       itemFuture.then((it) {
         if (it.kind == MediaKind.episode && it.seriesId != null) _seriesItem(client, it.seriesId!).ignore();
       }, onError: (_) {});
-      final info = await PlaybackPreloader.info(client, widget.serverId, widget.itemId);
+      final info = local != null
+          ? (sources: [local.source], playSessionId: null)
+          : await PlaybackPreloader.info(client, widget.serverId, widget.itemId);
       if (info.sources.isEmpty) throw const MediaServerException('没有可播放的资源');
       final wanted = sourceId ?? widget.sourceId;
       final source = info.sources.where((s) => s.id == wanted).firstOrNull ?? info.sources.first;
       _source = source;
       _knownSources = info.sources;
-      _request = client.stream(source, playSessionId: info.playSessionId);
+      _request = local != null
+          ? PlaybackRequest(url: Uri.file(local.path), headers: const {}, userAgent: '')
+          : client.stream(source, playSessionId: info.playSessionId);
+      if (local != null) AppLog.add('[play] 播放已下载的文件 ${local.path}');
       if (!mounted) return;
       setState(() {
         _source = source;
@@ -805,6 +827,15 @@ class _PlayerPageState extends ConsumerState<PlayerPage> with WidgetsBindingObse
         '[play] 停止上报 ${widget.itemId} 位置 ${formatClock(position)} / ${formatClock(duration)}${completed ? '（播完）' : ''}',
       );
       PlayHistory.record(widget.serverId, widget.itemId, scope: accountScope(client.server));
+      // 已下载的条目在本机也记一份进度（离线时下载页从这里继续播）
+      final total = duration.inMilliseconds;
+      Downloads.instance.recordProgress(
+        widget.serverId,
+        widget.itemId,
+        position,
+        account: accountScope(client.server),
+        played: completed || (total > 0 && position.inMilliseconds >= total * 0.9),
+      );
       // 继续观看先按本机的进度显示（不等服务器刷新回来）；看到 90% 以上服务器会标为已看，这里也移出。
       // 这里常在页面销毁过程中，不能马上改 provider：放到下一轮再写
       final item = _item;
@@ -1635,6 +1666,11 @@ class _PlayerPageState extends ConsumerState<PlayerPage> with WidgetsBindingObse
     showToast(_state.video.hdr != null ? 'HDR 字幕亮度：$pct' : 'HDR 字幕亮度：$pct（播放 HDR 片源时生效）');
   }
 
+  void _setSubtitleLook(SubtitleLook look) {
+    ref.read(configProvider.notifier).update((c) => c.copyWith(playback: c.playback.copyWith(subtitleLook: look)));
+    unawaited(_engine?.setSubtitleLook(look));
+  }
+
   /// mpv 硬解 / 软解切换：立即生效，按设备保存
   void _toggleHardwareDecoding() {
     final engine = _engine;
@@ -1890,6 +1926,8 @@ class _PlayerPageState extends ConsumerState<PlayerPage> with WidgetsBindingObse
     if (_subDelay != Duration.zero) await engine.setSubtitleDelay(_subDelay);
     _appliedHdr = null;
     _applySubtitleBrightness(engine);
+    final look = ref.read(configProvider).playback.subtitleLook;
+    if (!look.isDefault) await engine.setSubtitleLook(look);
     final audioDelay = ref.read(configProvider).playback.audioDelayMs;
     if (audioDelay != 0 && engine.supportsAudioDelay) await engine.setAudioDelay(Duration(milliseconds: audioDelay));
   }
@@ -2209,6 +2247,16 @@ class _PlayerPageState extends ConsumerState<PlayerPage> with WidgetsBindingObse
     ];
   }
 
+  static String _subtitleLookLabel(SubtitleLook look) {
+    if (look.isDefault) return '默认';
+    String of<T>(List<(T, String)> options, T v) => options.where((o) => o.$1 == v).firstOrNull?.$2 ?? '';
+    return [
+      if (look.color != SubtitleLook.white) of(SubtitleLook.colors, look.color),
+      if (look.edge != SubtitleEdge.auto) of(SubtitleLook.edges, look.edge),
+      if (look.outline != 1.0 && look.edge != SubtitleEdge.box) of(SubtitleLook.outlines, look.outline),
+    ].join(' · ');
+  }
+
   Future<void> _openSubtitleMenu() =>
       _menu(() => showContextMenu(context, anchored: true, title: '字幕', actionsBuilder: _subtitleItems));
 
@@ -2278,6 +2326,36 @@ class _PlayerPageState extends ConsumerState<PlayerPage> with WidgetsBindingObse
           for (final (v, label) in PlaybackConfig.subtitleScales)
             MenuAction('$label${v == scale ? '  ✓' : ''}', Icons.format_size_rounded, () => _setSubtitleScale(v)),
         ],
+      ),
+      MenuAction.submenu(
+        '字幕样式 · ${_subtitleLookLabel(ref.read(configProvider).playback.subtitleLook)}',
+        Icons.text_format_rounded,
+        title: '字幕样式（ASS 等自带样式的字幕在电视上按字幕自己的样式）',
+        items: () {
+          final look = ref.read(configProvider).playback.subtitleLook;
+          String mark(bool on) => on ? '  ✓' : '';
+          return [
+            for (final (v, label) in SubtitleLook.colors)
+              MenuAction(
+                '颜色 · $label${mark(v == look.color)}',
+                Icons.format_color_text_rounded,
+                () => _setSubtitleLook(SubtitleLook(color: v, edge: look.edge, outline: look.outline)),
+              ),
+            for (final (v, label) in SubtitleLook.edges)
+              MenuAction(
+                '边框 · $label${mark(v == look.edge)}',
+                Icons.border_style_rounded,
+                () => _setSubtitleLook(SubtitleLook(color: look.color, edge: v, outline: look.outline)),
+              ),
+            if (look.edge != SubtitleEdge.box)
+              for (final (v, label) in SubtitleLook.outlines)
+                MenuAction(
+                  '${look.edge == SubtitleEdge.shadow ? '阴影' : '描边'}粗细 · $label${mark(v == look.outline)}',
+                  Icons.line_weight_rounded,
+                  () => _setSubtitleLook(SubtitleLook(color: look.color, edge: look.edge, outline: v)),
+                ),
+          ];
+        },
       ),
       MenuAction.submenu(
         'HDR 字幕亮度 · ${DanmakuConfig.labelOf(PlaybackConfig.hdrSubtitleBrightnesses, ref.read(configProvider).playback.hdrSubtitleBrightness)}',

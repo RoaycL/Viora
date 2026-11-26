@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 
+import '../features/downloads/downloads_page.dart';
 import '../features/browse/server_page.dart';
 import '../features/collections/collections_pages.dart';
 import '../features/detail/item_detail_page.dart';
@@ -67,6 +68,7 @@ GoRouter buildRouter({List<NavigatorObserver>? observers}) {
           ),
           _tab('/favorites', const FavoritesPage()),
           _tab('/history', const HistoryPage()),
+          _tab('/downloads', const DownloadsPage()),
           _tab('/settings', const SettingsPage()),
         ],
       ),

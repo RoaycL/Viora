@@ -323,18 +323,20 @@ class FnosClient extends EmbyClient {
 
   @override
   Future<List<MediaItem>> latest({String? parentId, int limit = 20}) async {
+    final since = DateTime.now();
     final page = await items(parentId: parentId, limit: limit);
-    _remember(page.items);
+    _remember(page.items, since);
     return page.items;
   }
 
   @override
   Future<List<MediaItem>> resume({int limit = 20}) async {
+    final since = DateTime.now();
     await _ensureGenres();
     final list = _maps(await _fn('GET', '/play/list'));
     await _learnEpisodes(list);
     final items = _allowed(list.map(parseItem).where((it) => it.position > Duration.zero)).take(limit).toList();
-    _remember(items);
+    _remember(items, since);
     return items;
   }
 
@@ -371,6 +373,7 @@ class FnosClient extends EmbyClient {
 
   @override
   Future<List<MediaItem>> episodes(String seriesId, {String? seasonId}) async {
+    final since = DateTime.now();
     final seasonIds = seasonId != null
         ? [seasonId]
         : [for (final j in _maps(await _fn('GET', '/season/list/$seriesId'))) '${j['guid']}'];
@@ -383,7 +386,7 @@ class FnosClient extends EmbyClient {
         for (final j in p)
           if (j['type'] == 'Episode') parseItem(j),
     ];
-    _remember(list);
+    _remember(list, since);
     return list;
   }
 

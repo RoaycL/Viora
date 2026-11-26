@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
@@ -67,5 +68,33 @@ void main() {
     expect(_client(url, userId: 'u2').recentItem('e1'), isNull);
     _client(url).forgetItem('e1');
     expect(_client(url).recentItem('e1'), isNull);
+  });
+
+  test('上报进度还没完成时发出的列表请求拿到的是旧进度，不记下来', () async {
+    final gate = Completer<void>();
+    final http = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+    addTearDown(() => http.close(force: true));
+    http.listen((request) async {
+      await gate.future;
+      request.response.headers.contentType = ContentType.json;
+      request.response.write(
+        jsonEncode({
+          'Items': [
+            {'Id': 'e1', 'Type': 'Episode', 'Name': '旧进度'},
+          ],
+          'TotalRecordCount': 1,
+        }),
+      );
+      await request.response.close();
+    });
+    final c = _client('http://127.0.0.1:${http.port}');
+    final pending = c.resume();
+    await Future<void>.delayed(const Duration(milliseconds: 20));
+    c.forgetItem('e1'); // 这时播放页上报了进度
+    gate.complete();
+    expect((await pending).single.name, '旧进度');
+    expect(c.recentItem('e1'), isNull);
+    await c.resume();
+    expect(c.recentItem('e1')?.name, '旧进度');
   });
 }

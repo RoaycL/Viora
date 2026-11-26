@@ -38,14 +38,36 @@ class ExoPlugin(private val activity: Activity, engine: FlutterEngine) {
     private val resizeModes = mutableMapOf<Int, Int>()
     private val subtitleScales = mutableMapOf<Int, Float>()
     private val subtitleBrightness = mutableMapOf<Int, Float>()
+    private val subtitleLooks = mutableMapOf<Int, SubtitleLook>()
+
+    /** 调了描边粗细时叠在原字幕视图上的那个（见 [SubtitleOverlay]） */
+    private val overlays = mutableMapOf<Int, SubtitleOverlay>()
+
+    private fun removeOverlay(id: Int) {
+        overlays.remove(id)?.remove()
+    }
 
     private fun applyView(id: Int) {
         val view = views[id] ?: return
         view.resizeMode = resizeModes[id] ?: AspectRatioFrameLayout.RESIZE_MODE_FIT
-        view.subtitleView?.setFractionalTextSize(
+        val original = view.subtitleView ?: return
+        val look = subtitleLooks[id] ?: SubtitleLook.DEFAULT
+        val player = players[id]?.player
+        if (player != null && look.needsOverlay(original.context)) {
+            if (overlays[id]?.outline != look.outline) {
+                removeOverlay(id)
+                overlays[id] = SubtitleOverlay(original, player, look.outline)
+            }
+        } else {
+            removeOverlay(id)
+        }
+        val subtitles = overlays[id]?.view ?: original
+        subtitles.setApplyEmbeddedStyles(true)
+        subtitles.setFractionalTextSize(
             androidx.media3.ui.SubtitleView.DEFAULT_TEXT_SIZE_FRACTION * (subtitleScales[id] ?: 1f)
         )
-        view.subtitleView?.applyBrightness(subtitleBrightness[id] ?: 1f)
+        look.applyTo(subtitles)
+        subtitles.applyBrightness(subtitleBrightness[id] ?: 1f)
     }
     private var nextId = 1
     private var sink: EventChannel.EventSink? = null
@@ -128,6 +150,13 @@ class ExoPlugin(private val activity: Activity, engine: FlutterEngine) {
                         }
                         result.success(null)
                     }
+                    "setSubtitleLook" -> {
+                        if (id != null) {
+                            subtitleLooks[id] = SubtitleLook.from(call.arguments as? Map<*, *>)
+                            applyView(id)
+                        }
+                        result.success(null)
+                    }
                     "addSubtitle" -> {
                         p?.addSubtitle(call.argument<String>("url")!!, call.argument("title"), call.argument("language"))
                         result.success(null)
@@ -138,6 +167,8 @@ class ExoPlugin(private val activity: Activity, engine: FlutterEngine) {
                         resizeModes.remove(id)
                         subtitleScales.remove(id)
                         subtitleBrightness.remove(id)
+                        subtitleLooks.remove(id)
+                        if (id != null) removeOverlay(id)
                         updateKeepScreenOn()
                         if (players.isEmpty()) restoreDisplayMode()
                         result.success(null)
@@ -247,7 +278,10 @@ class ExoPlugin(private val activity: Activity, engine: FlutterEngine) {
 
                 override fun dispose() {
                     view.player = null
-                    if (id != null && views[id] === view) views.remove(id)
+                    if (id != null && views[id] === view) {
+                        removeOverlay(id)
+                        views.remove(id)
+                    }
                 }
             }
         }
