@@ -45,16 +45,25 @@ class ServerImage extends ConsumerWidget {
     if (client == null || image == null) return fallback;
     final px = ImageSizing.physicalWidth(context, width);
     final req = client.image(image!, maxWidth: px);
+    // 磁盘缓存 + 按显示尺寸解码（大图不会占满内存，电视盒子尤其重要）
+    final provider = netImage(req.url.toString(), headers: req.headers, cacheWidth: px);
     return Image(
-      // 磁盘缓存 + 按显示尺寸解码（大图不会占满内存，电视盒子尤其重要）
-      image: netImage(req.url.toString(), headers: req.headers, cacheWidth: px),
+      image: provider,
       fit: fit,
       alignment: alignment,
       gaplessPlayback: true,
       filterQuality: FilterQuality.medium,
       frameBuilder: (context, child, frame, sync) =>
           sync ? child : ImageFadeIn(loaded: frame != null, placeholder: fallback, child: child),
-      errorBuilder: (_, _, _) => errorFallback ?? fallback,
+      errorBuilder: (_, _, _) {
+        // 失败的结果会一直留在图片缓存里，之后同一张图再显示也直接是失败（以前要鼠标移上去、
+        // 卡片尺寸变了才会重新加载）。清掉它，下次重建时重新请求；顺便让客户端检查登录是否过期
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          provider.evict();
+          client.onImageFailed();
+        });
+        return errorFallback ?? fallback;
+      },
     );
   }
 }

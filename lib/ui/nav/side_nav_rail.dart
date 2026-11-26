@@ -163,8 +163,10 @@ class _SideNavRailState extends State<SideNavRail> {
                         const SizedBox(height: 14),
                       ],
                       // 资源库里右键「添加到侧边栏」的服务器
-                      // 固定的服务器多了放不下时可以滚动，不把「设置」挤出去
+                      // 固定的服务器多了放不下时可以滚动，不把「设置」挤出去。
+                      // 撑满高度时它要吃掉剩下的全部空间（不能再和 Spacer 平分），「设置」才会贴到最下面
                       Flexible(
+                        fit: compact ? FlexFit.loose : FlexFit.tight,
                         child: SingleChildScrollView(
                           clipBehavior: Clip.none,
                           child: _PinnedServers(
@@ -181,9 +183,7 @@ class _SideNavRailState extends State<SideNavRail> {
                           width: 32,
                           height: 1,
                           color: const Color(0x24FFFFFF),
-                        )
-                      else
-                        const Spacer(),
+                        ),
                       _RailItem(
                         item: NavItem.settings,
                         node: widget.nodes[NavItem.settings.path]!,

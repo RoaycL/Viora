@@ -564,7 +564,7 @@ LinearGradient _typeGradient(ServerType type) => LinearGradient(
   },
 );
 
-/// Emby / Jellyfin 官方图标；Plex 画一个琥珀色的箭头、飞牛影视画一个蓝底的"飞"字（不打包它们的商标图）
+/// Emby / Jellyfin / 飞牛影视用官方图标；Plex 画一个琥珀色的箭头
 class ServerTypeLogo extends StatelessWidget {
   const ServerTypeLogo(this.type, {super.key});
 
@@ -573,7 +573,20 @@ class ServerTypeLogo extends StatelessWidget {
   @override
   Widget build(BuildContext context) => switch (type) {
     ServerType.plex => const AspectRatio(aspectRatio: 1, child: CustomPaint(painter: _ChevronPainter())),
-    ServerType.fnos => const AspectRatio(aspectRatio: 1, child: CustomPaint(painter: _FnosMarkPainter())),
+    // App Store 上「飞牛播放器」的官方图标是满版方图，这里自己切圆角，和系统里看到的一样
+    ServerType.fnos => AspectRatio(
+      aspectRatio: 1,
+      child: FractionallySizedBox(
+        widthFactor: 0.88,
+        heightFactor: 0.88,
+        child: LayoutBuilder(
+          builder: (context, c) => ClipRRect(
+            borderRadius: BorderRadius.circular(c.biggest.shortestSide * 0.22),
+            child: Image.asset('assets/images/fnos_logo.png', fit: BoxFit.cover, filterQuality: FilterQuality.medium),
+          ),
+        ),
+      ),
+    ),
     ServerType.emby || ServerType.jellyfin => Image.asset(
       type == ServerType.emby ? 'assets/images/emby_logo.png' : 'assets/images/jellyfin_logo.png',
       fit: BoxFit.contain,
@@ -602,31 +615,6 @@ class _ChevronPainter extends CustomPainter {
 
   @override
   bool shouldRepaint(_ChevronPainter oldDelegate) => false;
-}
-
-class _FnosMarkPainter extends CustomPainter {
-  const _FnosMarkPainter();
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    final w = size.shortestSide;
-    final rect = Rect.fromLTWH((size.width - w) / 2, (size.height - w) / 2, w, w).deflate(w * 0.06);
-    canvas.drawRRect(
-      RRect.fromRectAndRadius(rect, Radius.circular(w * 0.24)),
-      Paint()..color = const Color(0xFF2F6BFF),
-    );
-    final text = TextPainter(
-      text: TextSpan(
-        text: '飞',
-        style: TextStyle(color: Colors.white, fontSize: w * 0.56, fontWeight: FontWeight.w700, height: 1),
-      ),
-      textDirection: TextDirection.ltr,
-    )..layout();
-    text.paint(canvas, rect.center - Offset(text.width / 2, text.height / 2));
-  }
-
-  @override
-  bool shouldRepaint(_FnosMarkPainter oldDelegate) => false;
 }
 
 String _ago(DateTime? t) {

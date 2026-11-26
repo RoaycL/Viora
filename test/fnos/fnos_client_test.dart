@@ -571,4 +571,20 @@ void main() {
     // 图片要登录：不带令牌时服务器回 Auth Failed，封面全空
     expect(img.headers['Authorization'], 'tok-1');
   });
+
+  test('封面加载失败时检查登录：令牌过期就重新登录，之后的图片带新令牌；一屏同时失败只查一次', () async {
+    final fake = await _Fake.start();
+    addTearDown(() => fake.http.close(force: true));
+    fake.token = 'tok-2';
+    final client = _client(fake);
+    const ref = ImageRef('x', ImageKind.primary, tag: '/39/09/p.webp');
+    expect(client.image(ref).headers['Authorization'], 'tok-1');
+    await Future.wait([client.onImageFailed(), client.onImageFailed(), client.onImageFailed()]);
+    expect(fake.logins, 1);
+    expect(fake.to('/user/info').length, 3); // 旧令牌失败、登录时取用户信息、用新令牌重试
+    expect(client.image(ref).headers['Authorization'], 'tok-2');
+    // 30 秒内不重复检查
+    await client.onImageFailed();
+    expect(fake.to('/user/info').length, 3);
+  });
 }

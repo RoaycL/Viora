@@ -150,4 +150,13 @@ void main() {
       await server.close(force: true);
     });
   });
+
+  test('请求头算进图片身份：令牌换了是另一张图，不沿用旧令牌失败的结果', () {
+    const a = CachedNetImage('http://x/img', headers: {'Authorization': 'tok-1'});
+    const b = CachedNetImage('http://x/img', headers: {'Authorization': 'tok-1'});
+    const c = CachedNetImage('http://x/img', headers: {'Authorization': 'tok-2'});
+    expect(a, b);
+    expect(a.hashCode, b.hashCode);
+    expect(a == c, isFalse);
+  });
 }
