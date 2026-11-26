@@ -229,8 +229,11 @@ class PlexClient extends EmbyClient {
 
   /// 儿童模式：Plex 没有服务器端按分级过滤（Emby 的 MaxOfficialRating），集也要在本地按分级过滤
   @override
-  Iterable<MediaItem> _allowed(Iterable<MediaItem> items) =>
-      config.parental.enabled ? items.where((it) => config.parental.allows(it.officialRating)) : items;
+  Iterable<MediaItem> _allowed(Iterable<MediaItem> items) {
+    final list = items.toList();
+    SeriesRatings.remember(list);
+    return _parentalActive ? list.where((it) => config.parental.allows(SeriesRatings.effective(it))) : list;
+  }
 
   // ───────────────────────── 浏览 ─────────────────────────
 

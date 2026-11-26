@@ -5,6 +5,9 @@ name: FFmpeg 音频扩展
 on:
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 jobs:
   build:
     runs-on: ubuntu-latest

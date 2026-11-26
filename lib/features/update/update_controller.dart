@@ -12,6 +12,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import '../../data/config/config_store.dart';
 import '../../data/emby/emby_client.dart';
 import '../../data/net/request_composer.dart';
+import '../../player/active_playback.dart';
 import 'app_version.dart';
 import 'update_source.dart';
 
@@ -148,6 +149,12 @@ class UpdateController extends Notifier<UpdateState> {
   /// 这次检查 / 下载是否走反代：设置里打开了，或直连失败后的重试
   bool _viaProxy = false;
 
+  /// 设置里没打开「经反向代理更新」，但直连失败后改走了反代（更新弹窗里要告诉用户安装包从哪来）
+  bool get fellBackToProxy => _viaProxy && !settings.useProxy;
+
+  /// 反代地址的主机名（提示用）
+  String get proxyHost => Uri.tryParse(ref.read(configProvider).proxy.baseUrl)?.host ?? '';
+
   Future<UpdateSource> _source({bool? viaProxy}) async {
     final p = await packageInfo;
     final ua = 'Viora/${p.version} (${Platform.operatingSystem})';
@@ -218,6 +225,10 @@ class UpdateController extends Notifier<UpdateState> {
   /// 下载并安装。Windows 会启动安装程序并退出当前应用；Android 会打开系统安装界面。
   Future<void> downloadAndInstall(UpdateInfo info) async {
     try {
+      // 没有校验值的安装包不装：GitHub 和 CI 生成的 latest.json 都带 SHA-256，缺了说明更新信息不可信
+      if (!isValidSha256(info.sha256)) {
+        throw const FileSystemException('更新信息里没有安装包的 SHA-256 校验值，为安全起见不安装。请到项目主页手动下载');
+      }
       // 只复用同一个安装包：下载过旧版本没装、之后又出了新版本时，不能把旧的那个拿来装
       final reuse = _downloaded != null && _downloadedUrl == info.downloadUrl && await _downloaded!.exists();
       final file = reuse ? _downloaded! : await _download(info);
@@ -233,8 +244,8 @@ class UpdateController extends Notifier<UpdateState> {
     final dir = Directory('${(await getTemporaryDirectory()).path}${Platform.pathSeparator}updates');
     if (await dir.exists()) await dir.delete(recursive: true);
     await dir.create(recursive: true);
-    final name = info.downloadUrl.pathSegments.isEmpty ? 'viora-update' : info.downloadUrl.pathSegments.last;
-    final file = File('${dir.path}${Platform.pathSeparator}$name');
+    // 文件名固定，不用下载地址里的：地址末段解码后可能带 `..\` 等路径，写到 updates 目录外面
+    final file = File('${dir.path}${Platform.pathSeparator}${updateFileName(Platform.isWindows)}');
 
     final p = await packageInfo;
     final client = HttpClient()
@@ -270,19 +281,17 @@ class UpdateController extends Notifier<UpdateState> {
       client.close(force: true);
     }
 
-    final expected = info.sha256;
-    if (expected != null) {
-      final actual = (await sha256.bind(file.openRead()).first).toString();
-      if (actual != expected) {
-        await file.delete();
-        throw const FileSystemException('安装包校验失败（SHA-256 不一致），请重试');
-      }
+    final actual = (await sha256.bind(file.openRead()).first).toString();
+    if (actual != info.sha256) {
+      await file.delete();
+      throw const FileSystemException('安装包校验失败（SHA-256 不一致），请重试');
     }
     return file;
   }
 
   Future<void> _install(UpdateInfo info, File file) async {
     // 刚看完视频就更新：先等播放进度报给服务器（安装会结束应用，没发完的上报就丢了）
+    await ActivePlayback.stopAll();
     await EmbyClient.flushReports();
     if (Platform.isAndroid) {
       final result = await _channel.invokeMethod<String>('installApk', {'path': file.path});
@@ -311,5 +320,11 @@ class UpdateController extends Notifier<UpdateState> {
     _ => e.toString(),
   };
 }
+
+/// 下载到本地的安装包文件名
+String updateFileName(bool windows) => windows ? 'viora-update-setup.exe' : 'viora-update.apk';
+
+/// 64 位十六进制的 SHA-256
+bool isValidSha256(String? v) => v != null && RegExp(r'^[0-9a-f]{64}$').hasMatch(v);
 
 final updateControllerProvider = NotifierProvider<UpdateController, UpdateState>(UpdateController.new);

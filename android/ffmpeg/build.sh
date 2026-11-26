@@ -14,6 +14,8 @@ set -euo pipefail
 
 NDK="${1:?用法：build.sh <NDK 路径>}"
 FFMPEG_VERSION=6.0.1
+# ffmpeg-6.0.1.tar.xz 的 SHA-256（已用 FFmpeg 官方签名 ffmpeg-6.0.1.tar.xz.asc 验证过）；换版本时一起改
+FFMPEG_SHA256=9b16b8731d78e596b4be0d720428ca42df642bb2d78342881ff7f5bc29fc9623
 MIN_API=21
 DECODERS=(aac mp3 ac3 eac3 truehd mlp dca vorbis opus amrnb amrwb flac alac pcm_mulaw pcm_alaw)
 ABIS=(arm64-v8a armeabi-v7a x86_64)
@@ -29,6 +31,7 @@ mkdir -p "$WORK"
 cd "$WORK"
 if [[ ! -d "ffmpeg-$FFMPEG_VERSION" ]]; then
   curl -fsSL -o ffmpeg.tar.xz "https://ffmpeg.org/releases/ffmpeg-$FFMPEG_VERSION.tar.xz"
+  echo "$FFMPEG_SHA256  ffmpeg.tar.xz" | sha256sum -c -
   tar xf ffmpeg.tar.xz
 fi
 SRC="$WORK/ffmpeg-$FFMPEG_VERSION"

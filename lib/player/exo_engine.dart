@@ -30,21 +30,37 @@ class ExoEngine extends PlayerEngine {
   /// 是否运行在支持 ExoPlayer 的平台上
   static bool get supported => !kIsWeb && defaultTargetPlatform == TargetPlatform.android;
 
-  Future<int> _ensureCreated() async {
-    if (_id != null) return _id!;
+  /// 正在创建的原生播放器：起播时几个调用会同时进来，只创建一个（不然多建一个原生播放器，第二次 complete 还会抛错）
+  Future<int>? _creating;
+
+  Future<int> _ensureCreated() => _creating ??= _create();
+
+  Future<int> _create() async {
     _eventStream ??= _events.receiveBroadcastStream().cast<Map<Object?, Object?>>();
     _sub = _eventStream!.listen((e) {
       if (e['id'] == _id) _onEvent(e);
     });
-    final id = await _channel.invokeMethod<int>('create', {'bufferBytes': options.bufferBytes});
+    final id = (await _channel.invokeMethod<int>('create', {'bufferBytes': options.bufferBytes}))!;
     _id = id;
-    _idReady.complete(id!);
+    if (_disposed) {
+      // 创建过程中页面已经关了（dispose 时还没有 id，没能销毁）：在这里销毁，不留下原生播放器
+      await _channel.invokeMethod<void>('dispose', {'id': id});
+      throw StateError('ExoEngine disposed');
+    }
+    _idReady.complete(id);
     return id;
   }
 
   Future<void> _call(String method, [Map<String, Object?> args = const {}]) async {
     if (_disposed) return;
-    final id = await _ensureCreated();
+    final int id;
+    try {
+      id = await _ensureCreated();
+    } on StateError {
+      if (_disposed) return; // 创建期间被销毁
+      rethrow;
+    }
+    if (_disposed) return;
     await _channel.invokeMethod<void>(method, {'id': id, ...args});
   }
 

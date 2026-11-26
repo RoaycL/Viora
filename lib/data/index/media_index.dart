@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'dart:io';
+import 'dart:math';
 
 import 'package:flutter/foundation.dart';
 import 'package:path_provider/path_provider.dart';
@@ -73,9 +74,10 @@ class MediaIndex {
     ''');
     // v2：索引多了剧集的 DateLastMediaAdded（最近入库按新集排序）→ 下次同步时每台服务器全量重建一次
     final version = _db.select('PRAGMA user_version').first['user_version'] as int;
-    if (version < 2) {
+    // v3：以前开着儿童模式同步时，受限的片没有写进索引（全量同步还会把它们删掉）→ 再全量重建一次
+    if (version < 3) {
       _db.execute('UPDATE sync_state SET full_at = NULL');
-      _db.execute('PRAGMA user_version = 2');
+      _db.execute('PRAGMA user_version = 3');
     }
   }
 
@@ -183,7 +185,14 @@ class MediaIndex {
   }
 
   /// 开始一次全量同步，返回新的代号
-  int beginFull(String serverId) => syncState(serverId).gen + 1;
+  int beginFull(String serverId) {
+    // 新代号马上记下：全量同步中途中断时，已写入的条目用的是这个代号；下次全量要换一个新代号，
+    // 结束时才能把它们（若服务器上已删除）一起清掉
+    final used = _db.select('SELECT MAX(gen) AS g FROM items WHERE server_id = ?', [serverId]).first['g'] as int?;
+    final gen = max(syncState(serverId).gen, used ?? 0) + 1;
+    _setState(serverId, gen: gen);
+    return gen;
+  }
 
   /// 全量同步完成：删除这一轮没有出现的条目（服务器上已删除）
   void finishFull(String serverId, int gen) {
@@ -213,6 +222,13 @@ class MediaIndex {
 
   int count(String serverId) =>
       _db.select('SELECT COUNT(*) AS c FROM items WHERE server_id = ?', [serverId]).first['c'] as int;
+
+  /// 条目的分级（儿童模式判断单集时查所属剧集）
+  String? officialRating(String serverId, String itemId) {
+    final r = _db.select('SELECT json FROM items WHERE server_id = ? AND item_id = ?', [serverId, itemId]);
+    if (r.isEmpty) return null;
+    return (jsonDecode(r.first['json'] as String) as Map<String, Object?>)['or'] as String?;
+  }
 
   MediaItem _row(Row r) => MediaItem.fromIndexJson(
     r['server_id'] as String,

@@ -399,20 +399,22 @@ class Downloads extends ChangeNotifier {
     notifyListeners();
     final cancel = _cancel = CancelToken();
     final part = File(e.partPath);
-    var start = await part.exists() ? await part.length() : 0;
-    final req = client.stream(e.source);
-    final dio = Dio(
-      BaseOptions(
-        connectTimeout: const Duration(seconds: 15),
-        receiveTimeout: const Duration(seconds: 60),
-        headers: req.headers,
-        responseType: ResponseType.stream,
-        validateStatus: (s) => s != null && (s < 400 || s == 416),
-      ),
-    );
+    Dio? dio;
     IOSink? sink;
+    // 读已下载的部分、取播放地址也放进 try：存储读失败时要标成失败，不然一直停在「下载中」，点继续也没反应
     try {
-      Future<Response<ResponseBody>> get(int from) => dio.getUri<ResponseBody>(
+      var start = await part.exists() ? await part.length() : 0;
+      final req = client.stream(e.source);
+      final http = dio = Dio(
+        BaseOptions(
+          connectTimeout: const Duration(seconds: 15),
+          receiveTimeout: const Duration(seconds: 60),
+          headers: req.headers,
+          responseType: ResponseType.stream,
+          validateStatus: (s) => s != null && (s < 400 || s == 416),
+        ),
+      );
+      Future<Response<ResponseBody>> get(int from) => http.getUri<ResponseBody>(
         req.url,
         options: Options(headers: {if (from > 0) 'Range': 'bytes=$from-'}),
         cancelToken: cancel,
@@ -481,7 +483,7 @@ class Downloads extends ChangeNotifier {
         }
       }
     } finally {
-      dio.close(force: true);
+      dio?.close(force: true);
       if (identical(_cancel, cancel)) _cancel = null;
     }
     await _save();

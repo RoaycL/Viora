@@ -104,20 +104,26 @@ class ConfigReceiver {
         _json(res, 404, {'error': '没有这个地址'});
       }
     } catch (e) {
-      _json(res, 500, {'error': '$e'});
+      // 不把内部异常回给局域网里的请求方
+      debugPrint('sync receiver: $e');
+      _json(res, 500, {'error': '导入失败，请重试'});
     } finally {
       await res.close();
     }
   }
 
   Future<void> _import(HttpRequest req, HttpResponse res) async {
+    if (req.contentLength > maxBodyBytes) {
+      _json(res, 413, {'error': '内容太大'});
+      return;
+    }
     final bytes = <int>[];
     await for (final chunk in req) {
-      bytes.addAll(chunk);
-      if (bytes.length > maxBodyBytes) {
+      if (bytes.length + chunk.length > maxBodyBytes) {
         _json(res, 413, {'error': '内容太大'});
         return;
       }
+      bytes.addAll(chunk);
     }
     final Map<String, dynamic> body;
     try {

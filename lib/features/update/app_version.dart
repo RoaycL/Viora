@@ -21,7 +21,8 @@ class AppVersion implements Comparable<AppVersion> {
 
   bool get isBeta => beta != null;
 
-  static final _pattern = RegExp(r'^v?(\d+)\.(\d+)\.(\d+)(?:-beta\.?(\d+))?(?:[-+.](\d+))?');
+  /// 整串匹配：认不出的后缀（`-rc1`、`-alpha1`）整个不认，免得被当成正式版
+  static final _pattern = RegExp(r'^v?(\d+)\.(\d+)\.(\d+)(?:-beta\.?(\d+))?(?:[-+.](\d+))?$');
 
   static AppVersion? tryParse(String raw) {
     final m = _pattern.firstMatch(raw.trim());

@@ -249,12 +249,24 @@ class TmdbClient {
       TmdbRow.trendingWeek => tv({'sort_by': 'popularity.desc'}),
       TmdbRow.nowPlaying => movies({'sort_by': 'primary_release_date.desc', 'vote_count.gte': '50'}),
       TmdbRow.onTheAir => tv({'sort_by': 'first_air_date.desc', 'vote_count.gte': '20'}),
-      TmdbRow.animeToday => tv({'with_genres': '16', 'sort_by': 'popularity.desc'}),
+      // 番剧行：同时是动画和少儿类（只写 16 会把少儿类型的限制覆盖掉，推出青年向番剧）
+      TmdbRow.animeToday => tv({'with_genres': '16,10762', 'sort_by': 'popularity.desc'}),
       TmdbRow.topRatedTv => tv({'sort_by': 'vote_average.desc', 'vote_count.gte': '200'}),
     };
   }
 
+  /// 儿童模式：TMDB 上的作品只留动画、家庭、少儿类，成人内容一律不要（相似推荐、演员作品、播出平台都用它）
+  static const _kidsGenres = {16, 10751, 10762};
+
+  bool _kidsOk(Map<dynamic, dynamic> r) =>
+      r['adult'] != true &&
+      (r['genre_ids'] as List? ?? [for (final g in (r['genres'] as List? ?? const [])) (g as Map)['id']]).any(
+        _kidsGenres.contains,
+      );
+
+  /// 热门人物（儿童模式不显示：点进去是演员的全部作品）
   Future<List<TmdbPerson>> popularPeople() async {
+    if (kidsMaxAge != null) return const [];
     final j = await get('/person/popular', ttl: listTtl);
     return [
       for (final r in (j['results'] as List? ?? const [])) ?TmdbPerson.fromJson((r as Map).cast<String, dynamic>()),
@@ -263,7 +275,7 @@ class TmdbClient {
 
   /// 详情：演职员、Logo、相似推荐一次取回
   Future<TmdbTitle?> title(bool isTv, int id) async {
-    final j = await get(
+    var j = await get(
       '/${isTv ? 'tv' : 'movie'}/$id',
       query: {
         'append_to_response': '${isTv ? 'aggregate_credits' : 'credits'},recommendations,images,external_ids',
@@ -271,6 +283,18 @@ class TmdbClient {
       },
       ttl: detailTtl,
     );
+    if (kidsMaxAge != null) {
+      final recs = j['recommendations'];
+      if (recs is Map && recs['results'] is List) {
+        j = {
+          ...j,
+          'recommendations': {
+            ...recs,
+            'results': [for (final r in recs['results'] as List) if (r is Map && _kidsOk(r)) r],
+          },
+        };
+      }
+    }
     return TmdbTitle.fromJson(j, isTv: isTv);
   }
 
@@ -286,6 +310,7 @@ class TmdbClient {
     final j = await get('/person/$id', query: {'append_to_response': 'combined_credits'}, ttl: detailTtl);
     final credits =
         ((j['combined_credits'] as Map?)?['cast'] as List? ?? const [])
+            .where((c) => kidsMaxAge == null || (c is Map && _kidsOk(c)))
             .map((c) => TmdbTitle.fromJson((c as Map).cast<String, dynamic>()))
             .whereType<TmdbTitle>()
             .where((t) => t.posterPath != null)
@@ -304,7 +329,13 @@ class TmdbClient {
   Future<List<TmdbTitle>> network(int networkId, {int page = 1}) async => _titles(
     await get(
       '/discover/tv',
-      query: {'with_networks': '$networkId', 'sort_by': 'popularity.desc', 'page': '$page'},
+      query: {
+        'with_networks': '$networkId',
+        'sort_by': 'popularity.desc',
+        'page': '$page',
+        // 儿童模式：平台专区只列少儿、动画、家庭类
+        if (kidsMaxAge != null) ...{'with_genres': kidsMaxAge! <= 7 ? '10762' : '10762|16|10751', 'include_adult': 'false'},
+      },
       ttl: listTtl,
     ),
     isTv: true,

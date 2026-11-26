@@ -83,7 +83,20 @@ class CachedNetImage extends ImageProvider<CachedNetImage> {
     final bytes = await (_inflight[url] ??= _bytes().whenComplete(() {
       _inflight.remove(url);
     }));
-    return decode(await ui.ImmutableBuffer.fromUint8List(bytes));
+    try {
+      return await decode(await ui.ImmutableBuffer.fromUint8List(bytes));
+    } catch (_) {
+      // 缓存文件坏了（写到一半被强杀等）：删掉，下次重新下载，不会一直裂图
+      unawaited(_deleteCached());
+      rethrow;
+    }
+  }
+
+  Future<void> _deleteCached() async {
+    try {
+      final dir = await _cacheDir();
+      if (dir != null) await File('${dir.path}${Platform.pathSeparator}${_name(url)}').delete();
+    } catch (_) {}
   }
 
   Future<Uint8List> _bytes() async {
@@ -102,7 +115,13 @@ class CachedNetImage extends ImageProvider<CachedNetImage> {
     }
     final data = await _download();
     if (file != null) {
-      unawaited(file.writeAsBytes(data, flush: false).then((_) {}, onError: (_) {}));
+      // 先写临时文件再改名：写到一半被强杀不会留下半截的缓存
+      final tmp = File('${file.path}.tmp');
+      unawaited(
+        tmp.writeAsBytes(data, flush: true).then((_) => tmp.rename(file.path)).then((_) {}, onError: (_) {
+          tmp.delete().then((_) {}, onError: (_) {});
+        }),
+      );
     }
     return data;
   }

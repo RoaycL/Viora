@@ -13,6 +13,7 @@ import '../cache/account_scope.dart';
 
 import '../config/app_config.dart';
 import '../media/media_models.dart';
+import '../media/series_ratings.dart';
 import '../media/zh.dart';
 import '../net/request_composer.dart';
 import '../subtitles/online_subtitles.dart' show SubtitleFile, saveSubtitleFile;
@@ -413,11 +414,23 @@ class EmbyClient {
 
   /// 儿童模式：让服务器按分级过滤（Emby / Jellyfin 都支持 MaxOfficialRating），本地再按分级二次过滤
   Map<String, String> get _parentalQuery =>
-      config.parental.enabled ? {'MaxOfficialRating': config.parental.maxOfficialRating} : const {};
+      _parentalActive ? {'MaxOfficialRating': config.parental.maxOfficialRating} : const {};
 
-  Iterable<MediaItem> _allowed(Iterable<MediaItem> items) => config.parental.enabled
-      ? items.where((it) => it.kind == MediaKind.episode || config.parental.allows(it.officialRating))
-      : items;
+  /// 儿童模式是否作用于这次请求：[unfilteredByParental] 里（聚合索引同步）不过滤
+  bool get _parentalActive => config.parental.enabled && Zone.current[_unfilteredKey] != true;
+
+  static final _unfilteredKey = Object();
+
+  /// 在 [body] 里发出的列表请求不按儿童模式过滤。聚合索引要存完整片库（儿童模式和普通模式共用一个索引，
+  /// 读取时再按 itemVisible 过滤）；不然开着儿童模式做全量同步会把受限的片从索引里删掉
+  static Future<T> unfilteredByParental<T>(Future<T> Function() body) =>
+      runZoned(body, zoneValues: {_unfilteredKey: true});
+
+  Iterable<MediaItem> _allowed(Iterable<MediaItem> items) {
+    final list = items.toList();
+    SeriesRatings.remember(list);
+    return _parentalActive ? list.where((it) => parentalAllowsItem(config.parental, it)) : list;
+  }
 
   static const _imageQuery = {'EnableImageTypes': 'Primary,Backdrop,Thumb,Logo', 'ImageTypeLimit': '1'};
 
@@ -775,15 +788,30 @@ class EmbyClient {
       };
       delivery = '/Videos/${source.itemId}/${source.id}/Subtitles/${stream.index}/Stream.$ext';
     }
-    final original = delivery.startsWith('http')
-        ? Uri.parse(delivery)
-        : base.replace(path: '${base.path}${delivery.split('?').first}', query: delivery.split('?').skip(1).join('?'));
+    var original = delivery.startsWith('http') ? Uri.parse(delivery) : _onApiBase(base, delivery);
+    // 请求头里不带令牌（见 RequestComposer.headers），地址里没有 api_key 时补上（服务器没给投递地址时自拼的路径就没有）
+    final token = _server.token;
+    if (token != null && !original.queryParameters.keys.any((k) => k.toLowerCase() == 'api_key')) {
+      original = original.replace(queryParameters: {...original.queryParameters, 'api_key': token});
+    }
     final headers = c.headers(RequestKind.stream);
     return PlaybackRequest(
       url: c.finalUrl(original, RequestKind.stream),
       headers: headers,
       userAgent: headers['User-Agent']!,
     );
+  }
+
+  /// 服务器给的相对地址接到 API 根地址上；已经带了根地址的路径前缀（如 `/emby/Videos/…`）时不再重复拼
+  static Uri _onApiBase(Uri base, String relative) {
+    final i = relative.indexOf('?');
+    var path = i < 0 ? relative : relative.substring(0, i);
+    final query = i < 0 ? null : relative.substring(i + 1);
+    if (!path.startsWith('/')) path = '/$path';
+    final prefix = base.path;
+    final hasPrefix =
+        prefix.isNotEmpty && (path.toLowerCase() == prefix.toLowerCase() || path.toLowerCase().startsWith('${prefix.toLowerCase()}/'));
+    return base.replace(path: hasPrefix ? path : '$prefix$path', query: query == null || query.isEmpty ? null : query);
   }
 
   /// 交给播放器加载的外挂字幕地址（播放器加载外挂字幕时带不上请求头，需要签名的服务器先下载到本机）

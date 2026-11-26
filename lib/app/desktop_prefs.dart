@@ -161,20 +161,24 @@ abstract final class SystemProxy {
 
   /// 读取系统代理并应用（关闭时恢复直连）
   static Future<void> apply(bool enabled) async {
-    if (!enabled || !Platform.isWindows) {
+    if (!Platform.isWindows) {
       current = null;
       // 只撤掉自己设的（测试环境等别处设的不动）
       if (HttpOverrides.current is _ProxyOverrides) HttpOverrides.global = null;
       return;
     }
+    if (!enabled) {
+      // 关掉时 current 为空，装着的覆盖照样直连；不撤掉，之后再打开时已经建好的共用 HttpClient 也能马上走代理
+      current = null;
+      if (HttpOverrides.current == null) HttpOverrides.global = _ProxyOverrides();
+      return;
+    }
     final read = await readWindows();
     current = read?.$1;
     _bypass = read?.$2 ?? const [];
-    if (current != null) {
-      if (HttpOverrides.current is! _ProxyOverrides) HttpOverrides.global = _ProxyOverrides();
-    } else if (HttpOverrides.current is _ProxyOverrides) {
-      HttpOverrides.global = null;
-    }
+    // 装上后一直保留：它每次连接时才读 current（没开代理时直连）。
+    // 共用的 HttpClient（如图片缓存）创建后不会再换，这样之后开关代理也对它生效
+    if (HttpOverrides.current is! _ProxyOverrides) HttpOverrides.global = _ProxyOverrides();
     debugPrint('system proxy: ${current ?? '未开启'}');
   }
 

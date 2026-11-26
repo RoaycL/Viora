@@ -8,6 +8,7 @@ import '../cache/account_scope.dart';
 import '../emby/emby_client.dart';
 import '../config/config_store.dart';
 import '../media/media_models.dart';
+import '../media/series_ratings.dart';
 import '../media/server_registry.dart';
 import 'media_index.dart';
 
@@ -32,6 +33,8 @@ final mediaIndexProvider = FutureProvider<MediaIndex?>((ref) async {
     legacy: legacyIndexAccountScopes(ref.read(configProvider)),
   );
   if (index != null) {
+    SeriesRatings.lookupIndex = (serverId, seriesId) => index.isClosed ? null : index.officialRating(serverId, seriesId);
+    ref.onDispose(() => SeriesRatings.lookupIndex = null);
     ref.listen(configProvider.select(indexAccountsKey), (prev, next) {
       if (prev == next || index.isClosed) return;
       index.bindAccounts(indexAccountScopes(ref.read(configProvider)));
@@ -83,7 +86,9 @@ abstract final class IndexSyncGate {
 }
 
 class IndexSyncController extends Notifier<Map<String, SyncStatus>> {
-  final _runningScopes = <String, String>{};
+  /// 每台服务器正在进行的同步：账号 + 这次同步的令牌。新同步换掉令牌后，旧的那次在下一个检查点退出
+  /// （同一账号来回切换时两次同步的账号相同，只比账号会让两次同步同时写库）
+  final _running = <String, ({String scope, Object token})>{};
   bool _active = true;
 
   /// 每页条数与页间隔：后台慢慢同步，避免 NAS 一下子满负载
@@ -102,7 +107,7 @@ class IndexSyncController extends Notifier<Map<String, SyncStatus>> {
     _active = true;
     ref.onDispose(() {
       _active = false;
-      _runningScopes.clear();
+      _running.clear();
     });
     return const {};
   }
@@ -127,16 +132,19 @@ class IndexSyncController extends Notifier<Map<String, SyncStatus>> {
     if (index == null || client == null) return;
     if (ref.read(configProvider).server(serverId)?.indexEnabled == false) return;
     final scope = accountScope(client.server);
-    if (_runningScopes[serverId] == scope) return;
-    _runningScopes[serverId] = scope;
+    // 同一账号正在同步：普通请求直接跳过；「重建索引」（forceFull）作废正在进行的那次，重新全量
+    if (_running[serverId]?.scope == scope && !forceFull) return;
+    final token = Object();
+    _running[serverId] = (scope: scope, token: token);
+    bool mine() => identical(_running[serverId]?.token, token);
     bool current() =>
         _active &&
-        _runningScopes[serverId] == scope &&
+        mine() &&
         index.hasAccount(serverId, scope) &&
         ref.read(configProvider).server(serverId)?.loggedIn == true &&
         accountScope(ref.read(configProvider).server(serverId)!) == scope;
     if (!current()) {
-      if (_runningScopes[serverId] == scope) _runningScopes.remove(serverId);
+      if (mine()) _running.remove(serverId);
       return;
     }
 
@@ -159,14 +167,17 @@ class IndexSyncController extends Notifier<Map<String, SyncStatus>> {
         final PagedItems page;
         final limit = _pageSizes[serverId] ?? _pageSize;
         try {
-          page = await client.items(
-            start: start,
-            limit: limit,
-            sortBy: 'DateCreated,SortName',
-            sortOrder: 'Ascending',
-            minDateLastSaved: full ? null : st.incrAt?.subtract(const Duration(minutes: 5)),
-            fields: EmbyClient.indexFields,
-            userData: false,
+          // 索引存完整片库，不按儿童模式过滤（读取时再按 itemVisible 过滤）
+          page = await EmbyClient.unfilteredByParental(
+            () => client.items(
+              start: start,
+              limit: limit,
+              sortBy: 'DateCreated,SortName',
+              sortOrder: 'Ascending',
+              minDateLastSaved: full ? null : st.incrAt?.subtract(const Duration(minutes: 5)),
+              fields: EmbyClient.indexFields,
+              userData: false,
+            ),
           );
         } catch (e) {
           // 服务器出错（5xx）或超时：一次取的条数减半，从同一位置重试；减到 50 条还不行才算失败
@@ -227,9 +238,9 @@ class IndexSyncController extends Notifier<Map<String, SyncStatus>> {
       debugPrint('index sync ${client.server.name} failed: $e');
       _set(serverId, SyncStatus(error: e.toString(), count: index.count(serverId), fullAt: st.fullAt));
     } finally {
-      if (_active && _runningScopes[serverId] == scope) {
+      if (_active && mine()) {
         if (!current()) _set(serverId, const SyncStatus());
-        _runningScopes.remove(serverId);
+        _running.remove(serverId);
       }
     }
   }
