@@ -648,23 +648,19 @@ class FnosClient extends EmbyClient {
       path is String && path.isNotEmpty ? ImageRef(owner, kind, tag: path) : null;
 
   /// [ImageRef.tag] 里存的是飞牛的图片路径（如 /39/09/xxx.webp），`/sys/img` 按宽度缩放。
-  /// 有的飞牛版本 / 反代要求图片也带登录令牌和签名（不带时整页封面都是空的），所以和接口一样带上；
-  /// 不需要的服务器会忽略这些头。图片缓存按地址区分，签名每次不同不影响缓存
+  /// 图片要登录：不带令牌时返回 200 + `{"code":-2,"msg":"Auth Failed"}`（2026-11 在真实服务器上核实，整页封面都是空的）。
+  /// 网页端靠 Trim-MC-token cookie，这里和接口一样把令牌放在 Authorization（核实可用，不需要 Authx 签名）
   @override
   ({Uri url, Map<String, String> headers}) image(ImageRef ref, {int maxWidth = 440}) {
     final c = composer;
     final tag = ref.tag ?? '';
-    final path = '$_api/sys/img${tag.startsWith('/') ? tag : '/$tag'}';
-    final query = {'w': '$maxWidth'};
-    final original = c.resolve(path, query);
-    final api = c.headers(RequestKind.api);
+    final original = c.resolve('$_api/sys/img${tag.startsWith('/') ? tag : '/$tag'}', {'w': '$maxWidth'});
+    final token = _server.token;
     return (
       url: c.finalUrl(original, RequestKind.image),
       headers: {
         'User-Agent': c.userAgentFor(RequestKind.image),
-        'Cookie': ?api['Cookie'],
-        'Authorization': ?api['Authorization'],
-        'Authx': fnosAuthx(path, query: query),
+        if (token != null) ...{'Authorization': token, 'Cookie': 'mode=relay; Trim-MC-token=$token'},
       },
     );
   }

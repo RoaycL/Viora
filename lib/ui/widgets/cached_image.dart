@@ -118,9 +118,15 @@ class CachedNetImage extends ImageProvider<CachedNetImage> {
       // 先写临时文件再改名：写到一半被强杀不会留下半截的缓存
       final tmp = File('${file.path}.tmp');
       unawaited(
-        tmp.writeAsBytes(data, flush: true).then((_) => tmp.rename(file.path)).then((_) {}, onError: (_) {
-          tmp.delete().then((_) {}, onError: (_) {});
-        }),
+        tmp
+            .writeAsBytes(data, flush: true)
+            .then((_) => tmp.rename(file.path))
+            .then(
+              (_) {},
+              onError: (_) {
+                tmp.delete().then((_) {}, onError: (_) {});
+              },
+            ),
       );
     }
     return data;
@@ -133,9 +139,13 @@ class CachedNetImage extends ImageProvider<CachedNetImage> {
       req = await _client.getUrl(Uri.parse(url));
       headers.forEach(req.headers.set);
       final res = await req.close().timeout(const Duration(seconds: 30));
-      if (res.statusCode != HttpStatus.ok) {
+      // 不是图片（如飞牛未登录时回 200 + JSON 错误）：不写进缓存
+      final type = res.headers.contentType?.primaryType;
+      if (res.statusCode != HttpStatus.ok ||
+          type == 'application' && res.headers.contentType?.subType == 'json' ||
+          type == 'text') {
         await res.drain<void>().catchError((_) {});
-        throw HttpException('HTTP ${res.statusCode}', uri: Uri.parse(url));
+        throw HttpException('HTTP ${res.statusCode} ${res.headers.contentType}', uri: Uri.parse(url));
       }
       final bytes = await consolidateHttpClientResponseBytes(res).timeout(const Duration(seconds: 60));
       if (bytes.isEmpty) throw const HttpException('empty image');
