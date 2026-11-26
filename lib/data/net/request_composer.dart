@@ -71,6 +71,8 @@ class RequestComposer {
     final u = Uri.parse(line.url.trim());
     var path = u.path.replaceAll(RegExp(r'/+$'), '');
     if (server.type == ServerType.emby && !path.toLowerCase().endsWith('/emby')) path = '$path/emby';
+    // 飞牛影视：地址可能是从浏览器复制的网页端地址（…/v），接口路径自己带 /v
+    if (server.type == ServerType.fnos && path.toLowerCase().endsWith('/v')) path = path.substring(0, path.length - 2);
     return u.replace(path: path);
   }
 
@@ -146,6 +148,11 @@ class RequestComposer {
         h.addAll(plexIdentityHeaders(config, appVersion));
         h['Accept'] = 'application/json';
         if (server.token != null) h['X-Plex-Token'] = server.token!;
+      case ServerType.fnos:
+        // 飞牛影视：令牌原样放在 Authorization；mode=relay 和它的网页端一致。每个请求的 Authx 签名由 FnosClient 加
+        h['Accept'] = 'application/json';
+        h['Cookie'] = 'mode=relay';
+        if (server.token != null) h['Authorization'] = server.token!;
     }
     return h;
   }
