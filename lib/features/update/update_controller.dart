@@ -291,13 +291,14 @@ class UpdateController extends Notifier<UpdateState> {
 
   Future<void> _install(UpdateInfo info, File file) async {
     // 刚看完视频就更新：先等播放进度报给服务器（安装会结束应用，没发完的上报就丢了）
-    await ActivePlayback.stopAll();
     await EmbyClient.flushReports();
     if (Platform.isAndroid) {
       final result = await _channel.invokeMethod<String>('installApk', {'path': file.path});
       state = UpdateInstalling(info, needsPermission: result == 'needs_permission');
     } else if (Platform.isWindows) {
       state = UpdateInstalling(info);
+      // 下面会直接结束进程：正在播放的先上报停止（Android 只是打开安装界面，用户可能取消，播放照常继续，不能提前停）
+      await ActivePlayback.stopAll();
       // Inno Setup 安装包：静默安装（显示进度），安装完成后自动重新打开 Viora。
       await Process.start(file.path, [
         '/SILENT',

@@ -98,6 +98,16 @@ void main() {
       expect(client.subtitle(source, sub)!.url.path, '/emby/Videos/i1/m1/Subtitles/3/0/Stream.srt');
     });
 
+    test('别的主机上的投递地址不补令牌', () {
+      const sub = MediaStreamInfo(
+        index: 4,
+        type: 'Subtitle',
+        isExternal: true,
+        deliveryUrl: 'https://subs.example.org/x.srt',
+      );
+      expect(client.subtitle(source, sub)!.url.toString(), 'https://subs.example.org/x.srt');
+    });
+
     test('服务器没给投递地址时自拼的路径补上 api_key', () {
       const sub = MediaStreamInfo(index: 2, type: 'Subtitle', isExternal: true, codec: 'subrip');
       final url = client.subtitle(source, sub)!.url;

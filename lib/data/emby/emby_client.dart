@@ -791,7 +791,9 @@ class EmbyClient {
     var original = delivery.startsWith('http') ? Uri.parse(delivery) : _onApiBase(base, delivery);
     // 请求头里不带令牌（见 RequestComposer.headers），地址里没有 api_key 时补上（服务器没给投递地址时自拼的路径就没有）
     final token = _server.token;
-    if (token != null && !original.queryParameters.keys.any((k) => k.toLowerCase() == 'api_key')) {
+    // 只给媒体服务器自己的地址补：投递地址是别的主机（外部字幕源）时不能把令牌带过去
+    final own = original.host.toLowerCase() == base.host.toLowerCase() && original.port == base.port;
+    if (token != null && own && !original.queryParameters.keys.any((k) => k.toLowerCase() == 'api_key')) {
       original = original.replace(queryParameters: {...original.queryParameters, 'api_key': token});
     }
     final headers = c.headers(RequestKind.stream);
@@ -810,7 +812,8 @@ class EmbyClient {
     if (!path.startsWith('/')) path = '/$path';
     final prefix = base.path;
     final hasPrefix =
-        prefix.isNotEmpty && (path.toLowerCase() == prefix.toLowerCase() || path.toLowerCase().startsWith('${prefix.toLowerCase()}/'));
+        prefix.isNotEmpty &&
+        (path.toLowerCase() == prefix.toLowerCase() || path.toLowerCase().startsWith('${prefix.toLowerCase()}/'));
     return base.replace(path: hasPrefix ? path : '$prefix$path', query: query == null || query.isEmpty ? null : query);
   }
 
