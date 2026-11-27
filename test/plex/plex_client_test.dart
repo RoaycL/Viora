@@ -361,4 +361,16 @@ void main() {
     });
     expect((await _client(fake).nextUp('100'))?.id, '1');
   });
+
+  test('封面加载失败时检查一次登录（Plex 的图也要令牌）；一屏同时失败只查一次，30 秒内不重复', () async {
+    final fake = await _Fake.start();
+    addTearDown(() => fake.http.close(force: true));
+    fake.body = (_) => _mc(_sections);
+    final client = _client(fake);
+    await Future.wait([client.onImageFailed(), client.onImageFailed(), client.onImageFailed()]);
+    expect(fake.requests.where((u) => u.path == '/library/sections').length, 1);
+    expect(fake.headers.last.value('X-Plex-Token'), 'server-token');
+    await client.onImageFailed();
+    expect(fake.requests.where((u) => u.path == '/library/sections').length, 1);
+  });
 }
