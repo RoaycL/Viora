@@ -1,3 +1,4 @@
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -167,23 +168,28 @@ class _SideNavRailState extends State<SideNavRail> {
                       // 撑满高度时它要吃掉剩下的全部空间（不能再和 Spacer 平分），「设置」才会贴到最下面
                       Flexible(
                         fit: compact ? FlexFit.loose : FlexFit.tight,
-                        child: SingleChildScrollView(
-                          clipBehavior: Clip.none,
-                          child: _PinnedServers(
-                            location: widget.location,
-                            expanded: _expanded,
-                            onOpen: widget.onOpenServer,
+                        // 多出来的服务器在这块区域里上下滑动（滚轮、触屏、鼠标拖动都行），裁掉超出的部分，
+                        // 不会画到下面的「设置」上（以前 Clip.none，服务器多了会和设置图标重叠）
+                        child: ScrollConfiguration(
+                          behavior: ScrollConfiguration.of(context)
+                              .copyWith(scrollbars: false, dragDevices: PointerDeviceKind.values.toSet()),
+                          child: SingleChildScrollView(
+                            clipBehavior: Clip.hardEdge,
+                            child: _PinnedServers(
+                              location: widget.location,
+                              expanded: _expanded,
+                              onOpen: widget.onOpenServer,
+                            ),
                           ),
                         ),
                       ),
-                      if (compact)
-                        // 和上面的页面分开一点
-                        Container(
-                          margin: const EdgeInsets.fromLTRB(12, 4, 12, 18),
-                          width: 32,
-                          height: 1,
-                          color: const Color(0x24FFFFFF),
-                        ),
+                      // 「设置」固定在最下面、不跟着服务器列表滚动，上面一条分隔线
+                      Container(
+                        margin: const EdgeInsets.fromLTRB(12, 4, 12, 18),
+                        width: 32,
+                        height: 1,
+                        color: const Color(0x24FFFFFF),
+                      ),
                       _RailItem(
                         item: NavItem.settings,
                         node: widget.nodes[NavItem.settings.path]!,
@@ -368,11 +374,39 @@ class _PinnedServers extends ConsumerStatefulWidget {
   ConsumerState<_PinnedServers> createState() => _PinnedServersState();
 }
 
-class _PinnedServersState extends ConsumerState<_PinnedServers> {
+class _PinnedServersState extends ConsumerState<_PinnedServers> with SingleTickerProviderStateMixin {
   final _nodes = <String, FocusNode>{};
+
+  /// 编辑模式：长按（或右键）一台服务器进入，图标抖动、左上角出现移除按钮（类似 iOS 主屏幕）
+  bool _editing = false;
+  late final _wiggle = AnimationController(vsync: this, duration: const Duration(milliseconds: 260));
+
+  void _setEditing(bool v) {
+    if (_editing == v) return;
+    setState(() => _editing = v);
+    if (v) {
+      _wiggle.repeat(reverse: true);
+    } else {
+      _wiggle
+        ..stop()
+        ..value = 0.5;
+    }
+  }
+
+  Future<void> _remove(String id) async {
+    await DesktopPrefs.instance.setServerPinned(id, false);
+    if (mounted && DesktopPrefs.instance.pinnedServers.value.isEmpty) _setEditing(false);
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    _wiggle.value = 0.5;
+  }
 
   @override
   void dispose() {
+    _wiggle.dispose();
     for (final n in _nodes.values) {
       n.dispose();
     }
@@ -397,14 +431,50 @@ class _PinnedServersState extends ConsumerState<_PinnedServers> {
               height: 1,
               color: const Color(0x24FFFFFF),
             ),
-            for (final s in list) ...[
+            if (_editing)
+              Padding(
+                padding: const EdgeInsets.only(bottom: 10),
+                child: SizedBox(
+                  width: 56,
+                  child: VFocusable(
+                    semanticLabel: '完成编辑',
+                    radius: VRadius.xs,
+                    showRing: false,
+                    onActivate: () => _setEditing(false),
+                    builder: (context, focused) => Container(
+                      height: 30,
+                      alignment: Alignment.center,
+                      decoration: BoxDecoration(
+                        color: focused ? Colors.white : const Color(0x29FFFFFF),
+                        borderRadius: BorderRadius.circular(VRadius.xs),
+                      ),
+                      child: Text(
+                        '完成',
+                        style: TextStyle(
+                          fontSize: 15,
+                          fontWeight: FontWeight.w600,
+                          color: focused ? const Color(0xFF0B0C10) : Colors.white,
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            for (final (i, s) in list.indexed) ...[
               _ServerRailItem(
                 label: s.displayName,
                 icon: ServerTypeLogo(s.type),
                 node: _nodes.putIfAbsent(s.id, () => FocusNode(debugLabel: 'nav:server:${s.id}')),
                 active: widget.location.startsWith('/library/server/${s.id}'),
                 expanded: widget.expanded,
-                onSelect: () => widget.onOpen?.call(s.id),
+                // 编辑中点一下 / 按确认键就是移除，不再打开服务器
+                onSelect: _editing ? () => _remove(s.id) : () => widget.onOpen?.call(s.id),
+                onMenu: () => _setEditing(!_editing),
+                editing: _editing,
+                wiggle: _wiggle,
+                wigglePhase: i.isEven ? 1 : -1,
+                onLongPress: () => _setEditing(true),
+                onRemove: () => _remove(s.id),
               ),
               const SizedBox(height: 14),
             ],
@@ -423,6 +493,12 @@ class _ServerRailItem extends StatelessWidget {
     required this.active,
     required this.expanded,
     required this.onSelect,
+    required this.onMenu,
+    required this.editing,
+    required this.wiggle,
+    required this.wigglePhase,
+    required this.onLongPress,
+    required this.onRemove,
   });
 
   final String label;
@@ -431,11 +507,21 @@ class _ServerRailItem extends StatelessWidget {
   final bool active;
   final bool expanded;
   final VoidCallback onSelect;
+  final VoidCallback onMenu;
+  final bool editing;
+  final Animation<double> wiggle;
+
+  /// 相邻两个反方向抖，看起来不像整列一起晃
+  final double wigglePhase;
+
+  /// 长按进入编辑（鼠标按住、触屏长按都行）；右键 / 菜单键走 [onMenu]
+  final VoidCallback onLongPress;
+  final VoidCallback onRemove;
 
   @override
   Widget build(BuildContext context) {
     return Tooltip(
-      message: expanded ? '' : label,
+      message: expanded || editing ? '' : label,
       excludeFromSemantics: true,
       child: VFocusable(
         semanticLabel: label,
@@ -446,40 +532,79 @@ class _ServerRailItem extends StatelessWidget {
         alignment: Alignment.centerLeft,
         showRing: false,
         onActivate: onSelect,
+        onMenu: onMenu,
         builder: (context, focused) {
           final Color bg = focused ? Colors.white : (active ? const Color(0x29FFFFFF) : const Color(0x00FFFFFF));
           final Color fg = focused ? const Color(0xFF0B0C10) : (active ? Colors.white : const Color(0x9EFFFFFF));
-          return AnimatedContainer(
-            duration: VMotion.duration(context, VMotion.focus),
-            height: 56,
-            decoration: BoxDecoration(color: bg, borderRadius: BorderRadius.circular(VRadius.sm)),
-            child: ClipRect(
-              child: OverflowBox(
-                alignment: Alignment.centerLeft,
-                maxWidth: VSpace.navRailExpandedWidth,
-                child: Row(
-                  children: [
-                    SizedBox(
-                      width: 56,
-                      child: Center(child: SizedBox.square(dimension: 30, child: icon)),
-                    ),
-                    if (expanded) ...[
-                      const SizedBox(width: 4),
+          return GestureDetector(
+            onLongPress: onLongPress,
+            child: AnimatedContainer(
+              duration: VMotion.duration(context, VMotion.focus),
+              height: 56,
+              decoration: BoxDecoration(color: bg, borderRadius: BorderRadius.circular(VRadius.sm)),
+              child: ClipRect(
+                child: OverflowBox(
+                  alignment: Alignment.centerLeft,
+                  maxWidth: VSpace.navRailExpandedWidth,
+                  child: Row(
+                    children: [
                       SizedBox(
-                        width: VSpace.navRailExpandedWidth - 32 - 56 - 4 - 12,
-                        child: Text(
-                          label,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: TextStyle(
-                            fontSize: 22,
-                            color: fg,
-                            fontWeight: active ? FontWeight.w700 : FontWeight.w400,
-                          ),
+                        width: 56,
+                        height: 56,
+                        child: Stack(
+                          children: [
+                            Center(
+                              child: editing
+                                  ? AnimatedBuilder(
+                                      animation: wiggle,
+                                      builder: (context, child) => Transform.rotate(
+                                        angle: wigglePhase * 0.05 * (wiggle.value * 2 - 1),
+                                        child: child,
+                                      ),
+                                      child: SizedBox.square(dimension: 30, child: icon),
+                                    )
+                                  : SizedBox.square(dimension: 30, child: icon),
+                            ),
+                            if (editing)
+                              Positioned(
+                                left: 4,
+                                top: 4,
+                                child: GestureDetector(
+                                  onTap: onRemove,
+                                  child: Container(
+                                    key: const ValueKey('nav-server-remove'),
+                                    width: 20,
+                                    height: 20,
+                                    decoration: BoxDecoration(
+                                      color: const Color(0xFFE5484D),
+                                      shape: BoxShape.circle,
+                                      border: Border.all(color: const Color(0xFF0B0C10), width: 1.5),
+                                    ),
+                                    child: const Icon(Icons.remove_rounded, size: 14, color: Colors.white),
+                                  ),
+                                ),
+                              ),
+                          ],
                         ),
                       ),
+                      if (expanded) ...[
+                        const SizedBox(width: 4),
+                        SizedBox(
+                          width: VSpace.navRailExpandedWidth - 32 - 56 - 4 - 12,
+                          child: Text(
+                            label,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                              fontSize: 22,
+                              color: fg,
+                              fontWeight: active ? FontWeight.w700 : FontWeight.w400,
+                            ),
+                          ),
+                        ),
+                      ],
                     ],
-                  ],
+                  ),
                 ),
               ),
             ),
