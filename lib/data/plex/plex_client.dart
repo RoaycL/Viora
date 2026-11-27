@@ -634,6 +634,11 @@ class PlexClient extends EmbyClient {
 
   // ───────────────────────── 图片 ─────────────────────────
 
+  /// Plex 的图片也要登录（地址里带 X-Plex-Token，令牌失效时回 401）：封面加载失败时读一次媒体库列表，
+  /// 401 时 [_request] 会用保存的密码 / 账号令牌重新登录，重新取这台服务器的访问令牌（见 [onImageFailed]）
+  @override
+  Future<Object?> _imageAuthCheck() => _request('GET', '/library/sections');
+
   /// [ImageRef.tag] 里存的是 Plex 的图片路径（如 /library/metadata/1/thumb/1700000000），经服务器缩放后返回
   @override
   ({Uri url, Map<String, String> headers}) image(ImageRef ref, {int maxWidth = 440}) {

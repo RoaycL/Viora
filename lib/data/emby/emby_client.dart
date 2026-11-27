@@ -1012,9 +1012,40 @@ class EmbyClient {
 
   // ───────────────────────── 图片 ─────────────────────────
 
-  /// 一张服务器图片加载失败时调用（[ServerImage]）。Emby / Jellyfin 的图不用登录，什么都不做；
-  /// 飞牛会借此检查令牌是否过期，过期就重新登录
-  Future<void> onImageFailed() async {}
+  /// 每台服务器上次因为图片失败去检查登录的时间：一屏几十张图同时失败只查一次，30 秒内不重复
+  static final _imageCheckAt = <String, DateTime>{};
+  static final _imageCheck = <String, Future<void>>{};
+
+  /// 图片要登录的服务器（飞牛、Plex）在这里调一个最便宜的要登录的接口；令牌过期时请求会自动
+  /// 用保存的密码重新登录并写回配置，客户端重建后图片带新令牌重新加载。
+  /// Emby / Jellyfin 的图不用登录，返回 null 什么都不做
+  Future<Object?>? _imageAuthCheck() => null;
+
+  /// 一张服务器图片加载失败时调用（[ServerImage]）：多半是令牌过期了（列表常从本地索引直接显示，
+  /// 封面先用旧令牌去请求），检查一次登录（见 [_imageAuthCheck]）
+  Future<void> onImageFailed() {
+    final id = _server.id;
+    final running = _imageCheck[id];
+    if (running != null) return running;
+    final last = _imageCheckAt[id];
+    if (_server.password.isEmpty || last != null && DateTime.now().difference(last) < const Duration(seconds: 30)) {
+      return Future.value();
+    }
+    final check = _imageAuthCheck();
+    if (check == null) return Future.value();
+    _imageCheckAt[id] = DateTime.now();
+    return _imageCheck[id] = check
+        .then(
+          (_) {},
+          onError: (Object e) {
+            debugPrint('${_server.type.name} image auth check failed: $e');
+          },
+        )
+        .whenComplete(() {
+          // 不能写成 `=> _imageCheck.remove(id)`：remove 返回的正是这个 Future，会自己等自己
+          _imageCheck.remove(id);
+        });
+  }
 
   ({Uri url, Map<String, String> headers}) image(ImageRef ref, {int maxWidth = 440}) {
     final c = composer;
