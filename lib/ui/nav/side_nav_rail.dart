@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -168,11 +170,19 @@ class _SideNavRailState extends State<SideNavRail> {
                       // 撑满高度时它要吃掉剩下的全部空间（不能再和 Spacer 平分），「设置」才会贴到最下面
                       Flexible(
                         fit: compact ? FlexFit.loose : FlexFit.tight,
-                        // 多出来的服务器在这块区域里上下滑动（滚轮、触屏、鼠标拖动都行），裁掉超出的部分，
-                        // 不会画到下面的「设置」上（以前 Clip.none，服务器多了会和设置图标重叠）
+                        // 多出来的服务器在这块区域里上下滑动（滚轮、触屏、触控板），裁掉超出的部分，
+                        // 不会画到下面的「设置」上（以前 Clip.none，服务器多了会和设置图标重叠）。
+                        // 鼠标不能拖动滚动：按住左键时手稍微一抖，拖动就会抢走「长按进入编辑」
                         child: ScrollConfiguration(
-                          behavior: ScrollConfiguration.of(context)
-                              .copyWith(scrollbars: false, dragDevices: PointerDeviceKind.values.toSet()),
+                          behavior: ScrollConfiguration.of(context).copyWith(
+                            scrollbars: false,
+                            dragDevices: {
+                              PointerDeviceKind.touch,
+                              PointerDeviceKind.stylus,
+                              PointerDeviceKind.invertedStylus,
+                              PointerDeviceKind.trackpad,
+                            },
+                          ),
                           child: SingleChildScrollView(
                             clipBehavior: Clip.hardEdge,
                             child: _PinnedServers(
@@ -379,6 +389,9 @@ class _PinnedServersState extends ConsumerState<_PinnedServers> with SingleTicke
 
   /// 编辑模式：长按（或右键）一台服务器进入，图标抖动、左上角出现移除按钮（类似 iOS 主屏幕）
   bool _editing = false;
+
+  /// 刚刚长按进入编辑：这次按下松手时的点击不当成「移除」/「打开」
+  bool _longPressed = false;
   late final _wiggle = AnimationController(vsync: this, duration: const Duration(milliseconds: 260));
 
   void _setEditing(bool v) {
@@ -467,13 +480,21 @@ class _PinnedServersState extends ConsumerState<_PinnedServers> with SingleTicke
                 node: _nodes.putIfAbsent(s.id, () => FocusNode(debugLabel: 'nav:server:${s.id}')),
                 active: widget.location.startsWith('/library/server/${s.id}'),
                 expanded: widget.expanded,
-                // 编辑中点一下 / 按确认键就是移除，不再打开服务器
-                onSelect: _editing ? () => _remove(s.id) : () => widget.onOpen?.call(s.id),
+                // 编辑中点一下 / 按确认键就是移除，不再打开服务器。长按进入编辑后松手的那一下不算点击
+                onSelect: () {
+                  if (_longPressed) return;
+                  _editing ? _remove(s.id) : widget.onOpen?.call(s.id);
+                },
                 onMenu: () => _setEditing(!_editing),
                 editing: _editing,
                 wiggle: _wiggle,
                 wigglePhase: i.isEven ? 1 : -1,
-                onLongPress: () => _setEditing(true),
+                onLongPress: () {
+                  _longPressed = true;
+                  _setEditing(true);
+                },
+                // 松手时的点击在同一个事件之后才触发：等它过去再恢复
+                onLongPressEnd: () => Timer.run(() => _longPressed = false),
                 onRemove: () => _remove(s.id),
               ),
               const SizedBox(height: 14),
@@ -498,6 +519,7 @@ class _ServerRailItem extends StatelessWidget {
     required this.wiggle,
     required this.wigglePhase,
     required this.onLongPress,
+    required this.onLongPressEnd,
     required this.onRemove,
   });
 
@@ -516,10 +538,15 @@ class _ServerRailItem extends StatelessWidget {
 
   /// 长按进入编辑（鼠标按住、触屏长按都行）；右键 / 菜单键走 [onMenu]
   final VoidCallback onLongPress;
+  final VoidCallback onLongPressEnd;
   final VoidCallback onRemove;
 
   @override
   Widget build(BuildContext context) {
+    return _LongPressListener(onLongPress: onLongPress, onLongPressEnd: onLongPressEnd, child: _build(context));
+  }
+
+  Widget _build(BuildContext context) {
     return Tooltip(
       message: expanded || editing ? '' : label,
       excludeFromSemantics: true,
@@ -536,8 +563,7 @@ class _ServerRailItem extends StatelessWidget {
         builder: (context, focused) {
           final Color bg = focused ? Colors.white : (active ? const Color(0x29FFFFFF) : const Color(0x00FFFFFF));
           final Color fg = focused ? const Color(0xFF0B0C10) : (active ? Colors.white : const Color(0x9EFFFFFF));
-          return GestureDetector(
-            onLongPress: onLongPress,
+          return KeyedSubtree(
             child: AnimatedContainer(
               duration: VMotion.duration(context, VMotion.focus),
               height: 56,
@@ -613,4 +639,66 @@ class _ServerRailItem extends StatelessWidget {
       ),
     );
   }
+}
+
+/// 按住 500ms 算长按（鼠标左键、触屏都行）。
+/// 不用 GestureDetector 的长按：鼠标按下时导航项获得焦点、外观重建，里面的手势识别器会被重建、长按被取消
+/// （0.17.8-beta7 用鼠标左键按住没反应）。Listener 不参与手势竞争，也不受里面重建影响
+class _LongPressListener extends StatefulWidget {
+  const _LongPressListener({required this.onLongPress, required this.onLongPressEnd, required this.child});
+
+  final VoidCallback onLongPress;
+  final VoidCallback onLongPressEnd;
+  final Widget child;
+
+  @override
+  State<_LongPressListener> createState() => _LongPressListenerState();
+}
+
+class _LongPressListenerState extends State<_LongPressListener> {
+  Timer? _timer;
+  int? _pointer;
+  Offset _origin = Offset.zero;
+  bool _fired = false;
+
+  void _cancel() {
+    _timer?.cancel();
+    _timer = null;
+  }
+
+  void _end(PointerEvent e) {
+    if (e.pointer != _pointer) return;
+    _cancel();
+    _pointer = null;
+    if (_fired) widget.onLongPressEnd();
+    _fired = false;
+  }
+
+  @override
+  void dispose() {
+    _cancel();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) => Listener(
+    onPointerDown: (e) {
+      // 只认左键 / 触屏的单指按下；右键另有菜单
+      if (_pointer != null || e.buttons != kPrimaryButton) return;
+      _pointer = e.pointer;
+      _origin = e.position;
+      _fired = false;
+      _timer = Timer(kLongPressTimeout, () {
+        _timer = null;
+        _fired = true;
+        widget.onLongPress();
+      });
+    },
+    onPointerMove: (e) {
+      if (e.pointer == _pointer && _timer != null && (e.position - _origin).distance > kTouchSlop) _cancel();
+    },
+    onPointerUp: _end,
+    onPointerCancel: _end,
+    child: widget.child,
+  );
 }

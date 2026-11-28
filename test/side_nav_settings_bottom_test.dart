@@ -1,3 +1,4 @@
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -106,5 +107,26 @@ void main() {
     await tester.pump(const Duration(milliseconds: 300));
     expect(remove, findsNothing);
     expect(find.text('完成'), findsNothing);
+  });
+
+  testWidgets('鼠标左键按住服务器（手稍微抖动几像素）也能进入编辑，不被列表的拖动滚动抢走', (tester) async {
+    SharedPreferences.setMockInitialValues({});
+    DesktopPrefs.instance.pinnedServers.value = ['s0', 's1', 's2'];
+    addTearDown(() => DesktopPrefs.instance.pinnedServers.value = const []);
+    await _pump(tester, 900);
+    final remove = find.byKey(const ValueKey('nav-server-remove'));
+    final at = tester.getCenter(find.bySemanticsLabel('S1'));
+    final mouse = await tester.createGesture(kind: PointerDeviceKind.mouse);
+    addTearDown(mouse.removePointer);
+    await mouse.addPointer(location: at);
+    // 先悬停（导航栏展开），和真实操作一样
+    await tester.pumpAndSettle();
+    await mouse.down(at);
+    await tester.pump(const Duration(milliseconds: 100));
+    await mouse.moveBy(const Offset(1, 4));
+    await tester.pump(const Duration(milliseconds: 600));
+    await mouse.up();
+    await tester.pump(const Duration(milliseconds: 300));
+    expect(remove, findsNWidgets(3));
   });
 }
